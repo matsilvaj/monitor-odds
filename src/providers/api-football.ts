@@ -33,10 +33,22 @@ type ApiFootballResponse<T> = {
   errors?: unknown;
 };
 
+export class ApiFootballHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly url?: string
+  ) {
+    super(message);
+    this.name = "ApiFootballHttpError";
+  }
+}
+
 export class ApiFootballClient {
   constructor(
     private readonly baseUrl = env.API_FOOTBALL_BASE_URL,
-    private readonly apiKey = env.API_FOOTBALL_KEY
+    private readonly apiKey = env.API_FOOTBALL_KEY,
+    private readonly timeoutMs = 15_000
   ) {}
 
   async getFixturesByDate(date: string) {
@@ -45,18 +57,31 @@ export class ApiFootballClient {
       timezone: env.API_FOOTBALL_TIMEZONE
     });
 
-    const response = await fetch(new URL(`fixtures?${params}`, this.baseUrl), {
-      headers: {
-        accept: "application/json",
-        "x-apisports-key": this.apiKey
-      }
-    });
+    const url = new URL(`fixtures?${params}`, this.baseUrl);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          accept: "application/json",
+          "x-apisports-key": this.apiKey
+        },
+        signal: controller.signal
+      });
+    } catch (error) {
+      throw new ApiFootballHttpError(error instanceof Error ? error.message : "API-Football request failed", undefined, url.href);
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
-      throw new Error(`API-Football fixtures failed: ${response.status}`);
+      throw new ApiFootballHttpError(`API-Football request failed with status ${response.status}`, response.status, url.href);
     }
 
     const data = (await response.json()) as ApiFootballResponse<ApiFootballFixtureRow[]>;
+
     if (data.errors && JSON.stringify(data.errors) !== "[]") {
       throw new Error(`API-Football returned errors: ${JSON.stringify(data.errors)}`);
     }

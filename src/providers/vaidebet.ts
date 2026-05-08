@@ -1,4 +1,5 @@
 import type { VaidebetBookmakerConfig } from "../config/bookmakers.js";
+import { httpClient } from "../utils/http-client.js";
 
 export type VaidebetOdd = {
   foId: number;
@@ -59,17 +60,6 @@ type VaidebetSport = {
   }>;
 };
 
-const USER_AGENTS = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
-];
-
-function randomUserAgent() {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)] ?? USER_AGENTS[0];
-}
-
 function payloadPath(payload: unknown) {
   return Buffer.from(JSON.stringify(payload)).toString("base64");
 }
@@ -95,7 +85,7 @@ function fixturesFromSports(sports: VaidebetSport[]) {
 }
 
 export class VaidebetClient {
-  private readonly headers: HeadersInit;
+  private readonly headers: Record<string, string>;
 
   constructor(private readonly config: VaidebetBookmakerConfig) {
     this.headers = {
@@ -105,8 +95,7 @@ export class VaidebetClient {
       customorigin: new URL(config.baseUrl).origin,
       device: "m",
       languageid: String(config.languageId),
-      referer: config.referer,
-      "user-agent": randomUserAgent()
+      referer: config.referer
     };
   }
 
@@ -120,43 +109,29 @@ export class VaidebetClient {
   async getFootballSeasons() {
     const payload = payloadPath({ requestBody: {} });
     const path = `api-v2/left-menu/${this.config.routeSegment}/${this.config.languageId}/${this.config.brand}/${payload}`;
-    const response = await fetch(new URL(path, this.config.baseUrl), { headers: this.requestHeaders(payload) });
-    if (!response.ok) {
-      throw new Error(`VaiDeBet left-menu failed: ${response.status}`);
-    }
-
-    const sports = sportsFromResponse(await response.json());
+    const data = await httpClient<unknown>({
+      url: new URL(path, this.config.baseUrl),
+      headers: this.requestHeaders(payload),
+      referer: this.config.referer,
+      engine: this.config.engine
+    });
+    const sports = sportsFromResponse(data);
     return seasonsFromSports(sports.filter((sport) => sport.stN === "Futebol"));
   }
 
-  async getFallbackLeagueCard() {
-    if (!this.config.fallbackLeagueCardPath) return [];
-
-    const encodedBody = this.config.fallbackLeagueCardPath.split("/").pop() ?? "";
-    const response = await fetch(new URL(this.config.fallbackLeagueCardPath, this.config.baseUrl), { headers: this.requestHeaders(encodedBody) });
-    if (!response.ok) {
-      throw new Error(`VaiDeBet fallback league-card failed: ${response.status}`);
-    }
-
-    const sports = sportsFromResponse(await response.json());
-    return fixturesFromSports(sports.filter((sport) => sport.stN === "Futebol"));
-  }
-
   async getLeagueCard(seasonIds: number[]) {
-    if (!seasonIds.length) return this.getFallbackLeagueCard();
+    if (!seasonIds.length) return [];
 
     const payload = payloadPath({ requestBody: { seasonIds } });
     const joinedSeasonIds = seasonIds.join("-");
     const path = `api-v2/league-card/${this.config.routeSegment}/${this.config.languageId}/${this.config.brand}/${joinedSeasonIds}/${payload}`;
-    const response = await fetch(new URL(path, this.config.baseUrl), { headers: this.requestHeaders(payload) });
-
-    if (!response.ok && this.config.fallbackLeagueCardPath) return this.getFallbackLeagueCard();
-
-    if (!response.ok) {
-      throw new Error(`VaiDeBet league-card failed: ${response.status}`);
-    }
-
-    const sports = sportsFromResponse(await response.json());
+    const data = await httpClient<unknown>({
+      url: new URL(path, this.config.baseUrl),
+      headers: this.requestHeaders(payload),
+      referer: this.config.referer,
+      engine: this.config.engine
+    });
+    const sports = sportsFromResponse(data);
     return fixturesFromSports(sports.filter((sport) => sport.stN === "Futebol"));
   }
 }

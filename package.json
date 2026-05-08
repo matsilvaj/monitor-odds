@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "dev:all": "concurrently -n api,sync -c cyan,green \"npm run dev\" \"npm run sync:watch\"",
+    "dev:all": "node scripts/dev-all.cjs",
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.json",
     "db:setup": "tsx src/jobs/db-setup.ts",
@@ -26,13 +26,16 @@
     "@supabase/supabase-js": "^2.105.3",
     "dotenv": "^17.4.2",
     "fastify": "^5.8.5",
+    "got-scraping": "^4.2.1",
+    "p-map": "^7.0.4",
     "pg": "^8.20.0",
+    "tough-cookie": "^6.0.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.6.1",
     "@types/pg": "^8.20.0",
-    "concurrently": "^9.2.1",
+    "@types/tough-cookie": "^4.0.5",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"
   }

@@ -1,4 +1,5 @@
 import type { SportingbetBookmakerConfig } from "../config/bookmakers.js";
+import { httpClient } from "../utils/http-client.js";
 
 export type SportingbetOption = {
   id: number;
@@ -37,26 +38,14 @@ export type SportingbetFixture = {
   [key: string]: unknown;
 };
 
-const USER_AGENTS = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
-];
-
-function randomUserAgent() {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)] ?? USER_AGENTS[0];
-}
-
 export class SportingbetClient {
-  private readonly headers: HeadersInit;
+  private readonly headers: Record<string, string>;
 
   constructor(private readonly config: SportingbetBookmakerConfig) {
     this.headers = {
       accept: "application/json",
       "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-      referer: config.referer,
-      "user-agent": randomUserAgent()
+      referer: config.referer
     };
   }
 
@@ -79,12 +68,12 @@ export class SportingbetClient {
       sortBy: "Tags"
     });
 
-    const response = await fetch(new URL(`cds-api/bettingoffer/fixtures?${params}`, this.config.baseUrl), { headers: this.headers });
-    if (!response.ok) {
-      throw new Error(`Sportingbet fixtures failed: ${response.status}`);
-    }
-
-    const data = (await response.json()) as { fixtures?: SportingbetFixture[] };
+    const data = await httpClient<{ fixtures?: SportingbetFixture[] }>({
+      url: new URL(`cds-api/bettingoffer/fixtures?${params}`, this.config.baseUrl),
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine
+    });
     return Array.isArray(data.fixtures) ? data.fixtures : [];
   }
 }

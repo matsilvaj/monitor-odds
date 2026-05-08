@@ -3,7 +3,6 @@ import Fastify from "fastify";
 import { env } from "../config/env.js";
 import { supabase } from "../db/supabase.js";
 import { syncApiFootballFixtures } from "../services/api-football-sync.js";
-import { BOOKMAKER_COLLECTORS, collectAllBookmakers } from "../bookmakers/registry.js";
 import { cleanupOldLogs } from "../services/log-retention.js";
 
 export function buildServer() {
@@ -131,6 +130,7 @@ export function buildServer() {
     }
 
     const params = request.params as { bookmaker: string };
+    const { BOOKMAKER_COLLECTORS } = await import("../bookmakers/registry.js");
     const bookmaker = BOOKMAKER_COLLECTORS.find((item) => item.slug === params.bookmaker);
     if (!bookmaker) {
       return reply.code(404).send({ error: "bookmaker not configured" });
@@ -164,6 +164,7 @@ export function buildServer() {
 
     await cleanupOldLogs();
     const fixtures = await syncApiFootballFixtures();
+    const { collectAllBookmakers } = await import("../bookmakers/registry.js");
     const odds = await collectAllBookmakers();
     return { data: { fixtures, odds } };
   });

@@ -1,9 +1,11 @@
+import pMap from "p-map";
 import { BOOKMAKERS } from "../config/bookmakers.js";
 import { createAltenarCollector } from "../services/altenar-collector.js";
 import { createSportingbetCollector } from "../services/sportingbet-collector.js";
 import { createSportybetCollector } from "../services/sportybet-collector.js";
 import { createSuperbetCollector } from "../services/superbet-collector.js";
 import { createVaidebetCollector } from "../services/vaidebet-collector.js";
+import { errorMessage } from "../utils/errors.js";
 import type { BookmakerCollector, BookmakerCollectorResult } from "./types.js";
 
 export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((bookmaker) => bookmaker.enabled).map((bookmaker) => {
@@ -46,13 +48,38 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
   };
 });
 
-export async function collectAllBookmakers() {
-  const results: BookmakerCollectorResult[] = [];
+export type CollectAllBookmakersOptions = {
+  concurrency?: number;
+  logProgress?: boolean;
+};
 
-  for (const bookmaker of BOOKMAKER_COLLECTORS) {
-    const summary = await bookmaker.collect();
-    results.push({ bookmaker: bookmaker.slug, summary });
-  }
+export async function collectAllBookmakers(options: CollectAllBookmakersOptions = {}) {
+  const concurrency = options.concurrency ?? 2;
+  const logProgress = options.logProgress ?? true;
 
-  return results;
+  return pMap(
+    BOOKMAKER_COLLECTORS,
+    async (bookmaker) => {
+      const start = performance.now();
+      if (logProgress) {
+        console.log(`[sync] coletando ${bookmaker.slug}...`);
+      }
+
+      try {
+        const summary = await bookmaker.collect();
+        const durationMs = Math.round(performance.now() - start);
+
+        if (logProgress) {
+          console.log(`[sync] ${bookmaker.slug} concluida em ${durationMs}ms`);
+        }
+
+        return { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
+      } catch (error) {
+        const durationMs = Math.round(performance.now() - start);
+        console.error(`[sync] ${bookmaker.slug} falhou apos ${durationMs}ms:`, error);
+        return { bookmaker: bookmaker.slug, summary: null, error: errorMessage(error), durationMs } satisfies BookmakerCollectorResult;
+      }
+    },
+    { concurrency }
+  );
 }

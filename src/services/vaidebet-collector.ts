@@ -1,9 +1,11 @@
 import type { VaidebetBookmakerConfig } from "../config/bookmakers.js";
 import { env } from "../config/env.js";
 import { supabase } from "../db/supabase.js";
+import { matchEvents } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { nameSimilarity, normalizeName } from "../domain/text.js";
-import { VaidebetClient, type VaidebetFixture, type VaidebetMarket, type VaidebetOdd, type VaidebetSeason } from "../providers/vaidebet.js";
+import { VaidebetClient, type VaidebetFixture, type VaidebetMarket, type VaidebetOdd } from "../providers/vaidebet.js";
+import { errorMessage } from "../utils/errors.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -73,116 +75,37 @@ async function getCanonicalFixtures() {
   return (data ?? []) as unknown as CanonicalFixture[];
 }
 
-function matchesSeason(bookmaker: VaidebetBookmakerConfig, season: VaidebetSeason) {
-  const haystack = `${season.seaN ?? ""} ${season.lName ?? ""}`;
-  return bookmaker.seasonNamePatterns.some((pattern) => new RegExp(pattern, "i").test(haystack));
-}
-
-function matchesEventSeason(bookmaker: VaidebetBookmakerConfig, event: VaidebetFixture) {
-  const haystack = `${event.sourceSeasonName ?? ""} ${event.sourceLeagueName ?? ""}`;
-  return bookmaker.seasonNamePatterns.some((pattern) => new RegExp(pattern, "i").test(haystack));
-}
-
-function compactNormalized(value: unknown) {
-  return normalizeName(value).replace(/\s+/g, "");
-}
-
-function levenshtein(left: string, right: string) {
-  if (left === right) return 0;
-  if (!left.length) return right.length;
-  if (!right.length) return left.length;
-
-  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-  const current = Array.from({ length: right.length + 1 }, () => 0);
-
-  for (let i = 1; i <= left.length; i += 1) {
-    current[0] = i;
-
-    for (let j = 1; j <= right.length; j += 1) {
-      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
-      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
-    }
-
-    for (let j = 0; j <= right.length; j += 1) previous[j] = current[j];
-  }
-
-  return previous[right.length] ?? Math.max(left.length, right.length);
-}
-
-function fuzzyNameSimilarity(left: unknown, right: unknown) {
-  const tokenScore = nameSimilarity(left, right);
-  const leftCompact = compactNormalized(left);
-  const rightCompact = compactNormalized(right);
-  if (!leftCompact || !rightCompact) return tokenScore;
-
-  const editScore = 1 - levenshtein(leftCompact, rightCompact) / Math.max(leftCompact.length, rightCompact.length);
-  const containmentScore =
-    Math.min(leftCompact.length, rightCompact.length) >= 5 && (leftCompact.includes(rightCompact) || rightCompact.includes(leftCompact)) ? 0.9 : 0;
-
-  return Math.max(tokenScore, editScore, containmentScore);
-}
-
 function fixtureLeague(fixture: CanonicalFixture) {
   return Array.isArray(fixture.league) ? fixture.league[0] ?? null : fixture.league;
 }
 
-function leagueSimilarity(event: VaidebetFixture, fixture: CanonicalFixture) {
-  const eventLeagueText = `${event.sourceSeasonName ?? ""} ${event.sourceLeagueName ?? ""}`;
-  const fixtureLeagueText = fixtureLeague(fixture)?.name ?? "";
-  const eventCompact = compactNormalized(eventLeagueText);
-  const fixtureCompact = compactNormalized(fixtureLeagueText);
+function findBestMatch(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
+  let best: { fixture: CanonicalFixture; score: number } | null = null;
 
-  if (!eventCompact || !fixtureCompact) return 0;
-  if (eventCompact === fixtureCompact) return 1;
-  if (eventCompact.includes(fixtureCompact) || fixtureCompact.includes(eventCompact)) return 0.95;
-
-  return nameSimilarity(eventLeagueText, fixtureLeagueText);
-}
-
-function teamPairScore(event: VaidebetFixture, fixture: CanonicalFixture) {
-  const homeTeam = event.hcN ?? null;
-  const awayTeam = event.acN ?? null;
-  const directHome = fuzzyNameSimilarity(homeTeam, fixture.normalized_home_team ?? fixture.home_team);
-  const directAway = fuzzyNameSimilarity(awayTeam, fixture.normalized_away_team ?? fixture.away_team);
-  const swappedHome = fuzzyNameSimilarity(homeTeam, fixture.away_team);
-  const swappedAway = fuzzyNameSimilarity(awayTeam, fixture.home_team);
-  return Math.max((directHome + directAway) / 2, (swappedHome + swappedAway) / 2);
-}
-
-function matchFixture(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
-  const homeTeam = event.hcN ?? null;
-  const awayTeam = event.acN ?? null;
-  const eventStart = Number(event.fsd);
-
-  const candidates: Array<{ fixture: CanonicalFixture; score: number; teamScore: number; hoursApart: number; leagueScore: number }> = [];
   for (const fixture of fixtures) {
-    const fixtureStart = new Date(fixture.starts_at).getTime();
-    const hoursApart = Math.abs(fixtureStart - eventStart) / 36e5;
-    if (!Number.isFinite(hoursApart) || hoursApart > 0.35) continue;
+    const result = matchEvents(
+      {
+        id: fixture.id,
+        startsAt: fixture.starts_at,
+        homeTeam: fixture.home_team,
+        awayTeam: fixture.away_team,
+        leagueName: fixtureLeague(fixture)?.name ?? null
+      },
+      {
+        id: event.fId,
+        startsAt: event.fsd,
+        homeTeam: event.hcN ?? null,
+        awayTeam: event.acN ?? null,
+        leagueName: `${event.sourceSeasonName ?? ""} ${event.sourceLeagueName ?? ""}`.trim()
+      }
+    );
 
-    const leagueScore = leagueSimilarity(event, fixture);
-    if (leagueScore < 0.55) continue;
-
-    const teamScore = teamPairScore(event, fixture);
-    const timeScore = 1 - hoursApart / 0.35;
-    const score = leagueScore * 0.55 + timeScore * 0.3 + teamScore * 0.15;
-    candidates.push({ fixture, score, teamScore, hoursApart, leagueScore });
+    if (!result.matched) continue;
+    if (!best || result.score > best.score) best = { fixture, score: result.score };
   }
 
-  if (!candidates.length) return null;
-
-  candidates.sort((left, right) => right.score - left.score);
-  const best = candidates[0];
   if (!best) return null;
-
-  if (candidates.length > 1) {
-    const second = candidates[1];
-    if (best.teamScore >= 0.45) return { ...best, homeTeam, awayTeam };
-    if (!second || (best.teamScore >= 0.2 && best.teamScore - second.teamScore >= 0.15)) return { ...best, homeTeam, awayTeam };
-    return null;
-  }
-
-  return { ...best, homeTeam, awayTeam };
+  return { ...best, homeTeam: event.hcN ?? null, awayTeam: event.acN ?? null };
 }
 
 function isNearCanonicalFixtureWindow(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
@@ -191,7 +114,7 @@ function isNearCanonicalFixtureWindow(event: VaidebetFixture, fixtures: Canonica
 
   return fixtures.some((fixture) => {
     const fixtureStart = new Date(fixture.starts_at).getTime();
-    return Number.isFinite(fixtureStart) && Math.abs(fixtureStart - eventStart) / 36e5 <= 12;
+    return Number.isFinite(fixtureStart) && Math.abs(fixtureStart - eventStart) <= 20 * 60 * 1000;
   });
 }
 
@@ -313,7 +236,8 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
       eventsMatched: 0,
       eventsUnmatched: 0,
       oddsUpserted: 0,
-      errors: 0
+      errors: 0,
+      lastError: null as string | null
     };
 
     await ensureBaseRows(bookmaker);
@@ -324,45 +248,51 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
     }
 
     try {
-      let seasons: VaidebetSeason[] = [];
-      try {
-        seasons = await client.getFootballSeasons();
-      } catch (error) {
-        if (!bookmaker.fallbackLeagueCardPath) throw error;
-        await log(bookmaker, "warn", "left-menu failed; using fallback league-card", { error: serializeError(error) });
-      }
-
-      const selectedSeasonIds = [...new Set(seasons.filter((season) => matchesSeason(bookmaker, season)).map((season) => season.sId))];
+      const seasons = await client.getFootballSeasons();
+      const selectedSeasonIds = [...new Set(seasons.map((season) => season.sId))];
       summary.seasonsSeen = seasons.length;
       summary.seasonsSelected = selectedSeasonIds.length;
 
-      await sleep(collectDelayMs());
-      const events = await client.getLeagueCard(selectedSeasonIds);
+      const events: VaidebetFixture[] = [];
+      for (let index = 0; index < selectedSeasonIds.length; index += 20) {
+        await sleep(collectDelayMs());
+        events.push(...(await client.getLeagueCard(selectedSeasonIds.slice(index, index + 20))));
+      }
       summary.eventsSeen = events.length;
 
-      const targetEvents = events.filter((event) => event.vld !== false && event.frz !== true && matchesEventSeason(bookmaker, event) && isNearCanonicalFixtureWindow(event, fixtures));
+      const targetEvents = events.filter((event) => event.vld !== false && event.frz !== true && isNearCanonicalFixtureWindow(event, fixtures));
       summary.eventsInWindow = targetEvents.length;
 
+      const bestMatchByFixtureId = new Map<string, { event: VaidebetFixture; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+
       for (const event of targetEvents) {
+        const matched = findBestMatch(event, fixtures);
+        if (!matched) {
+          summary.eventsUnmatched += 1;
+          continue;
+        }
+
+        const previous = bestMatchByFixtureId.get(matched.fixture.id);
+        if (!previous || matched.score > previous.matched.score) {
+          bestMatchByFixtureId.set(matched.fixture.id, { event, matched });
+        }
+      }
+
+      for (const { event, matched } of bestMatchByFixtureId.values()) {
         try {
-          const matched = matchFixture(event, fixtures);
-
-          if (!matched) {
-            summary.eventsUnmatched += 1;
-            continue;
-          }
-
           await upsertBookmakerLink(bookmaker, matched.fixture.id, event, matched.score);
           summary.oddsUpserted += await replaceMoneylineOdds(bookmaker, matched.fixture.id, event);
           summary.eventsCollected += 1;
           summary.eventsMatched += 1;
         } catch (error) {
           summary.errors += 1;
+          summary.lastError = errorMessage(error);
           await log(bookmaker, "error", "vaidebet event collection failed", { eventId: event.fId, error: serializeError(error) });
         }
       }
     } catch (error) {
       summary.errors += 1;
+      summary.lastError = errorMessage(error);
       await log(bookmaker, "error", "vaidebet collection failed", { error: serializeError(error) });
     }
 

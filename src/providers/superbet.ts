@@ -1,4 +1,5 @@
 import type { SuperbetBookmakerConfig } from "../config/bookmakers.js";
+import { httpClient } from "../utils/http-client.js";
 
 export type SuperbetOdd = {
   uuid: string;
@@ -34,17 +35,6 @@ type SuperbetStructItem = {
   localNames?: Record<string, string>;
 };
 
-const USER_AGENTS = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
-];
-
-function randomUserAgent() {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)] ?? USER_AGENTS[0];
-}
-
 function formatDateParam(date: Date) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}+${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:00`;
@@ -55,27 +45,30 @@ function nameMap(items: SuperbetStructItem[] | undefined, language: string) {
 }
 
 export class SuperbetClient {
-  private readonly headers: HeadersInit;
+  private readonly headers: Record<string, string>;
 
   constructor(private readonly config: SuperbetBookmakerConfig) {
     this.headers = {
       accept: "application/json",
       "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-      referer: config.referer,
-      "user-agent": randomUserAgent()
+      referer: config.referer
     };
   }
 
   async getStructMaps() {
-    const response = await fetch(new URL(`v2/${this.config.language}/struct`, this.config.baseUrl), { headers: this.headers });
-    if (!response.ok) throw new Error(`Superbet struct failed: ${response.status}`);
-
-    const payload = (await response.json()) as {
+    const payload = await httpClient<{
       data?: {
         categories?: SuperbetStructItem[];
         tournaments?: SuperbetStructItem[];
       };
-    };
+    }>({
+      url: new URL(`v2/${this.config.language}/struct`, this.config.baseUrl),
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 5000,
+      maxRetries: 0
+    });
 
     return {
       categories: nameMap(payload.data?.categories, this.config.language),
@@ -92,10 +85,14 @@ export class SuperbetClient {
       `sportId=${this.config.sportId}`
     ].join("&");
 
-    const response = await fetch(new URL(`v2/${this.config.language}/events/by-date?${query}`, this.config.baseUrl), { headers: this.headers });
-    if (!response.ok) throw new Error(`Superbet events by date failed: ${response.status}`);
-
-    const payload = (await response.json()) as { data?: SuperbetEvent[] };
+    const payload = await httpClient<{ data?: SuperbetEvent[] }>({
+      url: new URL(`v2/${this.config.language}/events/by-date?${query}`, this.config.baseUrl),
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 5000,
+      maxRetries: 0
+    });
     return Array.isArray(payload.data) ? payload.data : [];
   }
 }

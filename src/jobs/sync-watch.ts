@@ -48,10 +48,14 @@ while (true) {
   const todayKey = localDateKey(startedAt);
   console.log(`[${startedAt.toISOString()}] sincronizando odds${lastFixtureSyncDate === todayKey ? "" : " e fixtures"}...`);
 
+  console.log("[sync] limpando logs antigos...");
   await cleanupOldLogs();
+  console.log(lastFixtureSyncDate === todayKey ? "[sync] fixtures ja sincronizadas hoje; pulando API-Football." : "[sync] sincronizando fixtures via API-Football...");
   const fixtures = lastFixtureSyncDate === todayKey ? { skippedByWatchDate: true } : await syncApiFootballFixtures();
+  console.log("[sync] fixtures finalizadas.");
   lastFixtureSyncDate = todayKey;
-  const bookmakers = await collectAllBookmakers();
+
+  const bookmakers = await collectAllBookmakers({ concurrency: 2, logProgress: true });
   const minutesToNext = await getMinutesToNextFixture();
   const waitMs = nextIntervalMs(minutesToNext);
 

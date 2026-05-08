@@ -16,7 +16,7 @@ if (!slug) {
       const summary = await bookmaker.collect();
       console.log(JSON.stringify({ bookmaker: bookmaker.slug, summary }, null, 2));
     } catch (error) {
-      console.error(error);
+      console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     }
   }

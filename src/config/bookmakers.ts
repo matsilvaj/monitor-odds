@@ -1,5 +1,7 @@
 import { env } from "./env.js";
 
+export type BookmakerHttpEngine = "fetch" | "got-scraping";
+
 export type AltenarBookmakerConfig = {
   slug: string;
   name: string;
@@ -9,6 +11,7 @@ export type AltenarBookmakerConfig = {
   baseUrl: string;
   origin: string;
   referer: string;
+  engine: BookmakerHttpEngine;
 };
 
 export type SportingbetBookmakerConfig = {
@@ -20,6 +23,7 @@ export type SportingbetBookmakerConfig = {
   accessId: string;
   referer: string;
   take: number;
+  engine: BookmakerHttpEngine;
 };
 
 export type SportybetBookmakerConfig = {
@@ -31,6 +35,7 @@ export type SportybetBookmakerConfig = {
   referer: string;
   pageSize: number;
   maxPages: number;
+  engine: BookmakerHttpEngine;
 };
 
 export type VaidebetBookmakerConfig = {
@@ -43,8 +48,7 @@ export type VaidebetBookmakerConfig = {
   routeSegment: string;
   languageId: number;
   brand: string;
-  seasonNamePatterns: string[];
-  fallbackLeagueCardPath?: string;
+  engine: BookmakerHttpEngine;
 };
 
 export type SuperbetBookmakerConfig = {
@@ -56,11 +60,7 @@ export type SuperbetBookmakerConfig = {
   referer: string;
   language: string;
   sportId: number;
-  leagueNamePatterns: string[];
-  leagueMappings: Array<{
-    fixtureLeagueSlug: string;
-    sourcePattern: string;
-  }>;
+  engine: BookmakerHttpEngine;
 };
 
 export type BookmakerConfig =
@@ -79,7 +79,8 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     integration: "esportiva",
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://esportiva.bet.br",
-    referer: "https://esportiva.bet.br/"
+    referer: "https://esportiva.bet.br/",
+    engine: "fetch"
   },
   {
     slug: "estrelabet",
@@ -89,7 +90,8 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     integration: "estrelabet",
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://www.estrelabet.bet.br",
-    referer: "https://www.estrelabet.bet.br/"
+    referer: "https://www.estrelabet.bet.br/",
+    engine: "fetch"
   },
   {
     slug: "sportingbet",
@@ -99,7 +101,8 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: "https://www.sportingbet.bet.br/",
     accessId: "YTRhMjczYjctNTBlNy00MWZlLTliMGMtMWNkOWQxMThmZTI2",
     referer: "https://www.sportingbet.bet.br/pt-br/sports/futebol-4",
-    take: 200
+    take: 200,
+    engine: "got-scraping"
   },
   {
     slug: "sportybet",
@@ -109,7 +112,8 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: "https://www.sporty.bet.br/",
     referer: "https://www.sporty.bet.br/br/sport/football",
     pageSize: 100,
-    maxPages: 20
+    maxPages: 20,
+    engine: "fetch"
   },
   {
     slug: "vaidebet",
@@ -121,19 +125,7 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     routeSegment: "d",
     languageId: 23,
     brand: "vaidebet",
-    seasonNamePatterns: [
-      "CONMEBOL Libertadores|Copa Libertadores",
-      "Brasileiro Série A|Brasileirão Série A",
-      "UEFA Europa League",
-      "Premier League Inglaterra",
-      "Bundesliga Alemanha",
-      "La Liga 25/26|LaLiga Espanha",
-      "Série A 25/26|Serie A Italia",
-      "Liga 1 França",
-      "Liga Portugal"
-    ],
-    fallbackLeagueCardPath:
-      "api-v2/league-card/d/23/vaidebet/821269-823262-828788-830734-829881-831574-831977-833913-818206-817472-833507-834748-819675-833646/eyJyZXF1ZXN0Qm9keSI6eyJzZWFzb25JZHMiOls4MjEyNjksODIzMjYyLDgyODc4OCw4MzA3MzQsODI5ODgxLDgzMTU3NCw4MzE5NzcsODMzOTEzLDgxODIwNiw4MTc0NzIsODMzNTA3LDgzNDc0OCw4MTk2NzUsODMzNjQ2XX19"
+    engine: "fetch"
   },
   {
     slug: "esportesdasorte",
@@ -145,19 +137,7 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     routeSegment: "null",
     languageId: 23,
     brand: "esportesdasortevip",
-    seasonNamePatterns: [
-      "CONMEBOL Libertadores|Copa Libertadores",
-      "Brasileiro Série A|Brasileirão Série A",
-      "UEFA Europa League",
-      "Premier League Inglaterra",
-      "Bundesliga Alemanha",
-      "La Liga 25/26|LaLiga Espanha",
-      "Série A 25/26|Serie A Italia",
-      "Liga 1 França",
-      "Liga Portugal"
-    ],
-    fallbackLeagueCardPath:
-      "api-v2/league-card/null/23/esportesdasortevip/853558-828788-830734-829881-831574-833507-853604-818206-833913-853963-854167-831977-857258-771389-853363/eyJyZXF1ZXN0Qm9keSI6eyJzZWFzb25JZHMiOls4NTM1NTgsODI4Nzg4LDgzMDczNCw4Mjk4ODEsODMxNTc0LDgzMzUwNyw4NTM2MDQsODE4MjA2LDgzMzkxMyw4NTM5NjMsODU0MTY3LDgzMTk3Nyw4NTcyNTgsNzcxMzg5LDg1MzM2M119fQ=="
+    engine: "fetch"
   },
   {
     slug: "superbet",
@@ -168,25 +148,6 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     referer: "https://superbet.bet.br/",
     language: "pt-BR",
     sportId: 5,
-    leagueNamePatterns: [
-      "CONMEBOL Libertadores|Copa Libertadores",
-      "Brasileiro Série A|Brasileirão Série A|Brazil - Serie A|Brasil - Série A",
-      "UEFA Europa League|Europa League",
-      "Premier League|Inglaterra - Premiership",
-      "Bundesliga|Alemanha - Bundesliga",
-      "La Liga|Espanha - La Liga",
-      "Serie A|Série A|Itália - Série A",
-      "Ligue 1|Liga 1|França - Ligue 1"
-    ],
-    leagueMappings: [
-      { fixtureLeagueSlug: "libertadores", sourcePattern: "CONMEBOL Libertadores|Copa Libertadores" },
-      { fixtureLeagueSlug: "brasileirao", sourcePattern: "Brasil - Brasileiro - Série A|Brazil - Serie A" },
-      { fixtureLeagueSlug: "europa-league", sourcePattern: "UEFA Europa League|Europa League" },
-      { fixtureLeagueSlug: "premier-league", sourcePattern: "Inglaterra - Premier League|Inglaterra - Premiership|England - Premier League" },
-      { fixtureLeagueSlug: "bundesliga", sourcePattern: "Alemanha - Bundesliga$|Germany - Bundesliga$" },
-      { fixtureLeagueSlug: "la-liga", sourcePattern: "Espanha - LaLiga$|Spain - LaLiga$|Espanha - La Liga$|Spain - La Liga$" },
-      { fixtureLeagueSlug: "serie-a", sourcePattern: "Itália - Série A$|Italy - Serie A$" },
-      { fixtureLeagueSlug: "ligue-1", sourcePattern: "França - Ligue 1$|France - Ligue 1$" }
-    ]
+    engine: "fetch"
   }
 ];

@@ -1,9 +1,11 @@
 import type { SportingbetBookmakerConfig } from "../config/bookmakers.js";
 import { env } from "../config/env.js";
 import { supabase } from "../db/supabase.js";
+import { matchEvents } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { nameSimilarity, normalizeName } from "../domain/text.js";
 import { SportingbetClient, type SportingbetFixture, type SportingbetMarket, type SportingbetOption } from "../providers/sportingbet.js";
+import { errorMessage } from "../utils/errors.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -73,28 +75,28 @@ function teamNames(fixture: SportingbetFixture) {
 
 function matchFixture(event: SportingbetFixture, fixtures: CanonicalFixture[]) {
   const { homeTeam, awayTeam } = teamNames(event);
-  const eventStart = new Date(event.startDate).getTime();
-
   let best: { fixture: CanonicalFixture; score: number } | null = null;
   for (const fixture of fixtures) {
-    const fixtureStart = new Date(fixture.starts_at).getTime();
-    const hoursApart = Math.abs(fixtureStart - eventStart) / 36e5;
-    if (!Number.isFinite(hoursApart) || hoursApart > 12) continue;
-
-    const homeScore = Math.max(
-      nameSimilarity(homeTeam, fixture.normalized_home_team ?? fixture.home_team),
-      nameSimilarity(homeTeam, fixture.away_team)
+    const result = matchEvents(
+      {
+        id: fixture.id,
+        startsAt: fixture.starts_at,
+        homeTeam: fixture.home_team,
+        awayTeam: fixture.away_team
+      },
+      {
+        id: event.id,
+        startsAt: event.startDate,
+        homeTeam,
+        awayTeam
+      }
     );
-    const awayScore = Math.max(
-      nameSimilarity(awayTeam, fixture.normalized_away_team ?? fixture.away_team),
-      nameSimilarity(awayTeam, fixture.home_team)
-    );
-    const score = (homeScore + awayScore) / 2 - hoursApart * 0.02;
 
-    if (!best || score > best.score) best = { fixture, score };
+    if (!result.matched) continue;
+    if (!best || result.score > best.score) best = { fixture, score: result.score };
   }
 
-  if (!best || best.score < 0.55) return null;
+  if (!best) return null;
   return { ...best, homeTeam, awayTeam };
 }
 
@@ -104,7 +106,7 @@ function isNearCanonicalFixtureWindow(event: SportingbetFixture, fixtures: Canon
 
   return fixtures.some((fixture) => {
     const fixtureStart = new Date(fixture.starts_at).getTime();
-    return Number.isFinite(fixtureStart) && Math.abs(fixtureStart - eventStart) / 36e5 <= 12;
+    return Number.isFinite(fixtureStart) && Math.abs(fixtureStart - eventStart) <= 20 * 60 * 1000;
   });
 }
 
@@ -214,7 +216,8 @@ export function createSportingbetCollector(bookmaker: SportingbetBookmakerConfig
       eventsMatched: 0,
       eventsUnmatched: 0,
       oddsUpserted: 0,
-      errors: 0
+      errors: 0,
+      lastError: null as string | null
     };
 
     await ensureBaseRows(bookmaker);
@@ -246,11 +249,13 @@ export function createSportingbetCollector(bookmaker: SportingbetBookmakerConfig
           summary.eventsMatched += 1;
         } catch (error) {
           summary.errors += 1;
+          summary.lastError = errorMessage(error);
           await log(bookmaker, "error", "sportingbet event collection failed", { eventId: event.id, error: serializeError(error) });
         }
       }
     } catch (error) {
       summary.errors += 1;
+      summary.lastError = errorMessage(error);
       await log(bookmaker, "error", "sportingbet collection failed", { error: serializeError(error) });
     }
 

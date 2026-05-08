@@ -1,16 +1,15 @@
+import pMap from "p-map";
 import type { AltenarBookmakerConfig } from "../config/bookmakers.js";
-import { MVP_LEAGUES } from "../config/leagues.js";
 import { env } from "../config/env.js";
+import { MVP_LEAGUES } from "../config/leagues.js";
 import { supabase } from "../db/supabase.js";
+import { matchEvents } from "../domain/matching/event-matcher.js";
 import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/normalize.js";
-import { nameSimilarity, normalizeName } from "../domain/text.js";
+import { normalizeName } from "../domain/text.js";
 import { AltenarClient, type AltenarEventDetails, type AltenarMarket, type AltenarOdd } from "../providers/altenar.js";
+import { errorMessage } from "../utils/errors.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function collectDelayMs() {
-  return env.COLLECT_DELAY_MS + Math.floor(Math.random() * (env.COLLECT_JITTER_MS + 1));
-}
 
 function serializeError(error: unknown) {
   if (error instanceof Error) {
@@ -86,30 +85,28 @@ async function getCanonicalFixtures(apiFootballLeagueId: number) {
 
 function matchFixture(details: AltenarEventDetails, fixtures: CanonicalFixture[]) {
   const { homeTeam, awayTeam } = splitTeams(details);
-  const eventStart = new Date(details.startDate).getTime();
-
   let best: { fixture: CanonicalFixture; score: number } | null = null;
   for (const fixture of fixtures) {
-    const fixtureStart = new Date(fixture.starts_at).getTime();
-    const hoursApart = Math.abs(fixtureStart - eventStart) / 36e5;
-    if (!Number.isFinite(hoursApart) || hoursApart > 12) continue;
-
-    const homeScore = Math.max(
-      nameSimilarity(homeTeam, fixture.normalized_home_team ?? fixture.home_team),
-      nameSimilarity(homeTeam, fixture.away_team)
+    const result = matchEvents(
+      {
+        id: fixture.id,
+        startsAt: fixture.starts_at,
+        homeTeam: fixture.home_team,
+        awayTeam: fixture.away_team
+      },
+      {
+        id: details.id,
+        startsAt: details.startDate,
+        homeTeam,
+        awayTeam
+      }
     );
-    const awayScore = Math.max(
-      nameSimilarity(awayTeam, fixture.normalized_away_team ?? fixture.away_team),
-      nameSimilarity(awayTeam, fixture.home_team)
-    );
-    const score = (homeScore + awayScore) / 2 - hoursApart * 0.02;
 
-    if (!best || score > best.score) {
-      best = { fixture, score };
-    }
+    if (!result.matched) continue;
+    if (!best || result.score > best.score) best = { fixture, score: result.score };
   }
 
-  if (!best || best.score < 0.55) return null;
+  if (!best) return null;
   return { ...best, homeTeam, awayTeam };
 }
 
@@ -119,7 +116,7 @@ function isNearCanonicalFixtureWindow(startDate: string, fixtures: CanonicalFixt
 
   return fixtures.some((fixture) => {
     const fixtureStart = new Date(fixture.starts_at).getTime();
-    return Number.isFinite(fixtureStart) && Math.abs(fixtureStart - eventStart) / 36e5 <= 12;
+    return Number.isFinite(fixtureStart) && Math.abs(fixtureStart - eventStart) <= 20 * 60 * 1000;
   });
 }
 
@@ -212,7 +209,8 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
       eventsMatched: 0,
       eventsUnmatched: 0,
       oddsUpserted: 0,
-      errors: 0
+      errors: 0,
+      lastError: null as string | null
     };
 
     await ensureBaseRows(bookmaker);
@@ -231,38 +229,45 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
         const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event.startDate, canonicalFixtures));
         summary.eventsInWindow += targetEvents.length;
 
-        for (const event of targetEvents) {
-          try {
-            await sleep(collectDelayMs());
-            const details = await client.getEventDetails(event.id);
+        await pMap(
+          targetEvents,
+          async (event) => {
+            try {
+              await sleep(env.COLLECT_DELAY_MS + Math.floor(Math.random() * 500));
+              const details = await client.getEventDetails(event.id);
 
-            const matched = matchFixture(details, canonicalFixtures);
-            if (!matched) {
-              summary.eventsUnmatched += 1;
-              await log(bookmaker, "warn", "bookmaker event did not match canonical fixture", {
+              const matched = matchFixture(details, canonicalFixtures);
+              if (!matched) {
+                summary.eventsUnmatched += 1;
+                await log(bookmaker, "warn", "bookmaker event did not match canonical fixture", {
+                  league: league.slug,
+                  eventId: event.id,
+                  eventName: event.name
+                });
+                return;
+              }
+
+              await upsertBookmakerLink(bookmaker, matched.fixture.id, details, matched.score);
+              const oddsCount = await replaceMoneylineOdds(bookmaker, matched.fixture.id, details);
+
+              summary.eventsMatched += 1;
+              summary.eventsCollected += 1;
+              summary.oddsUpserted += oddsCount;
+            } catch (error) {
+              summary.errors += 1;
+              summary.lastError = errorMessage(error);
+              await log(bookmaker, "error", "event collection failed", {
                 league: league.slug,
                 eventId: event.id,
-                eventName: event.name
+                error: serializeError(error)
               });
-              continue;
             }
-
-            await upsertBookmakerLink(bookmaker, matched.fixture.id, details, matched.score);
-            const oddsCount = await replaceMoneylineOdds(bookmaker, matched.fixture.id, details);
-            summary.eventsMatched += 1;
-            summary.eventsCollected += 1;
-            summary.oddsUpserted += oddsCount;
-          } catch (error) {
-            summary.errors += 1;
-            await log(bookmaker, "error", "event collection failed", {
-              league: league.slug,
-              eventId: event.id,
-              error: serializeError(error)
-            });
-          }
-        }
+          },
+          { concurrency: 4 }
+        );
       } catch (error) {
         summary.errors += 1;
+        summary.lastError = errorMessage(error);
         await log(bookmaker, "error", "league collection failed", {
           league: league.slug,
           error: serializeError(error)

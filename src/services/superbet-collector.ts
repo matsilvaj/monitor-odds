@@ -1,8 +1,10 @@
 import type { SuperbetBookmakerConfig } from "../config/bookmakers.js";
 import { supabase } from "../db/supabase.js";
+import { matchEvents } from "../domain/matching/event-matcher.js";
 import type { Selection } from "../domain/normalize.js";
-import { nameSimilarity, normalizeName } from "../domain/text.js";
+import { normalizeName } from "../domain/text.js";
 import { SuperbetClient, type SuperbetEvent, type SuperbetOdd } from "../providers/superbet.js";
+import { errorMessage } from "../utils/errors.js";
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -18,18 +20,6 @@ type CanonicalFixture = {
   id: string;
   api_football_fixture_id: number;
   name: string;
-  league:
-    | {
-        name: string;
-        slug: string;
-        api_football_league_id: number;
-      }
-    | Array<{
-        name: string;
-        slug: string;
-        api_football_league_id: number;
-      }>
-    | null;
   home_team: string | null;
   away_team: string | null;
   normalized_home_team: string | null;
@@ -57,101 +47,52 @@ async function getCanonicalFixtures() {
 
   const { data, error } = await supabase
     .from("fixtures")
-    .select("id,api_football_fixture_id,name,league:leagues(name,slug,api_football_league_id),home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
+    .select("id,api_football_fixture_id,name,home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
     .gt("starts_at", now.toISOString())
     .lt("starts_at", end.toISOString())
     .order("starts_at", { ascending: true });
 
   if (error) throw error;
-  return (data ?? []) as unknown as CanonicalFixture[];
-}
-
-function fixtureLeague(fixture: CanonicalFixture) {
-  return Array.isArray(fixture.league) ? fixture.league[0] ?? null : fixture.league;
-}
-
-function compactNormalized(value: unknown) {
-  return normalizeName(value).replace(/\s+/g, "");
-}
-
-function mappedLeagueMatches(bookmaker: SuperbetBookmakerConfig, event: SuperbetEvent, fixture: CanonicalFixture) {
-  const league = fixtureLeague(fixture);
-  const eventLeagueText = `${event.sourceCategoryName ?? ""} ${event.sourceTournamentName ?? ""}`;
-
-  return bookmaker.leagueMappings.some(
-    (mapping) => mapping.fixtureLeagueSlug === league?.slug && new RegExp(mapping.sourcePattern, "i").test(eventLeagueText)
-  );
-}
-
-function leagueSimilarity(bookmaker: SuperbetBookmakerConfig, event: SuperbetEvent, fixture: CanonicalFixture) {
-  if (mappedLeagueMatches(bookmaker, event, fixture)) return 1;
-
-  const eventLeagueText = `${event.sourceCategoryName ?? ""} ${event.sourceTournamentName ?? ""}`;
-  const fixtureLeagueText = fixtureLeague(fixture)?.name ?? "";
-  const eventCompact = compactNormalized(eventLeagueText);
-  const fixtureCompact = compactNormalized(fixtureLeagueText);
-
-  if (!eventCompact || !fixtureCompact) return 0;
-  if (eventCompact === fixtureCompact) return 1;
-  if (eventCompact.includes(fixtureCompact) || fixtureCompact.includes(eventCompact)) return 0.95;
-
-  return nameSimilarity(eventLeagueText, fixtureLeagueText);
+  return (data ?? []) as CanonicalFixture[];
 }
 
 function splitTeams(event: SuperbetEvent) {
-  const [homeTeam, awayTeam] = String(event.matchName ?? "").split("·");
+  const [homeTeam, awayTeam] = String(event.matchName ?? "").split(/[·Â]+/);
   return { homeTeam: homeTeam?.trim() || null, awayTeam: awayTeam?.trim() || null };
 }
 
-function teamPairScore(event: SuperbetEvent, fixture: CanonicalFixture) {
+function matchFixture(event: SuperbetEvent, fixtures: CanonicalFixture[]) {
   const { homeTeam, awayTeam } = splitTeams(event);
-  const directHome = nameSimilarity(homeTeam, fixture.normalized_home_team ?? fixture.home_team);
-  const directAway = nameSimilarity(awayTeam, fixture.normalized_away_team ?? fixture.away_team);
-  const swappedHome = nameSimilarity(homeTeam, fixture.away_team);
-  const swappedAway = nameSimilarity(awayTeam, fixture.home_team);
-  return Math.max((directHome + directAway) / 2, (swappedHome + swappedAway) / 2);
-}
+  let best: { fixture: CanonicalFixture; score: number } | null = null;
 
-function matchesConfiguredLeague(bookmaker: SuperbetBookmakerConfig, event: SuperbetEvent) {
-  const haystack = `${event.sourceCategoryName ?? ""} ${event.sourceTournamentName ?? ""}`;
-  return (
-    bookmaker.leagueMappings.some((mapping) => new RegExp(mapping.sourcePattern, "i").test(haystack)) ||
-    bookmaker.leagueNamePatterns.some((pattern) => new RegExp(pattern, "i").test(haystack))
-  );
-}
-
-function matchFixture(bookmaker: SuperbetBookmakerConfig, event: SuperbetEvent, fixtures: CanonicalFixture[]) {
-  const eventStart = Number(event.unixDateMillis ?? Date.parse(event.utcDate ?? ""));
-
-  const candidates: Array<{ fixture: CanonicalFixture; score: number; teamScore: number; hoursApart: number; leagueScore: number }> = [];
   for (const fixture of fixtures) {
-    const fixtureStart = new Date(fixture.starts_at).getTime();
-    const hoursApart = Math.abs(fixtureStart - eventStart) / 36e5;
-    if (!Number.isFinite(hoursApart) || hoursApart > 0.35) continue;
+    const result = matchEvents(
+      {
+        id: fixture.id,
+        startsAt: fixture.starts_at,
+        homeTeam: fixture.home_team,
+        awayTeam: fixture.away_team
+      },
+      {
+        id: event.eventId,
+        startsAt: event.unixDateMillis ?? event.utcDate ?? "",
+        homeTeam,
+        awayTeam
+      }
+    );
 
-    const leagueScore = leagueSimilarity(bookmaker, event, fixture);
-    if (leagueScore < 0.55) continue;
-
-    const teamScore = teamPairScore(event, fixture);
-    const timeScore = 1 - hoursApart / 0.35;
-    const score = leagueScore * 0.55 + timeScore * 0.3 + teamScore * 0.15;
-    candidates.push({ fixture, score, teamScore, hoursApart, leagueScore });
-  }
-
-  if (!candidates.length) return null;
-
-  candidates.sort((left, right) => right.score - left.score);
-  const best = candidates[0];
-  if (!best) return null;
-
-  if (candidates.length > 1) {
-    const second = candidates[1];
-    if (best.teamScore >= 0.45) return best;
-    if (!second || (best.teamScore >= 0.2 && best.teamScore - second.teamScore >= 0.15)) return best;
-    return null;
+    if (!result.matched) continue;
+    if (!best || result.score > best.score) best = { fixture, score: result.score };
   }
 
   return best;
+}
+
+function isNearCanonicalFixtureWindow(event: SuperbetEvent, fixtures: CanonicalFixture[]) {
+  const eventStart = Number(event.unixDateMillis ?? Date.parse(event.utcDate ?? ""));
+  if (!Number.isFinite(eventStart)) return false;
+
+  return fixtures.some((fixture) => Math.abs(new Date(fixture.starts_at).getTime() - eventStart) <= 20 * 60 * 1000);
 }
 
 function isMoneylineOdd(odd: SuperbetOdd) {
@@ -250,13 +191,13 @@ export function createSuperbetCollector(bookmaker: SuperbetBookmakerConfig) {
     const client = new SuperbetClient(bookmaker);
     const summary = {
       eventsSeen: 0,
-      eventsInConfiguredLeagues: 0,
       eventsInWindow: 0,
       eventsCollected: 0,
       eventsMatched: 0,
       eventsUnmatched: 0,
       oddsUpserted: 0,
-      errors: 0
+      errors: 0,
+      lastError: null as string | null
     };
 
     await ensureBaseRows(bookmaker);
@@ -278,22 +219,13 @@ export function createSuperbetCollector(bookmaker: SuperbetBookmakerConfig) {
 
       summary.eventsSeen = events.length;
 
-      const configuredEvents = events.filter(matchesConfiguredLeague.bind(null, bookmaker));
-      summary.eventsInConfiguredLeagues = configuredEvents.length;
-
-      const targetEvents = configuredEvents.filter((event) =>
-        fixtures.some((fixture) => {
-          const eventStart = Number(event.unixDateMillis ?? Date.parse(event.utcDate ?? ""));
-          const fixtureStart = new Date(fixture.starts_at).getTime();
-          return Number.isFinite(eventStart) && Math.abs(fixtureStart - eventStart) / 36e5 <= 0.35;
-        })
-      );
+      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, fixtures));
       summary.eventsInWindow = targetEvents.length;
 
       const bestMatchByFixtureId = new Map<string, { event: SuperbetEvent; matched: NonNullable<ReturnType<typeof matchFixture>> }>();
 
       for (const event of targetEvents) {
-        const matched = matchFixture(bookmaker, event, fixtures);
+        const matched = matchFixture(event, fixtures);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;
@@ -313,11 +245,13 @@ export function createSuperbetCollector(bookmaker: SuperbetBookmakerConfig) {
           summary.eventsMatched += 1;
         } catch (error) {
           summary.errors += 1;
+          summary.lastError = errorMessage(error);
           await log(bookmaker, "error", "superbet event collection failed", { eventId: event.eventId, error: serializeError(error) });
         }
       }
     } catch (error) {
       summary.errors += 1;
+      summary.lastError = errorMessage(error);
       await log(bookmaker, "error", "superbet collection failed", { error: serializeError(error) });
     }
 

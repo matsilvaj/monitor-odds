@@ -1,3 +1,6 @@
+import type { BookmakerHttpEngine } from "../config/bookmakers.js";
+import { httpClient } from "../utils/http-client.js";
+
 export type AltenarEvent = {
   id: number;
   name: string;
@@ -45,34 +48,22 @@ export type AltenarEventDetails = {
   [key: string]: unknown;
 };
 
-const USER_AGENTS = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
-];
-
-function randomUserAgent() {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)] ?? USER_AGENTS[0];
-}
-
 export type AltenarClientConfig = {
   baseUrl: string;
   integration: string;
   origin: string;
   referer: string;
+  engine: BookmakerHttpEngine;
 };
 
 export class AltenarClient {
-  private readonly headers: HeadersInit;
+  private readonly headers: Record<string, string>;
 
   constructor(private readonly config: AltenarClientConfig) {
     this.headers = {
       accept: "application/json",
       origin: config.origin,
-      referer: config.referer,
-      "user-agent": randomUserAgent()
+      referer: config.referer
     };
   }
 
@@ -89,12 +80,12 @@ export class AltenarClient {
       champIds: String(champId)
     });
 
-    const response = await fetch(new URL(`widget/GetEvents?${params}`, this.config.baseUrl), { headers: this.headers });
-    if (!response.ok) {
-      throw new Error(`Altenar GetEvents failed: ${response.status}`);
-    }
-
-    const data = (await response.json()) as { events?: AltenarEvent[] };
+    const data = await httpClient<{ events?: AltenarEvent[] }>({
+      url: new URL(`widget/GetEvents?${params}`, this.config.baseUrl),
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine
+    });
     return Array.isArray(data.events) ? data.events : [];
   }
 
@@ -110,11 +101,11 @@ export class AltenarClient {
       showNonBoosts: "false"
     });
 
-    const response = await fetch(new URL(`widget/GetEventDetails?${params}`, this.config.baseUrl), { headers: this.headers });
-    if (!response.ok) {
-      throw new Error(`Altenar GetEventDetails failed: ${response.status}`);
-    }
-
-    return (await response.json()) as AltenarEventDetails;
+    return httpClient<AltenarEventDetails>({
+      url: new URL(`widget/GetEventDetails?${params}`, this.config.baseUrl),
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine
+    });
   }
 }
