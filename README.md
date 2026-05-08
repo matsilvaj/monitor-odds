@@ -1,6 +1,6 @@
 # Monitor Odds MVP
 
-MVP simplificado para sincronizar jogos pela API-Football, coletar odds pre-jogo da EsportivaBet/Altenar e servir uma API de pesquisa para um frontend Next.js.
+MVP simplificado para sincronizar jogos pela API-Football, coletar odds pre-jogo de casas Altenar configuradas e servir uma API de pesquisa para um frontend Next.js.
 
 Use este conector somente quando a coleta for permitida para o seu caso de uso. O projeto nao inclui logica para contornar bloqueios, captchas, autenticacao ou mecanismos anti-abuso.
 
@@ -20,7 +20,6 @@ Ou copie `supabase/schema.sql` e execute no SQL Editor do Supabase.
 ```bash
 npm run sync:fixtures
 npm run sync:odds
-npm run collect:esportiva
 npm run dev
 ```
 
@@ -64,7 +63,7 @@ GET  /v1/fixtures?search=flamengo
 GET  /v1/odds/search?q=flamengo
 GET  /v1/fixtures/:id/odds
 POST /internal/sync/fixtures
-POST /internal/collect/esportiva
+POST /internal/collect/:bookmaker
 POST /internal/sync/all
 ```
 
@@ -79,15 +78,18 @@ POST /internal/sync/all
 
 ## Fonte canonica
 
-A API-Football e a fonte canonica de jogos, ligas e times. No plano free atual, o MVP busca apenas D0 e D1. A Esportiva nao cria fixtures; ela apenas cria um vinculo em `bookmaker_event_links` quando o evento da casa bate com um fixture canonico por liga, horario e similaridade de nomes. Isso deixa o MVP pronto para adicionar novas casas sem refazer a base de jogos.
+A API-Football e a fonte canonica de jogos, ligas e times. No plano free atual, o MVP busca apenas D0 e D1. As casas nao criam fixtures; elas apenas criam um vinculo em `bookmaker_event_links` quando o evento da casa bate com um fixture canonico por liga, horario e similaridade de nomes. Isso deixa o MVP pronto para adicionar novas casas sem refazer a base de jogos.
 
 ## Mais casas
 
-Os coletores ficam registrados em `src/bookmakers/registry.ts`. Para adicionar uma nova casa:
+As casas ficam em `src/config/bookmakers.ts`. Para adicionar outra casa Altenar, adicione uma entrada na lista `BOOKMAKERS` com `slug`, `name`, `integration`, `origin` e `referer`.
 
-1. criar um provider/coletor da casa;
-2. registrar no `BOOKMAKER_COLLECTORS`;
-3. garantir que o coletor salve `bookmaker_event_links` e `odds` usando o `fixture_id` canonico.
+Para testar uma casa especifica:
+
+```bash
+npm run collect:bookmaker -- esportiva
+npm run collect:bookmaker -- estrelabet
+```
 
 ## GitHub
 

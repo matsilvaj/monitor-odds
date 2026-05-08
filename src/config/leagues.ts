@@ -13,4 +13,5 @@ export const MVP_LEAGUES: LeagueConfig[] = [
   { slug: "la-liga", name: "La Liga", apiFootballLeagueId: 140, altenarChampId: 2941 },
   { slug: "premier-league", name: "Premier League", apiFootballLeagueId: 39, altenarChampId: 2936 },
   { slug: "serie-a", name: "Serie A", apiFootballLeagueId: 135, altenarChampId: 2942 },
+  { slug: "ligue-1", name: "Ligue 1", apiFootballLeagueId: 61, altenarChampId: 2943 },
 ];

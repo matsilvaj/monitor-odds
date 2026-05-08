@@ -19,7 +19,13 @@ export function isMoneylineMarket(marketName: unknown, typeId?: unknown) {
     "match odds",
     "match winner",
     "moneyline",
-    "quem vence"
+    "quem vence",
+    "vencedor do encontro - super odds",
+    "vencedor do encontro - odds aumentadas",
+    "vencedor do encontro - odds turbinadas",
+    "resultado final - super odds",
+    "resultado final - odds aumentadas",
+    "resultado final - odds turbinadas"
   ]);
 
   if (exactAliases.has(text)) return true;

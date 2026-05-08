@@ -13,7 +13,7 @@
     "sync": "npm run sync:all",
     "sync:fixtures": "tsx src/jobs/sync-api-football.ts",
     "sync:odds": "tsx src/jobs/sync-odds.ts",
-    "collect:esportiva": "tsx src/jobs/collect-esportiva.ts",
+    "collect:bookmaker": "tsx src/jobs/collect-bookmaker.ts",
     "sync:all": "tsx src/jobs/sync-all.ts",
     "sync:watch": "tsx src/jobs/sync-watch.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"

@@ -1,5 +1,3 @@
-import { env } from "../config/env.js";
-
 export type AltenarEvent = {
   id: number;
   name: string;
@@ -59,17 +57,21 @@ function randomUserAgent() {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)] ?? USER_AGENTS[0];
 }
 
+export type AltenarClientConfig = {
+  baseUrl: string;
+  integration: string;
+  origin: string;
+  referer: string;
+};
+
 export class AltenarClient {
   private readonly headers: HeadersInit;
 
-  constructor(
-    private readonly baseUrl = env.ALTENAR_BASE_URL,
-    private readonly integration = env.ALTENAR_INTEGRATION
-  ) {
+  constructor(private readonly config: AltenarClientConfig) {
     this.headers = {
       accept: "application/json",
-      origin: "https://esportiva.bet.br",
-      referer: "https://esportiva.bet.br/",
+      origin: config.origin,
+      referer: config.referer,
       "user-agent": randomUserAgent()
     };
   }
@@ -78,7 +80,7 @@ export class AltenarClient {
     const params = new URLSearchParams({
       culture: "pt-BR",
       timezoneOffset: "180",
-      integration: this.integration,
+      integration: this.config.integration,
       deviceType: "2",
       numFormat: "en-GB",
       countryCode: "BR",
@@ -87,7 +89,7 @@ export class AltenarClient {
       champIds: String(champId)
     });
 
-    const response = await fetch(new URL(`widget/GetEvents?${params}`, this.baseUrl), { headers: this.headers });
+    const response = await fetch(new URL(`widget/GetEvents?${params}`, this.config.baseUrl), { headers: this.headers });
     if (!response.ok) {
       throw new Error(`Altenar GetEvents failed: ${response.status}`);
     }
@@ -100,7 +102,7 @@ export class AltenarClient {
     const params = new URLSearchParams({
       culture: "pt-BR",
       timezoneOffset: "180",
-      integration: this.integration,
+      integration: this.config.integration,
       deviceType: "1",
       numFormat: "en-GB",
       countryCode: "BR",
@@ -108,7 +110,7 @@ export class AltenarClient {
       showNonBoosts: "false"
     });
 
-    const response = await fetch(new URL(`widget/GetEventDetails?${params}`, this.baseUrl), { headers: this.headers });
+    const response = await fetch(new URL(`widget/GetEventDetails?${params}`, this.config.baseUrl), { headers: this.headers });
     if (!response.ok) {
       throw new Error(`Altenar GetEventDetails failed: ${response.status}`);
     }

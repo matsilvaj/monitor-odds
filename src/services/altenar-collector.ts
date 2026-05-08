@@ -1,11 +1,10 @@
+import type { AltenarBookmakerConfig } from "../config/bookmakers.js";
 import { MVP_LEAGUES } from "../config/leagues.js";
 import { env } from "../config/env.js";
 import { supabase } from "../db/supabase.js";
 import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/normalize.js";
 import { nameSimilarity, normalizeName } from "../domain/text.js";
 import { AltenarClient, type AltenarEventDetails, type AltenarMarket, type AltenarOdd } from "../providers/altenar.js";
-
-const BOOKMAKER = { slug: "esportiva", name: "EsportivaBet" };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -44,17 +43,17 @@ function splitTeams(details: AltenarEventDetails) {
   return { homeTeam: parts[0]?.trim() || null, awayTeam: parts[1]?.trim() || null };
 }
 
-async function log(level: "info" | "warn" | "error", message: string, context: Record<string, unknown> = {}) {
+async function log(bookmaker: AltenarBookmakerConfig, level: "info" | "warn" | "error", message: string, context: Record<string, unknown> = {}) {
   await supabase.from("collection_logs").insert({
-    bookmaker_slug: BOOKMAKER.slug,
+    bookmaker_slug: bookmaker.slug,
     level,
     message,
     context
   });
 }
 
-async function ensureBaseRows() {
-  const { error: bookmakerError } = await supabase.from("bookmakers").upsert(BOOKMAKER, { onConflict: "slug" });
+async function ensureBaseRows(bookmaker: AltenarBookmakerConfig) {
+  const { error: bookmakerError } = await supabase.from("bookmakers").upsert({ slug: bookmaker.slug, name: bookmaker.name }, { onConflict: "slug" });
   if (bookmakerError) throw bookmakerError;
 }
 
@@ -71,7 +70,7 @@ type CanonicalFixture = {
 
 async function getCanonicalFixtures(apiFootballLeagueId: number) {
   const now = new Date();
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 3, 0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2, 0, 0, 0, 0);
 
   const { data, error } = await supabase
     .from("fixtures")
@@ -124,15 +123,15 @@ function isNearCanonicalFixtureWindow(startDate: string, fixtures: CanonicalFixt
   });
 }
 
-async function upsertBookmakerLink(fixtureId: string, details: AltenarEventDetails, confidenceScore: number) {
+async function upsertBookmakerLink(bookmaker: AltenarBookmakerConfig, fixtureId: string, details: AltenarEventDetails, confidenceScore: number) {
   const { homeTeam, awayTeam } = splitTeams(details);
-  const sourceUrl = `https://esportiva.bet.br/sports/futebol/evento/ev-${details.id}`;
+  const sourceUrl = `${bookmaker.referer.replace(/\/$/, "")}/sports/futebol/evento/ev-${details.id}`;
 
   const { error } = await supabase
     .from("bookmaker_event_links")
     .upsert(
       {
-        bookmaker_slug: BOOKMAKER.slug,
+        bookmaker_slug: bookmaker.slug,
         external_event_id: details.id,
         fixture_id: fixtureId,
         bookmaker_event_name: details.name,
@@ -152,7 +151,7 @@ async function upsertBookmakerLink(fixtureId: string, details: AltenarEventDetai
   if (error) throw error;
 }
 
-async function replaceMoneylineOdds(fixtureId: string, details: AltenarEventDetails) {
+async function replaceMoneylineOdds(bookmaker: AltenarBookmakerConfig, fixtureId: string, details: AltenarEventDetails) {
   const markets = [...(details.markets ?? []), ...(details.childMarkets ?? [])].filter((market) =>
     isMoneylineMarket(market.name ?? market.shortName, market.typeId)
   );
@@ -171,7 +170,7 @@ async function replaceMoneylineOdds(fixtureId: string, details: AltenarEventDeta
       const pa = classifyPa(market.name, market.shortName, odd.name, JSON.stringify(market.offers ?? ""), JSON.stringify(odd.offers ?? ""));
       rows.push({
         fixture_id: fixtureId,
-        bookmaker_slug: BOOKMAKER.slug,
+        bookmaker_slug: bookmaker.slug,
         market_code: "1X2",
         market_name: "MoneyLine",
         selection,
@@ -190,7 +189,7 @@ async function replaceMoneylineOdds(fixtureId: string, details: AltenarEventDeta
 
   const uniqueRows = [...new Map(rows.map((row) => [`${row.fixture_id}:${row.bookmaker_slug}:${row.market_code}:${row.selection}:${row.pa_category}:${row.source_odd_id}`, row])).values()];
 
-  await supabase.from("odds").delete().eq("fixture_id", fixtureId).eq("bookmaker_slug", BOOKMAKER.slug).eq("market_code", "1X2");
+  await supabase.from("odds").delete().eq("fixture_id", fixtureId).eq("bookmaker_slug", bookmaker.slug).eq("market_code", "1X2");
 
   if (!uniqueRows.length) return 0;
 
@@ -202,74 +201,76 @@ async function replaceMoneylineOdds(fixtureId: string, details: AltenarEventDeta
   return uniqueRows.length;
 }
 
-export async function collectEsportiva() {
-  const client = new AltenarClient();
-  const summary = {
-    leagues: 0,
-    eventsSeen: 0,
-    eventsInWindow: 0,
-    eventsCollected: 0,
-    eventsMatched: 0,
-    eventsUnmatched: 0,
-    oddsUpserted: 0,
-    errors: 0
-  };
+export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
+  return async function collectAltenarBookmaker() {
+    const client = new AltenarClient(bookmaker);
+    const summary = {
+      leagues: 0,
+      eventsSeen: 0,
+      eventsInWindow: 0,
+      eventsCollected: 0,
+      eventsMatched: 0,
+      eventsUnmatched: 0,
+      oddsUpserted: 0,
+      errors: 0
+    };
 
-  await ensureBaseRows();
+    await ensureBaseRows(bookmaker);
 
-  for (const league of MVP_LEAGUES) {
-    summary.leagues += 1;
-    const canonicalFixtures = await getCanonicalFixtures(league.apiFootballLeagueId);
-    if (!canonicalFixtures.length) {
-      await log("warn", "no canonical fixtures for league; run api-football sync first", { league: league.slug });
-      continue;
-    }
+    for (const league of MVP_LEAGUES) {
+      summary.leagues += 1;
+      const canonicalFixtures = await getCanonicalFixtures(league.apiFootballLeagueId);
+      if (!canonicalFixtures.length) {
+        await log(bookmaker, "warn", "no canonical fixtures for league; run api-football sync first", { league: league.slug });
+        continue;
+      }
 
-    try {
-      const events = await client.getEvents(league.altenarChampId);
-      summary.eventsSeen += events.length;
-      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event.startDate, canonicalFixtures));
-      summary.eventsInWindow += targetEvents.length;
+      try {
+        const events = await client.getEvents(league.altenarChampId);
+        summary.eventsSeen += events.length;
+        const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event.startDate, canonicalFixtures));
+        summary.eventsInWindow += targetEvents.length;
 
-      for (const event of targetEvents) {
-        try {
-          await sleep(collectDelayMs());
-          const details = await client.getEventDetails(event.id);
+        for (const event of targetEvents) {
+          try {
+            await sleep(collectDelayMs());
+            const details = await client.getEventDetails(event.id);
 
-          const matched = matchFixture(details, canonicalFixtures);
-          if (!matched) {
-            summary.eventsUnmatched += 1;
-            await log("warn", "bookmaker event did not match canonical fixture", {
+            const matched = matchFixture(details, canonicalFixtures);
+            if (!matched) {
+              summary.eventsUnmatched += 1;
+              await log(bookmaker, "warn", "bookmaker event did not match canonical fixture", {
+                league: league.slug,
+                eventId: event.id,
+                eventName: event.name
+              });
+              continue;
+            }
+
+            await upsertBookmakerLink(bookmaker, matched.fixture.id, details, matched.score);
+            const oddsCount = await replaceMoneylineOdds(bookmaker, matched.fixture.id, details);
+            summary.eventsMatched += 1;
+            summary.eventsCollected += 1;
+            summary.oddsUpserted += oddsCount;
+          } catch (error) {
+            summary.errors += 1;
+            await log(bookmaker, "error", "event collection failed", {
               league: league.slug,
               eventId: event.id,
-              eventName: event.name
+              error: serializeError(error)
             });
-            continue;
           }
-
-          await upsertBookmakerLink(matched.fixture.id, details, matched.score);
-          const oddsCount = await replaceMoneylineOdds(matched.fixture.id, details);
-          summary.eventsMatched += 1;
-          summary.eventsCollected += 1;
-          summary.oddsUpserted += oddsCount;
-        } catch (error) {
-          summary.errors += 1;
-          await log("error", "event collection failed", {
-            league: league.slug,
-            eventId: event.id,
-            error: serializeError(error)
-          });
         }
+      } catch (error) {
+        summary.errors += 1;
+        await log(bookmaker, "error", "league collection failed", {
+          league: league.slug,
+          error: serializeError(error)
+        });
       }
-    } catch (error) {
-      summary.errors += 1;
-      await log("error", "league collection failed", {
-        league: league.slug,
-        error: serializeError(error)
-      });
     }
-  }
 
-  await log("info", "esportiva collection finished", summary);
-  return summary;
+    await log(bookmaker, "info", `${bookmaker.slug} collection finished`, summary);
+    return summary;
+  };
 }

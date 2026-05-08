@@ -3,8 +3,7 @@ import Fastify from "fastify";
 import { env } from "../config/env.js";
 import { supabase } from "../db/supabase.js";
 import { syncApiFootballFixtures } from "../services/api-football-sync.js";
-import { collectEsportiva } from "../services/esportiva-collector.js";
-import { collectAllBookmakers } from "../bookmakers/registry.js";
+import { BOOKMAKER_COLLECTORS, collectAllBookmakers } from "../bookmakers/registry.js";
 import { cleanupOldLogs } from "../services/log-retention.js";
 
 export function buildServer() {
@@ -123,7 +122,7 @@ export function buildServer() {
     return { data: { ...fixture, odds: groupByPa(odds ?? []) } };
   });
 
-  app.post("/internal/collect/esportiva", async (request, reply) => {
+  app.post("/internal/collect/:bookmaker", async (request, reply) => {
     if (env.INTERNAL_COLLECT_TOKEN) {
       const token = request.headers["x-internal-token"];
       if (token !== env.INTERNAL_COLLECT_TOKEN) {
@@ -131,9 +130,15 @@ export function buildServer() {
       }
     }
 
+    const params = request.params as { bookmaker: string };
+    const bookmaker = BOOKMAKER_COLLECTORS.find((item) => item.slug === params.bookmaker);
+    if (!bookmaker) {
+      return reply.code(404).send({ error: "bookmaker not configured" });
+    }
+
     await cleanupOldLogs();
-    const summary = await collectEsportiva();
-    return { data: summary };
+    const summary = await bookmaker.collect();
+    return { data: { bookmaker: bookmaker.slug, summary } };
   });
 
   app.post("/internal/sync/fixtures", async (request, reply) => {
