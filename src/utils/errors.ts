@@ -1,4 +1,10 @@
 export function errorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
-  return String(error);
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") return error.message;
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }

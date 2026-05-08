@@ -1,4 +1,5 @@
 import type { SportybetBookmakerConfig } from "../config/bookmakers.js";
+import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
@@ -125,31 +126,26 @@ function externalEventId(eventId: string) {
   return Number(numeric);
 }
 
-async function upsertBookmakerLink(bookmaker: SportybetBookmakerConfig, fixtureId: string, event: SportybetEvent, confidenceScore: number) {
-  const { error } = await supabase.from("bookmaker_event_links").upsert(
-    {
-      bookmaker_slug: bookmaker.slug,
-      external_event_id: externalEventId(event.eventId),
-      fixture_id: fixtureId,
-      bookmaker_event_name: [event.homeTeamName, event.awayTeamName].filter(Boolean).join(" vs "),
-      bookmaker_home_team: event.homeTeamName ?? null,
-      bookmaker_away_team: event.awayTeamName ?? null,
-      normalized_bookmaker_home_team: normalizeName(event.homeTeamName),
-      normalized_bookmaker_away_team: normalizeName(event.awayTeamName),
-      starts_at: new Date(event.estimateStartTime).toISOString(),
-      match_confidence_score: confidenceScore,
-      source_url: bookmaker.referer,
-      raw: event,
-      updated_at: new Date().toISOString()
-    },
-    { onConflict: "bookmaker_slug,external_event_id" }
-  );
-
-  if (error) throw error;
+function buildBookmakerLink(bookmaker: SportybetBookmakerConfig, fixtureId: string, event: SportybetEvent, confidenceScore: number): BookmakerLinkRow {
+  return {
+    bookmaker_slug: bookmaker.slug,
+    external_event_id: externalEventId(event.eventId),
+    fixture_id: fixtureId,
+    bookmaker_event_name: [event.homeTeamName, event.awayTeamName].filter(Boolean).join(" vs "),
+    bookmaker_home_team: event.homeTeamName ?? null,
+    bookmaker_away_team: event.awayTeamName ?? null,
+    normalized_bookmaker_home_team: normalizeName(event.homeTeamName),
+    normalized_bookmaker_away_team: normalizeName(event.awayTeamName),
+    starts_at: new Date(event.estimateStartTime).toISOString(),
+    match_confidence_score: confidenceScore,
+    source_url: bookmaker.referer,
+    raw: event,
+    updated_at: new Date().toISOString()
+  };
 }
 
-async function replaceMoneylineOdds(bookmaker: SportybetBookmakerConfig, fixtureId: string, event: SportybetEvent) {
-  const rows = [];
+function buildMoneylineOdds(bookmaker: SportybetBookmakerConfig, fixtureId: string, event: SportybetEvent): OddRow[] {
+  const rows: OddRow[] = [];
 
   for (const market of (event.markets ?? []).filter(isMoneylineMarket)) {
     const pa = paForMarket(market);
@@ -179,18 +175,7 @@ async function replaceMoneylineOdds(bookmaker: SportybetBookmakerConfig, fixture
     }
   }
 
-  const uniqueRows = [...new Map(rows.map((row) => [`${row.fixture_id}:${row.bookmaker_slug}:${row.market_code}:${row.selection}:${row.pa_category}:${row.source_odd_id}`, row])).values()];
-
-  await supabase.from("odds").delete().eq("fixture_id", fixtureId).eq("bookmaker_slug", bookmaker.slug).eq("market_code", "1X2");
-
-  if (!uniqueRows.length) return 0;
-
-  const { error } = await supabase.from("odds").upsert(uniqueRows, {
-    onConflict: "fixture_id,bookmaker_slug,market_code,selection,pa_category,source_odd_id"
-  });
-  if (error) throw error;
-
-  return uniqueRows.length;
+  return rows;
 }
 
 export function createSportybetCollector(bookmaker: SportybetBookmakerConfig) {
@@ -247,6 +232,8 @@ export function createSportybetCollector(bookmaker: SportybetBookmakerConfig) {
       const targetEvents = [...targetEventsById.values()];
       summary.eventsSeen = eventsById.size;
       summary.eventsInWindow = targetEvents.length;
+      const linksToSave: BookmakerLinkRow[] = [];
+      const oddsToSave: OddRow[] = [];
 
       for (const event of targetEvents) {
         try {
@@ -257,8 +244,8 @@ export function createSportybetCollector(bookmaker: SportybetBookmakerConfig) {
             continue;
           }
 
-          await upsertBookmakerLink(bookmaker, matched.fixture.id, event, matched.score);
-          summary.oddsUpserted += await replaceMoneylineOdds(bookmaker, matched.fixture.id, event);
+          linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
+          oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event));
           summary.eventsCollected += 1;
           summary.eventsMatched += 1;
         } catch (error) {
@@ -267,6 +254,8 @@ export function createSportybetCollector(bookmaker: SportybetBookmakerConfig) {
           await log(bookmaker, "error", "sportybet event collection failed", { eventId: event.eventId, error: serializeError(error) });
         }
       }
+
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

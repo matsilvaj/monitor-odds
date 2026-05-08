@@ -1,5 +1,6 @@
 import pMap from "p-map";
 import type { VaidebetBookmakerConfig } from "../config/bookmakers.js";
+import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
@@ -152,31 +153,26 @@ function sourceUrl(bookmaker: VaidebetBookmakerConfig, event: VaidebetFixture) {
   return `${bookmaker.baseUrl.replace(/\/$/, "")}/esportes/futebol/evento/${name}-${event.fId}`;
 }
 
-async function upsertBookmakerLink(bookmaker: VaidebetBookmakerConfig, fixtureId: string, event: VaidebetFixture, confidenceScore: number) {
-  const { error } = await supabase.from("bookmaker_event_links").upsert(
-    {
-      bookmaker_slug: bookmaker.slug,
-      external_event_id: event.fId,
-      fixture_id: fixtureId,
-      bookmaker_event_name: [event.hcN, event.acN].filter(Boolean).join(" vs "),
-      bookmaker_home_team: event.hcN ?? null,
-      bookmaker_away_team: event.acN ?? null,
-      normalized_bookmaker_home_team: normalizeName(event.hcN),
-      normalized_bookmaker_away_team: normalizeName(event.acN),
-      starts_at: new Date(event.fsd).toISOString(),
-      match_confidence_score: confidenceScore,
-      source_url: sourceUrl(bookmaker, event),
-      raw: event,
-      updated_at: new Date().toISOString()
-    },
-    { onConflict: "bookmaker_slug,external_event_id" }
-  );
-
-  if (error) throw error;
+function buildBookmakerLink(bookmaker: VaidebetBookmakerConfig, fixtureId: string, event: VaidebetFixture, confidenceScore: number): BookmakerLinkRow {
+  return {
+    bookmaker_slug: bookmaker.slug,
+    external_event_id: event.fId,
+    fixture_id: fixtureId,
+    bookmaker_event_name: [event.hcN, event.acN].filter(Boolean).join(" vs "),
+    bookmaker_home_team: event.hcN ?? null,
+    bookmaker_away_team: event.acN ?? null,
+    normalized_bookmaker_home_team: normalizeName(event.hcN),
+    normalized_bookmaker_away_team: normalizeName(event.acN),
+    starts_at: new Date(event.fsd).toISOString(),
+    match_confidence_score: confidenceScore,
+    source_url: sourceUrl(bookmaker, event),
+    raw: event,
+    updated_at: new Date().toISOString()
+  };
 }
 
-async function replaceMoneylineOdds(bookmaker: VaidebetBookmakerConfig, fixtureId: string, event: VaidebetFixture) {
-  const rows = [];
+function buildMoneylineOdds(bookmaker: VaidebetBookmakerConfig, fixtureId: string, event: VaidebetFixture): OddRow[] {
+  const rows: OddRow[] = [];
 
   for (const market of (event.btgs ?? []).filter(isMoneylineMarket)) {
     const pa = paForMarket(market);
@@ -206,18 +202,7 @@ async function replaceMoneylineOdds(bookmaker: VaidebetBookmakerConfig, fixtureI
     }
   }
 
-  const uniqueRows = [...new Map(rows.map((row) => [`${row.fixture_id}:${row.bookmaker_slug}:${row.market_code}:${row.selection}:${row.pa_category}:${row.source_odd_id}`, row])).values()];
-
-  await supabase.from("odds").delete().eq("fixture_id", fixtureId).eq("bookmaker_slug", bookmaker.slug).eq("market_code", "1X2");
-
-  if (!uniqueRows.length) return 0;
-
-  const { error } = await supabase.from("odds").upsert(uniqueRows, {
-    onConflict: "fixture_id,bookmaker_slug,market_code,selection,pa_category,source_odd_id"
-  });
-  if (error) throw error;
-
-  return uniqueRows.length;
+  return rows;
 }
 
 export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
@@ -270,6 +255,8 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
       summary.eventsInWindow = targetEvents.length;
 
       const bestMatchByFixtureId = new Map<string, { event: VaidebetFixture; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+      const linksToSave: BookmakerLinkRow[] = [];
+      const oddsToSave: OddRow[] = [];
 
       for (const event of targetEvents) {
         const matched = findBestMatch(event, fixtures);
@@ -286,8 +273,8 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
 
       for (const { event, matched } of bestMatchByFixtureId.values()) {
         try {
-          await upsertBookmakerLink(bookmaker, matched.fixture.id, event, matched.score);
-          summary.oddsUpserted += await replaceMoneylineOdds(bookmaker, matched.fixture.id, event);
+          linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
+          oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event));
           summary.eventsCollected += 1;
           summary.eventsMatched += 1;
         } catch (error) {
@@ -296,6 +283,8 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
           await log(bookmaker, "error", "vaidebet event collection failed", { eventId: event.fId, error: serializeError(error) });
         }
       }
+
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

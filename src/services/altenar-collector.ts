@@ -2,6 +2,7 @@ import pMap from "p-map";
 import type { AltenarBookmakerConfig } from "../config/bookmakers.js";
 import { env } from "../config/env.js";
 import { MVP_LEAGUES } from "../config/leagues.js";
+import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents } from "../domain/matching/event-matcher.js";
 import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/normalize.js";
@@ -120,41 +121,39 @@ function isNearCanonicalFixtureWindow(startDate: string, fixtures: CanonicalFixt
   });
 }
 
-async function upsertBookmakerLink(bookmaker: AltenarBookmakerConfig, fixtureId: string, details: AltenarEventDetails, confidenceScore: number) {
+function buildBookmakerLink(bookmaker: AltenarBookmakerConfig, fixtureId: string, details: AltenarEventDetails, confidenceScore: number): BookmakerLinkRow {
   const { homeTeam, awayTeam } = splitTeams(details);
   const sourceUrl = `${bookmaker.referer.replace(/\/$/, "")}/sports/futebol/evento/ev-${details.id}`;
 
-  const { error } = await supabase
-    .from("bookmaker_event_links")
-    .upsert(
-      {
-        bookmaker_slug: bookmaker.slug,
-        external_event_id: details.id,
-        fixture_id: fixtureId,
-        bookmaker_event_name: details.name,
-        bookmaker_home_team: homeTeam,
-        bookmaker_away_team: awayTeam,
-        normalized_bookmaker_home_team: normalizeName(homeTeam),
-        normalized_bookmaker_away_team: normalizeName(awayTeam),
-        starts_at: details.startDate,
-        match_confidence_score: confidenceScore,
-        source_url: sourceUrl,
-        raw: details,
-        updated_at: new Date().toISOString()
-      },
-      { onConflict: "bookmaker_slug,external_event_id" }
-    );
-
-  if (error) throw error;
+  return {
+    bookmaker_slug: bookmaker.slug,
+    external_event_id: details.id,
+    fixture_id: fixtureId,
+    bookmaker_event_name: details.name,
+    bookmaker_home_team: homeTeam,
+    bookmaker_away_team: awayTeam,
+    normalized_bookmaker_home_team: normalizeName(homeTeam),
+    normalized_bookmaker_away_team: normalizeName(awayTeam),
+    starts_at: details.startDate,
+    match_confidence_score: confidenceScore,
+    source_url: sourceUrl,
+    raw: {
+      id: details.id,
+      name: details.name,
+      startDate: details.startDate,
+      competitors: details.competitors
+    },
+    updated_at: new Date().toISOString()
+  };
 }
 
-async function replaceMoneylineOdds(bookmaker: AltenarBookmakerConfig, fixtureId: string, details: AltenarEventDetails) {
+function buildMoneylineOdds(bookmaker: AltenarBookmakerConfig, fixtureId: string, details: AltenarEventDetails): OddRow[] {
   const markets = [...(details.markets ?? []), ...(details.childMarkets ?? [])].filter((market) =>
     isMoneylineMarket(market.name ?? market.shortName, market.typeId)
   );
 
   const odds = details.odds ?? [];
-  const rows = [];
+  const rows: OddRow[] = [];
 
   for (const market of markets) {
     for (const oddId of flatOddIds(market)) {
@@ -171,7 +170,7 @@ async function replaceMoneylineOdds(bookmaker: AltenarBookmakerConfig, fixtureId
         market_code: "1X2",
         market_name: "MoneyLine",
         selection,
-        price: odd.price,
+        price: Number(odd.price),
         pa_category: pa.category,
         confidence_score: pa.confidence,
         raw_market_name: market.name ?? market.shortName ?? null,
@@ -184,18 +183,7 @@ async function replaceMoneylineOdds(bookmaker: AltenarBookmakerConfig, fixtureId
     }
   }
 
-  const uniqueRows = [...new Map(rows.map((row) => [`${row.fixture_id}:${row.bookmaker_slug}:${row.market_code}:${row.selection}:${row.pa_category}:${row.source_odd_id}`, row])).values()];
-
-  await supabase.from("odds").delete().eq("fixture_id", fixtureId).eq("bookmaker_slug", bookmaker.slug).eq("market_code", "1X2");
-
-  if (!uniqueRows.length) return 0;
-
-  const { error } = await supabase.from("odds").upsert(uniqueRows, {
-    onConflict: "fixture_id,bookmaker_slug,market_code,selection,pa_category,source_odd_id"
-  });
-  if (error) throw error;
-
-  return uniqueRows.length;
+  return rows;
 }
 
 export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
@@ -214,6 +202,8 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
+    const linksToSave: BookmakerLinkRow[] = [];
+    const oddsToSave: OddRow[] = [];
 
     for (const league of MVP_LEAGUES) {
       summary.leagues += 1;
@@ -247,12 +237,11 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
                 return;
               }
 
-              await upsertBookmakerLink(bookmaker, matched.fixture.id, details, matched.score);
-              const oddsCount = await replaceMoneylineOdds(bookmaker, matched.fixture.id, details);
+              linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, details, matched.score));
+              oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, details));
 
               summary.eventsMatched += 1;
               summary.eventsCollected += 1;
-              summary.oddsUpserted += oddsCount;
             } catch (error) {
               summary.errors += 1;
               summary.lastError = errorMessage(error);
@@ -273,6 +262,14 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
           error: serializeError(error)
         });
       }
+    }
+
+    try {
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+    } catch (error) {
+      summary.errors += 1;
+      summary.lastError = errorMessage(error);
+      await log(bookmaker, "error", "altenar bulk save failed", { error: serializeError(error) });
     }
 
     await log(bookmaker, "info", `${bookmaker.slug} collection finished`, summary);
