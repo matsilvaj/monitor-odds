@@ -5,6 +5,7 @@ import { supabase } from "../db/supabase.js";
 import { syncApiFootballFixtures } from "../services/api-football-sync.js";
 import { collectEsportiva } from "../services/esportiva-collector.js";
 import { collectAllBookmakers } from "../bookmakers/registry.js";
+import { cleanupOldLogs } from "../services/log-retention.js";
 
 export function buildServer() {
   const app = Fastify({ logger: true });
@@ -130,6 +131,7 @@ export function buildServer() {
       }
     }
 
+    await cleanupOldLogs();
     const summary = await collectEsportiva();
     return { data: summary };
   });
@@ -142,6 +144,7 @@ export function buildServer() {
       }
     }
 
+    await cleanupOldLogs();
     const summary = await syncApiFootballFixtures();
     return { data: summary };
   });
@@ -154,6 +157,7 @@ export function buildServer() {
       }
     }
 
+    await cleanupOldLogs();
     const fixtures = await syncApiFootballFixtures();
     const odds = await collectAllBookmakers();
     return { data: { fixtures, odds } };

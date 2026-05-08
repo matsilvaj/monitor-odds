@@ -1,5 +1,6 @@
 import { collectAllBookmakers } from "../bookmakers/registry.js";
 import { supabase } from "../db/supabase.js";
+import { cleanupOldLogs } from "../services/log-retention.js";
 import { syncApiFootballFixtures } from "../services/api-football-sync.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,6 +48,7 @@ while (true) {
   const todayKey = localDateKey(startedAt);
   console.log(`[${startedAt.toISOString()}] sincronizando odds${lastFixtureSyncDate === todayKey ? "" : " e fixtures"}...`);
 
+  await cleanupOldLogs();
   const fixtures = lastFixtureSyncDate === todayKey ? { skippedByWatchDate: true } : await syncApiFootballFixtures();
   lastFixtureSyncDate = todayKey;
   const bookmakers = await collectAllBookmakers();

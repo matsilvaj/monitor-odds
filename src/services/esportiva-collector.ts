@@ -9,6 +9,10 @@ const BOOKMAKER = { slug: "esportiva", name: "EsportivaBet" };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function collectDelayMs() {
+  return env.COLLECT_DELAY_MS + Math.floor(Math.random() * (env.COLLECT_JITTER_MS + 1));
+}
+
 function serializeError(error: unknown) {
   if (error instanceof Error) {
     return { name: error.name, message: error.message, stack: error.stack };
@@ -229,7 +233,7 @@ export async function collectEsportiva() {
 
       for (const event of targetEvents) {
         try {
-          await sleep(env.COLLECT_DELAY_MS);
+          await sleep(collectDelayMs());
           const details = await client.getEventDetails(event.id);
 
           const matched = matchFixture(details, canonicalFixtures);
