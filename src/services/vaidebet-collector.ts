@@ -1,5 +1,5 @@
+import pMap from "p-map";
 import type { VaidebetBookmakerConfig } from "../config/bookmakers.js";
-import { env } from "../config/env.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
@@ -8,10 +8,6 @@ import { VaidebetClient, type VaidebetFixture, type VaidebetMarket, type Vaidebe
 import { errorMessage } from "../utils/errors.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function collectDelayMs() {
-  return env.COLLECT_DELAY_MS + Math.floor(Math.random() * (env.COLLECT_JITTER_MS + 1));
-}
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -253,11 +249,21 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
       summary.seasonsSeen = seasons.length;
       summary.seasonsSelected = selectedSeasonIds.length;
 
-      const events: VaidebetFixture[] = [];
+      const chunks: number[][] = [];
       for (let index = 0; index < selectedSeasonIds.length; index += 20) {
-        await sleep(collectDelayMs());
-        events.push(...(await client.getLeagueCard(selectedSeasonIds.slice(index, index + 20))));
+        chunks.push(selectedSeasonIds.slice(index, index + 20));
       }
+
+      const events: VaidebetFixture[] = [];
+      await pMap(
+        chunks,
+        async (chunk) => {
+          await sleep(Math.floor(Math.random() * 500));
+          const chunkEvents = await client.getLeagueCard(chunk);
+          events.push(...chunkEvents);
+        },
+        { concurrency: 3 }
+      );
       summary.eventsSeen = events.length;
 
       const targetEvents = events.filter((event) => event.vld !== false && event.frz !== true && isNearCanonicalFixtureWindow(event, fixtures));

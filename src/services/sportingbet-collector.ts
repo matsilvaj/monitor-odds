@@ -1,17 +1,10 @@
 import type { SportingbetBookmakerConfig } from "../config/bookmakers.js";
-import { env } from "../config/env.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { nameSimilarity, normalizeName } from "../domain/text.js";
 import { SportingbetClient, type SportingbetFixture, type SportingbetMarket, type SportingbetOption } from "../providers/sportingbet.js";
 import { errorMessage } from "../utils/errors.js";
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function collectDelayMs() {
-  return env.COLLECT_DELAY_MS + Math.floor(Math.random() * (env.COLLECT_JITTER_MS + 1));
-}
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -242,7 +235,6 @@ export function createSportingbetCollector(bookmaker: SportingbetBookmakerConfig
             continue;
           }
 
-          await sleep(collectDelayMs());
           await upsertBookmakerLink(bookmaker, matched.fixture.id, event, matched.score);
           summary.oddsUpserted += await replaceMoneylineOdds(bookmaker, matched.fixture.id, event);
           summary.eventsCollected += 1;
