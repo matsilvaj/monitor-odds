@@ -107,6 +107,18 @@ export type BetesporteBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type BetnacionalBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "betnacional";
+  baseUrl: string;
+  apiBaseUrl: string;
+  searchBaseUrl: string;
+  referer: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type BookmakerConfig =
   | AltenarBookmakerConfig
   | SportingbetBookmakerConfig
@@ -116,7 +128,8 @@ export type BookmakerConfig =
   | NovibetBookmakerConfig
   | BetanoBookmakerConfig
   | BetfairBookmakerConfig
-  | BetesporteBookmakerConfig;
+  | BetesporteBookmakerConfig
+  | BetnacionalBookmakerConfig;
 
 export const BOOKMAKERS: BookmakerConfig[] = [
   {
@@ -237,5 +250,16 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: "https://betesporte.bet.br/",
     referer: "https://betesporte.bet.br/",
     engine: "fetch"
+  },
+  {
+    slug: "betnacional",
+    name: "Betnacional",
+    enabled: true,
+    provider: "betnacional",
+    baseUrl: "https://betnacional.bet.br/",
+    apiBaseUrl: "https://prod-global-bff-events.bet6.com.br/",
+    searchBaseUrl: "https://prod-search-svc.bet6.com.br/",
+    referer: "https://betnacional.bet.br/sports/1",
+    engine: "got-scraping"
   }
 ];

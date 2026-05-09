@@ -4,6 +4,7 @@ import { createAltenarCollector } from "../services/altenar-collector.js";
 import { createBetanoCollector } from "../services/betano-collector.js";
 import { createBetesporteCollector } from "../services/betesporte-collector.js";
 import { createBetfairCollector } from "../services/betfair-collector.js";
+import { createBetnacionalCollector } from "../services/betnacional-collector.js";
 import { createNovibetCollector } from "../services/novibet-collector.js";
 import { createSportingbetCollector } from "../services/sportingbet-collector.js";
 import { createSportybetCollector } from "../services/sportybet-collector.js";
@@ -74,6 +75,14 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
       slug: bookmaker.slug,
       name: bookmaker.name,
       collect: createBetesporteCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "betnacional") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createBetnacionalCollector(bookmaker)
     };
   }
 
