@@ -97,6 +97,16 @@ export type BetfairBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type BetesporteBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "betesporte";
+  baseUrl: string;
+  referer: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type BookmakerConfig =
   | AltenarBookmakerConfig
   | SportingbetBookmakerConfig
@@ -105,7 +115,8 @@ export type BookmakerConfig =
   | SuperbetBookmakerConfig
   | NovibetBookmakerConfig
   | BetanoBookmakerConfig
-  | BetfairBookmakerConfig;
+  | BetfairBookmakerConfig
+  | BetesporteBookmakerConfig;
 
 export const BOOKMAKERS: BookmakerConfig[] = [
   {
@@ -216,6 +227,15 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     apiBaseUrl: "https://apitbd.betfair.bet.br/api/tbd/bff-gql/v11/",
     referer: "https://www.betfair.bet.br/apostas/",
     appKey: "K61C39rIC0WKzoQ7",
+    engine: "fetch"
+  },
+  {
+    slug: "betesporte",
+    name: "Betesporte",
+    enabled: true,
+    provider: "betesporte",
+    baseUrl: "https://betesporte.bet.br/",
+    referer: "https://betesporte.bet.br/",
     engine: "fetch"
   }
 ];
