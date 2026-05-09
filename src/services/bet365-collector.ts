@@ -1,15 +1,12 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import pMap from "p-map";
 import type { Bet365BookmakerConfig } from "../config/bookmakers.js";
+import { BookmakerSessionRepository } from "../db/bookmaker-session-repository.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents } from "../domain/matching/event-matcher.js";
 import { nameSimilarity, normalizeName } from "../domain/text.js";
 import { errorMessage } from "../utils/errors.js";
 import { httpClient } from "../utils/http-client.js";
-
-const TOKEN_FILE = path.resolve(process.cwd(), "bet365-token.json");
 
 type CanonicalFixture = {
   id: string;
@@ -28,6 +25,8 @@ type Bet365SessionToken = {
   capturedFrom?: string;
   capturedAt?: string;
 };
+
+type Bet365SessionReadResult = Bet365SessionToken | { error: string };
 
 export type ParsedBet365Odd = {
   id: string;
@@ -82,18 +81,23 @@ async function getCanonicalFixtures() {
   return (data ?? []) as CanonicalFixture[];
 }
 
-async function readToken(bookmaker: Bet365BookmakerConfig) {
+async function readToken(bookmaker: Bet365BookmakerConfig): Promise<Bet365SessionReadResult> {
   try {
-    const raw = await readFile(TOKEN_FILE, "utf8");
-    const parsed = JSON.parse(raw) as Partial<Bet365SessionToken>;
-    if (!parsed.xNetSyncTerm || !parsed.cookie) {
-      throw new Error("bet365-token.json missing xNetSyncTerm or cookie");
+    const session = await BookmakerSessionRepository.getActive(bookmaker.slug);
+    if (!session?.xNetSyncTerm || !session.cookie) {
+      throw new Error("no active bet365 session in bookmaker_sessions");
     }
 
-    return parsed as Bet365SessionToken;
+    return {
+      xNetSyncTerm: session.xNetSyncTerm,
+      cookie: session.cookie,
+      capturedFrom: session.capturedFrom ?? undefined,
+      capturedAt: session.capturedAt
+    } satisfies Bet365SessionToken;
   } catch (error) {
-    await log(bookmaker, "warn", "bet365 token unavailable; skipping collection", { tokenFile: TOKEN_FILE, error: serializeError(error) });
-    return null;
+    const message = errorMessage(error);
+    await log(bookmaker, "warn", "bet365 active session unavailable; skipping collection", { error: serializeError(error) });
+    return { error: message };
   }
 }
 
@@ -378,7 +382,11 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
     };
 
     const token = await readToken(bookmaker);
-    if (!token) return summary;
+    if ("error" in token) {
+      summary.errors += 1;
+      summary.lastError = token.error;
+      return summary;
+    }
 
     await ensureBaseRows(bookmaker);
     const fixtures = await getCanonicalFixtures();

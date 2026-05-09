@@ -5,3 +5,4 @@ dist/
 COMMANDS.local.md
 npm-debug.log*
 *.har
+bet365-token.json

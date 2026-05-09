@@ -114,6 +114,18 @@ create table if not exists collection_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists bookmaker_sessions (
+  bookmaker_slug text primary key references bookmakers(slug) on delete cascade,
+  x_net_sync_term text not null,
+  cookie text not null,
+  captured_from text,
+  captured_at timestamptz not null,
+  expires_at timestamptz not null,
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists fixtures_search_idx on fixtures using gin (
   to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(home_team, '') || ' ' || coalesce(away_team, ''))
 );
@@ -124,3 +136,4 @@ create index if not exists fixtures_league_id_idx on fixtures (league_id);
 create index if not exists teams_normalized_name_idx on teams (normalized_name);
 create index if not exists odds_fixture_id_idx on odds (fixture_id);
 create index if not exists bookmaker_event_links_fixture_id_idx on bookmaker_event_links (fixture_id);
+create index if not exists bookmaker_sessions_expires_at_idx on bookmaker_sessions (expires_at);

@@ -1,20 +1,21 @@
-import { writeFile } from "node:fs/promises";
-import path from "node:path";
 import { pathToFileURL } from "node:url";
 import vanillaPuppeteer from "puppeteer";
 import { addExtra } from "puppeteer-extra";
 import type { VanillaPuppeteer } from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, Cookie, HTTPRequest, Protocol } from "puppeteer";
+import { BookmakerSessionRepository } from "../db/bookmaker-session-repository.js";
+import { supabase } from "../db/supabase.js";
 
 const puppeteer = addExtra(vanillaPuppeteer as unknown as VanillaPuppeteer);
 puppeteer.use(StealthPlugin());
 
 const SESSION_URL = process.env.BET365_SESSION_URL ?? "https://www.bet365.bet.br/";
-const TOKEN_FILE = path.resolve(process.cwd(), "bet365-token.json");
 const TARGET_ENDPOINTS = ["searchapi/query", "splashcontentapi", "matchbettingcontentapi"];
 const SPLASH_CONTENT_PATH = "/splashcontentapi/soccertab?lid=33&zid=0&pd=%23AS%23B1%23K%5E5%23&cid=28&cgid=0&ctid=28";
 const SESSION_ORIGIN = new URL(SESSION_URL).origin;
+const SESSION_TTL_MS = Number(process.env.BET365_SESSION_TTL_MS ?? 20 * 60 * 1000);
+const SESSION_CAPTURE_ATTEMPTS = Number(process.env.BET365_SESSION_CAPTURE_ATTEMPTS ?? 2);
 
 type Bet365SessionToken = {
   xNetSyncTerm: string;
@@ -57,7 +58,12 @@ function formatCookies(cookies: Cookie[]) {
   return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
 }
 
-export async function captureBet365Session() {
+async function ensureBet365BookmakerRow() {
+  const { error } = await supabase.from("bookmakers").upsert({ slug: "bet365", name: "Bet365" }, { onConflict: "slug" });
+  if (error) throw error;
+}
+
+async function captureBet365SessionOnce() {
   let browser: Browser | null = null;
 
   try {
@@ -178,15 +184,46 @@ export async function captureBet365Session() {
     }, SPLASH_CONTENT_PATH);
 
     const token = await tokenPromise;
-    await writeFile(TOKEN_FILE, `${JSON.stringify(token, null, 2)}\n`, "utf8");
-    console.log(`[bet365-session] token salvo em ${TOKEN_FILE}`);
-    return token;
+    const finalCookies = formatCookies(await page.cookies());
+    const sessionCookie = finalCookies || token.cookie;
+    const capturedAt = new Date(token.capturedAt);
+    const expiresAt = new Date(capturedAt.getTime() + SESSION_TTL_MS);
+
+    await ensureBet365BookmakerRow();
+    await BookmakerSessionRepository.save({
+      bookmakerSlug: "bet365",
+      xNetSyncTerm: token.xNetSyncTerm,
+      cookie: sessionCookie,
+      capturedFrom: token.capturedFrom,
+      capturedAt: capturedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      raw: { sessionUrl: SESSION_URL, sessionOrigin: SESSION_ORIGIN }
+    });
+
+    console.log(`[bet365-session] token salvo no banco; expira em ${expiresAt.toISOString()}`);
+    return { ...token, cookie: sessionCookie };
   } catch (error) {
     console.error("[bet365-session] falha ao gerar token", error);
     throw error;
   } finally {
     await browser?.close();
   }
+}
+
+export async function captureBet365Session() {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= SESSION_CAPTURE_ATTEMPTS; attempt += 1) {
+    try {
+      if (attempt > 1) console.log(`[bet365-session] nova tentativa ${attempt}/${SESSION_CAPTURE_ATTEMPTS}...`);
+      return await captureBet365SessionOnce();
+    } catch (error) {
+      lastError = error;
+      if (attempt < SESSION_CAPTURE_ATTEMPTS) await sleep(3_000 * attempt);
+    }
+  }
+
+  throw lastError;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
