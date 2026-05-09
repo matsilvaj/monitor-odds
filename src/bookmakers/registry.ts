@@ -8,6 +8,7 @@ import { createBetmgmCollector } from "../services/betmgm-collector.js";
 import { createBetnacionalCollector } from "../services/betnacional-collector.js";
 import { createCasaDeApostasCollector } from "../services/casadeapostas-collector.js";
 import { createNovibetCollector } from "../services/novibet-collector.js";
+import { createSegurobetCollector } from "../services/segurobet-collector.js";
 import { createSportingbetCollector } from "../services/sportingbet-collector.js";
 import { createSportybetCollector } from "../services/sportybet-collector.js";
 import { createSuperbetCollector } from "../services/superbet-collector.js";
@@ -101,6 +102,14 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
       slug: bookmaker.slug,
       name: bookmaker.name,
       collect: createCasaDeApostasCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "segurobet") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createSegurobetCollector(bookmaker)
     };
   }
 

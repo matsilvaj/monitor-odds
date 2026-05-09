@@ -141,6 +141,20 @@ export type CasaDeApostasBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type SegurobetBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "segurobet";
+  baseUrl: string;
+  referer: string;
+  swarmUrl: string;
+  siteId: number;
+  source: number;
+  language: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type BookmakerConfig =
   | AltenarBookmakerConfig
   | SportingbetBookmakerConfig
@@ -153,7 +167,8 @@ export type BookmakerConfig =
   | BetesporteBookmakerConfig
   | BetnacionalBookmakerConfig
   | BetmgmBookmakerConfig
-  | CasaDeApostasBookmakerConfig;
+  | CasaDeApostasBookmakerConfig
+  | SegurobetBookmakerConfig;
 
 export const BOOKMAKERS: BookmakerConfig[] = [
   {
@@ -327,5 +342,18 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     referer: "https://casadeapostas.bet.br/br/sports",
     languageId: 21,
     engine: "got-scraping"
+  },
+  {
+    slug: "segurobet",
+    name: "SeguroBet",
+    enabled: true,
+    provider: "segurobet",
+    baseUrl: "https://www.seguro.bet.br/",
+    referer: "https://www.seguro.bet.br/esportes/match",
+    swarmUrl: "wss://eu-swarm-springre.trexname.com/",
+    siteId: 1866308,
+    source: 42,
+    language: "pt-br",
+    engine: "fetch"
   }
 ];
