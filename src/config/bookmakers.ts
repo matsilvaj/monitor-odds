@@ -119,6 +119,28 @@ export type BetnacionalBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type BetmgmBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "betmgm";
+  baseUrl: string;
+  apiBaseUrl: string;
+  referer: string;
+  engine: BookmakerHttpEngine;
+};
+
+export type CasaDeApostasBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "casadeapostas";
+  baseUrl: string;
+  referer: string;
+  languageId: number;
+  engine: BookmakerHttpEngine;
+};
+
 export type BookmakerConfig =
   | AltenarBookmakerConfig
   | SportingbetBookmakerConfig
@@ -129,7 +151,9 @@ export type BookmakerConfig =
   | BetanoBookmakerConfig
   | BetfairBookmakerConfig
   | BetesporteBookmakerConfig
-  | BetnacionalBookmakerConfig;
+  | BetnacionalBookmakerConfig
+  | BetmgmBookmakerConfig
+  | CasaDeApostasBookmakerConfig;
 
 export const BOOKMAKERS: BookmakerConfig[] = [
   {
@@ -152,6 +176,28 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://www.estrelabet.bet.br",
     referer: "https://www.estrelabet.bet.br/",
+    engine: "fetch"
+  },
+  {
+    slug: "br4bet",
+    name: "BR4Bet",
+    enabled: true,
+    provider: "altenar",
+    integration: "br4bet",
+    baseUrl: env.ALTENAR_BASE_URL,
+    origin: "https://br4.bet.br",
+    referer: "https://br4.bet.br/",
+    engine: "fetch"
+  },
+  {
+    slug: "lotogreen",
+    name: "LotoGreen",
+    enabled: true,
+    provider: "altenar",
+    integration: "lotogreen",
+    baseUrl: env.ALTENAR_BASE_URL,
+    origin: "https://lotogreen.bet.br",
+    referer: "https://lotogreen.bet.br/",
     engine: "fetch"
   },
   {
@@ -260,6 +306,26 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     apiBaseUrl: "https://prod-global-bff-events.bet6.com.br/",
     searchBaseUrl: "https://prod-search-svc.bet6.com.br/",
     referer: "https://betnacional.bet.br/sports/1",
+    engine: "got-scraping"
+  },
+  {
+    slug: "betmgm",
+    name: "BetMGM",
+    enabled: true,
+    provider: "betmgm",
+    baseUrl: "https://www.betmgm.bet.br/",
+    apiBaseUrl: "https://br-program-api.goldrush.llc/",
+    referer: "https://www.betmgm.bet.br/aposta-esportiva",
+    engine: "fetch"
+  },
+  {
+    slug: "casadeapostas",
+    name: "Casa de Apostas",
+    enabled: true,
+    provider: "casadeapostas",
+    baseUrl: "https://casadeapostas.bet.br/",
+    referer: "https://casadeapostas.bet.br/br/sports",
+    languageId: 21,
     engine: "got-scraping"
   }
 ];
