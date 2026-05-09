@@ -63,12 +63,36 @@ export type SuperbetBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type NovibetBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "novibet";
+  baseUrl: string;
+  referer: string;
+  contentGroupId: number;
+  rootLocationId: number;
+  engine: BookmakerHttpEngine;
+};
+
+export type BetanoBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "betano";
+  baseUrl: string;
+  referer: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type BookmakerConfig =
   | AltenarBookmakerConfig
   | SportingbetBookmakerConfig
   | SportybetBookmakerConfig
   | VaidebetBookmakerConfig
-  | SuperbetBookmakerConfig;
+  | SuperbetBookmakerConfig
+  | NovibetBookmakerConfig
+  | BetanoBookmakerConfig;
 
 export const BOOKMAKERS: BookmakerConfig[] = [
   {
@@ -149,5 +173,25 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     language: "pt-BR",
     sportId: 5,
     engine: "fetch"
+  },
+  {
+    slug: "novibet",
+    name: "Novibet",
+    enabled: true,
+    provider: "novibet",
+    baseUrl: "https://www.novibet.bet.br/",
+    referer: "https://www.novibet.bet.br/apostas-esportivas/futebol/4372606",
+    contentGroupId: 4324,
+    rootLocationId: 4372606,
+    engine: "got-scraping"
+  },
+  {
+    slug: "betano",
+    name: "Betano",
+    enabled: true,
+    provider: "betano",
+    baseUrl: "https://www.betano.bet.br/",
+    referer: "https://www.betano.bet.br/sport/futebol/",
+    engine: "got-scraping"
   }
 ];

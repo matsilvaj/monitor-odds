@@ -8,6 +8,7 @@ export interface RequestOptions {
   referer: string;
   method?: "GET" | "POST";
   headers?: Record<string, string>;
+  json?: unknown;
   timeoutMs?: number;
   maxRetries?: number;
   engine?: "fetch" | "got-scraping";
@@ -47,6 +48,7 @@ export async function httpClient<T>(options: RequestOptions): Promise<T> {
     referer,
     method = "GET",
     headers = {},
+    json,
     timeoutMs = 7000,
     maxRetries = 1,
     engine = "fetch"
@@ -64,7 +66,12 @@ export async function httpClient<T>(options: RequestOptions): Promise<T> {
         try {
           const res = await fetch(requestUrl, {
             method,
-            headers: { ...headers, referer },
+            headers: {
+              ...headers,
+              ...(json === undefined ? {} : { "content-type": headers["content-type"] ?? "application/json" }),
+              referer
+            },
+            body: json === undefined ? undefined : JSON.stringify(json),
             signal: controller.signal
           });
 
@@ -85,6 +92,7 @@ export async function httpClient<T>(options: RequestOptions): Promise<T> {
         url: requestUrl,
         method,
         headers: { ...headers, referer },
+        json,
         cookieJar: jar,
         timeout: { request: timeoutMs },
         responseType: "json",

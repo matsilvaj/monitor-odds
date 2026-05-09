@@ -1,6 +1,8 @@
 import pMap from "p-map";
 import { BOOKMAKERS } from "../config/bookmakers.js";
 import { createAltenarCollector } from "../services/altenar-collector.js";
+import { createBetanoCollector } from "../services/betano-collector.js";
+import { createNovibetCollector } from "../services/novibet-collector.js";
 import { createSportingbetCollector } from "../services/sportingbet-collector.js";
 import { createSportybetCollector } from "../services/sportybet-collector.js";
 import { createSuperbetCollector } from "../services/superbet-collector.js";
@@ -38,6 +40,22 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
       slug: bookmaker.slug,
       name: bookmaker.name,
       collect: createSuperbetCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "novibet") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createNovibetCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "betano") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createBetanoCollector(bookmaker)
     };
   }
 
