@@ -85,6 +85,16 @@ export type BetanoBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type Bet365BookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "bet365";
+  baseUrl: string;
+  referer: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type BetfairBookmakerConfig = {
   slug: string;
   name: string;
@@ -163,6 +173,7 @@ export type BookmakerConfig =
   | SuperbetBookmakerConfig
   | NovibetBookmakerConfig
   | BetanoBookmakerConfig
+  | Bet365BookmakerConfig
   | BetfairBookmakerConfig
   | BetesporteBookmakerConfig
   | BetnacionalBookmakerConfig
@@ -290,6 +301,15 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     provider: "betano",
     baseUrl: "https://www.betano.bet.br/",
     referer: "https://www.betano.bet.br/sport/futebol/",
+    engine: "got-scraping"
+  },
+  {
+    slug: "bet365",
+    name: "Bet365",
+    enabled: true,
+    provider: "bet365",
+    baseUrl: "https://www.bet365.bet.br/",
+    referer: "https://www.bet365.bet.br/",
     engine: "got-scraping"
   },
   {

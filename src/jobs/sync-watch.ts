@@ -2,6 +2,7 @@ import { collectAllBookmakers } from "../bookmakers/registry.js";
 import { supabase } from "../db/supabase.js";
 import { cleanupOldLogs } from "../services/log-retention.js";
 import { syncApiFootballFixtures } from "../services/api-football-sync.js";
+import { captureBet365Session } from "./bet365-session.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -54,6 +55,10 @@ while (true) {
   const fixtures = lastFixtureSyncDate === todayKey ? { skippedByWatchDate: true } : await syncApiFootballFixtures();
   console.log("[sync] fixtures finalizadas.");
   lastFixtureSyncDate = todayKey;
+
+  console.log("[sync] atualizando sessao Bet365...");
+  await captureBet365Session();
+  console.log("[sync] sessao Bet365 atualizada.");
 
   const bookmakers = await collectAllBookmakers({ concurrency: 2, logProgress: true });
   const minutesToNext = await getMinutesToNextFixture();
