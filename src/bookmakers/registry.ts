@@ -2,6 +2,7 @@ import pMap from "p-map";
 import { BOOKMAKERS } from "../config/bookmakers.js";
 import { createAltenarCollector } from "../services/altenar-collector.js";
 import { createBetanoCollector } from "../services/betano-collector.js";
+import { createBetfairCollector } from "../services/betfair-collector.js";
 import { createNovibetCollector } from "../services/novibet-collector.js";
 import { createSportingbetCollector } from "../services/sportingbet-collector.js";
 import { createSportybetCollector } from "../services/sportybet-collector.js";
@@ -56,6 +57,14 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
       slug: bookmaker.slug,
       name: bookmaker.name,
       collect: createBetanoCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "betfair") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createBetfairCollector(bookmaker)
     };
   }
 

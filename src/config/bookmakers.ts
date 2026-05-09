@@ -85,6 +85,18 @@ export type BetanoBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type BetfairBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "betfair";
+  baseUrl: string;
+  apiBaseUrl: string;
+  referer: string;
+  appKey: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type BookmakerConfig =
   | AltenarBookmakerConfig
   | SportingbetBookmakerConfig
@@ -92,7 +104,8 @@ export type BookmakerConfig =
   | VaidebetBookmakerConfig
   | SuperbetBookmakerConfig
   | NovibetBookmakerConfig
-  | BetanoBookmakerConfig;
+  | BetanoBookmakerConfig
+  | BetfairBookmakerConfig;
 
 export const BOOKMAKERS: BookmakerConfig[] = [
   {
@@ -193,5 +206,16 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: "https://www.betano.bet.br/",
     referer: "https://www.betano.bet.br/sport/futebol/",
     engine: "got-scraping"
+  },
+  {
+    slug: "betfair",
+    name: "Betfair",
+    enabled: true,
+    provider: "betfair",
+    baseUrl: "https://www.betfair.bet.br/",
+    apiBaseUrl: "https://apitbd.betfair.bet.br/api/tbd/bff-gql/v11/",
+    referer: "https://www.betfair.bet.br/apostas/",
+    appKey: "K61C39rIC0WKzoQ7",
+    engine: "fetch"
   }
 ];
