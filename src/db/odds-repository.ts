@@ -34,7 +34,7 @@ export type OddRow = {
 };
 
 export class OddsRepository {
-  static async saveAll(bookmakerSlug: string, links: BookmakerLinkRow[], odds: OddRow[]) {
+  static async saveAll(bookmakerSlug: string, links: BookmakerLinkRow[], odds: OddRow[], options: { marketCodes?: string[] } = {}) {
     if (!links.length) return 0;
 
     const { error: linksError } = await supabase.from("bookmaker_event_links").upsert(links, {
@@ -44,11 +44,12 @@ export class OddsRepository {
     if (linksError) throw linksError;
 
     const fixtureIds = [...new Set(links.map((link) => link.fixture_id))];
+    const marketCodes = options.marketCodes?.length ? options.marketCodes : ["1X2"];
     const { error: deleteError } = await supabase
       .from("odds")
       .delete()
       .eq("bookmaker_slug", bookmakerSlug)
-      .eq("market_code", "1X2")
+      .in("market_code", marketCodes)
       .in("fixture_id", fixtureIds);
 
     if (deleteError) throw deleteError;

@@ -13,6 +13,7 @@
     "sync": "npm run sync:all",
     "sync:fixtures": "tsx src/jobs/sync-api-football.ts",
     "sync:odds": "tsx src/jobs/sync-odds.ts",
+    "collect": "tsx src/jobs/collect-bookmaker.ts",
     "collect:bookmaker": "tsx src/jobs/collect-bookmaker.ts",
     "sync:all": "tsx src/jobs/sync-all.ts",
     "sync:watch": "tsx src/jobs/sync-watch.ts",
@@ -29,6 +30,7 @@
     "got-scraping": "^4.2.1",
     "p-map": "^7.0.4",
     "pg": "^8.20.0",
+    "playwright-core": "^1.60.0",
     "tough-cookie": "^6.0.1",
     "zod": "^4.4.3"
   },

@@ -1,6 +1,37 @@
 import { BOOKMAKER_COLLECTORS } from "../bookmakers/registry.js";
+import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 
-const slug = process.argv[2];
+const [slug, ...args] = process.argv.slice(2);
+
+function parseOptions(rawArgs: string[]): BookmakerCollectOptions {
+  const options: BookmakerCollectOptions = { logToConsole: true };
+
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+
+    if (arg === "--date") {
+      options.date = rawArgs[index + 1];
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--date=")) {
+      options.date = arg.slice("--date=".length);
+      continue;
+    }
+
+    if (arg === "--no-manual") {
+      options.manualFallback = false;
+      continue;
+    }
+
+    if (!arg.startsWith("--") && !options.date) {
+      options.date = arg;
+    }
+  }
+
+  return options;
+}
 
 if (!slug) {
   console.error("Informe a casa: npm run collect:bookmaker -- esportiva");
@@ -13,7 +44,9 @@ if (!slug) {
     process.exitCode = 1;
   } else {
     try {
-      const summary = await bookmaker.collect();
+      const options = parseOptions(args);
+      console.log(`[collect] iniciando ${bookmaker.slug}${options.date ? ` para ${options.date}` : ""}...`);
+      const summary = await bookmaker.collect(options);
       console.log(JSON.stringify({ bookmaker: bookmaker.slug, summary }, null, 2));
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));

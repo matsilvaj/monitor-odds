@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.browser/
 .env
 .env.local
 COMMANDS.local.md

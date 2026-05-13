@@ -1,6 +1,7 @@
 import pMap from "p-map";
 import { BOOKMAKERS } from "../config/bookmakers.js";
 import { createAltenarCollector } from "../services/altenar-collector.js";
+import { createBet365Collector } from "../services/bet365-collector.js";
 import { createBetanoCollector } from "../services/betano-collector.js";
 import { createBetesporteCollector } from "../services/betesporte-collector.js";
 import { createBetfairCollector } from "../services/betfair-collector.js";
@@ -62,6 +63,14 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
       slug: bookmaker.slug,
       name: bookmaker.name,
       collect: createBetanoCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "bet365") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createBet365Collector(bookmaker)
     };
   }
 
@@ -138,7 +147,7 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
       }
 
       try {
-        const summary = await bookmaker.collect();
+        const summary = await bookmaker.collect({ logToConsole: logProgress, manualFallback: false });
         const durationMs = Math.round(performance.now() - start);
 
         if (logProgress) {

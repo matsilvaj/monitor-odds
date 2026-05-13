@@ -85,6 +85,19 @@ export type BetanoBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type Bet365BookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "bet365";
+  baseUrl: string;
+  chromeProfileDir: string;
+  chromeExecutablePath?: string;
+  manualFallback: boolean;
+  keepBrowserOpen: boolean;
+  navigationTimeoutMs: number;
+};
+
 export type BetfairBookmakerConfig = {
   slug: string;
   name: string;
@@ -163,6 +176,7 @@ export type BookmakerConfig =
   | SuperbetBookmakerConfig
   | NovibetBookmakerConfig
   | BetanoBookmakerConfig
+  | Bet365BookmakerConfig
   | BetfairBookmakerConfig
   | BetesporteBookmakerConfig
   | BetnacionalBookmakerConfig
@@ -291,6 +305,18 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: "https://www.betano.bet.br/",
     referer: "https://www.betano.bet.br/sport/futebol/",
     engine: "got-scraping"
+  },
+  {
+    slug: "bet365",
+    name: "bet365",
+    enabled: true,
+    provider: "bet365",
+    baseUrl: env.BET365_BASE_URL,
+    chromeProfileDir: env.BET365_CHROME_PROFILE_DIR,
+    chromeExecutablePath: env.BET365_CHROME_EXECUTABLE,
+    manualFallback: env.BET365_MANUAL_FALLBACK,
+    keepBrowserOpen: env.BET365_KEEP_BROWSER_OPEN,
+    navigationTimeoutMs: env.BET365_NAVIGATION_TIMEOUT_MS
   },
   {
     slug: "betfair",

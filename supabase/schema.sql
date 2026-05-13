@@ -114,6 +114,29 @@ create table if not exists collection_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists bookmaker_event_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
+  external_event_id bigint not null,
+  league_api_football_id bigint,
+  league_name text,
+  league_country text,
+  event_name text not null,
+  home_team text,
+  away_team text,
+  normalized_home_team text,
+  normalized_away_team text,
+  starts_at timestamptz,
+  date_key date,
+  source_url text,
+  markets jsonb not null default '[]'::jsonb,
+  raw_text text,
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (bookmaker_slug, external_event_id)
+);
+
 create index if not exists fixtures_search_idx on fixtures using gin (
   to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(home_team, '') || ' ' || coalesce(away_team, ''))
 );
@@ -124,3 +147,5 @@ create index if not exists fixtures_league_id_idx on fixtures (league_id);
 create index if not exists teams_normalized_name_idx on teams (normalized_name);
 create index if not exists odds_fixture_id_idx on odds (fixture_id);
 create index if not exists bookmaker_event_links_fixture_id_idx on bookmaker_event_links (fixture_id);
+create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on bookmaker_event_snapshots (bookmaker_slug, date_key);
+create index if not exists bookmaker_event_snapshots_league_idx on bookmaker_event_snapshots (league_api_football_id);

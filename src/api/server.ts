@@ -318,6 +318,9 @@ function renderSearchPage() {
       border-collapse: collapse;
       table-layout: fixed;
     }
+    .table-wrap {
+      overflow-x: hidden;
+    }
     th, td {
       border-bottom: 1px solid var(--line);
       padding: 12px 14px;
@@ -333,7 +336,7 @@ function renderSearchPage() {
     }
     th:not(:first-child), td.price-cell {
       text-align: center;
-      width: 96px;
+      width: 82px;
     }
     .bookmaker {
       font-size: 16px;
@@ -347,6 +350,14 @@ function renderSearchPage() {
     .price {
       color: var(--ok);
       font-size: 16px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+    .diff {
+      display: block;
+      margin-top: 2px;
+      color: var(--warn);
+      font-size: 11px;
       font-weight: 800;
       font-variant-numeric: tabular-nums;
     }
@@ -382,7 +393,7 @@ function renderSearchPage() {
 <body>
   <main>
     <h1>Odds API</h1>
-    <p class="sub">Pesquise um evento canônico da API-Football e veja odds da Esportiva separadas por COM PA e SEM PA.</p>
+    <p class="sub">Pesquise um evento canonico da API-Football e veja odds por casa, PA e mercado.</p>
     <section class="search">
       <input id="search" autocomplete="off" placeholder="Digite um time ou evento, ex: Flamengo" />
       <div id="suggestions" class="suggestions" hidden></div>
@@ -469,7 +480,7 @@ function renderSearchPage() {
       const rows = groupByBookmaker(items);
       return '<div class="bucket">' +
         '<header><span>' + title + '</span></header>' +
-        (rows.length ? renderTable(rows) : '<div class="empty">Nenhuma odd nesta categoria.</div>') +
+        (rows.length ? '<div class="table-wrap">' + renderTable(rows) + '</div>' : '<div class="empty">Nenhuma odd nesta categoria.</div>') +
       '</div>';
     }
 
@@ -488,10 +499,14 @@ function renderSearchPage() {
       const map = new Map();
       for (const odd of items) {
         const key = odd.bookmaker_slug || "bookmaker";
-        const row = map.get(key) || { bookmaker: key, HOME: null, DRAW: null, AWAY: null };
-        const current = row[odd.selection];
+        const row = map.get(key) || {
+          bookmaker: key,
+          odds: { HOME: null, DRAW: null, AWAY: null }
+        };
+        const bucket = row.odds;
+        const current = bucket[odd.selection];
         if (!current || new Date(odd.updated_at || 0) >= new Date(current.updated_at || 0)) {
-          row[odd.selection] = odd;
+          bucket[odd.selection] = odd;
         }
         map.set(key, row);
       }
@@ -500,7 +515,7 @@ function renderSearchPage() {
 
     function renderTable(rows) {
       return '<table class="odds-table">' +
-        '<thead><tr><th>Casa</th><th>Casa</th><th>Empate</th><th>Fora</th></tr></thead>' +
+        '<thead><tr><th>Casa</th><th>1</th><th>X</th><th>2</th></tr></thead>' +
         '<tbody>' + rows.map(renderBookmakerRow).join("") + '</tbody>' +
       '</table>';
     }
@@ -508,15 +523,16 @@ function renderSearchPage() {
     function renderBookmakerRow(row) {
       return '<tr>' +
         '<td><div class="bookmaker">' + escapeHtml(formatBookmaker(row.bookmaker)) + '</div></td>' +
-        renderPriceCell(row.HOME) +
-        renderPriceCell(row.DRAW) +
-        renderPriceCell(row.AWAY) +
+        renderPriceCell(row.odds.HOME) +
+        renderPriceCell(row.odds.DRAW) +
+        renderPriceCell(row.odds.AWAY) +
       '</tr>';
     }
 
     function renderPriceCell(odd) {
       if (!odd) return '<td class="price-cell"><span class="dash">-</span></td>';
-      return '<td class="price-cell"><span class="price">' + Number(odd.price).toFixed(2) + '</span></td>';
+      const price = Number(odd.price);
+      return '<td class="price-cell"><span class="price">' + price.toFixed(2) + '</span></td>';
     }
 
     function formatBookmaker(slug) {

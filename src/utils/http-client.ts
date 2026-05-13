@@ -1,5 +1,5 @@
-import { gotScraping } from "got-scraping";
 import { CookieJar } from "tough-cookie";
+import { loadGotScraping } from "./got-scraping.js";
 
 const cookieJars = new Map<string, CookieJar>();
 
@@ -88,6 +88,7 @@ export async function httpClient<T>(options: RequestOptions): Promise<T> {
         cookieJars.set(origin, jar);
       }
 
+      const gotScraping = await loadGotScraping();
       const res = await gotScraping({
         url: requestUrl,
         method,

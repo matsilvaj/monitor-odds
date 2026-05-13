@@ -1,6 +1,16 @@
 import "dotenv/config";
 import { z } from "zod";
 
+const booleanFromEnv = (defaultValue: boolean) =>
+  z
+    .preprocess((value) => {
+      if (value === undefined || value === null || value === "") return defaultValue;
+      if (typeof value === "boolean") return value;
+      if (typeof value === "string") return ["1", "true", "yes", "sim", "on"].includes(value.trim().toLowerCase());
+      return Boolean(value);
+    }, z.boolean())
+    .default(defaultValue);
+
 const envSchema = z.object({
   NODE_ENV: z.string().default("development"),
   PORT: z.coerce.number().default(3333),
@@ -18,7 +28,13 @@ const envSchema = z.object({
   ALTENAR_BASE_URL: z.string().url().default("https://sb2frontend-altenar2.biahosted.com/api/"),
   COLLECT_DELAY_MS: z.coerce.number().int().min(0).default(1500),
   COLLECT_JITTER_MS: z.coerce.number().int().min(0).default(2000),
-  LOG_RETENTION_DAYS: z.coerce.number().int().min(1).default(7)
+  LOG_RETENTION_DAYS: z.coerce.number().int().min(1).default(7),
+  BET365_BASE_URL: z.string().url().default("https://www.bet365.bet.br/"),
+  BET365_CHROME_PROFILE_DIR: z.string().default(".browser/bet365-cdp-profile"),
+  BET365_CHROME_EXECUTABLE: z.string().optional(),
+  BET365_MANUAL_FALLBACK: booleanFromEnv(true),
+  BET365_KEEP_BROWSER_OPEN: booleanFromEnv(false),
+  BET365_NAVIGATION_TIMEOUT_MS: z.coerce.number().int().min(5000).default(45_000),
 });
 
 export const env = envSchema.parse({
