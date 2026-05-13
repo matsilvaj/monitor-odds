@@ -2,7 +2,7 @@ import pMap from "p-map";
 import type { NovibetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents } from "../domain/matching/event-matcher.js";
+import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { NovibetClient, type NovibetBetItem, type NovibetEventDetails, type NovibetMarket, type NovibetSearchDocument } from "../providers/novibet.js";
@@ -173,7 +173,7 @@ function buildBookmakerLink(bookmaker: NovibetBookmakerConfig, fixtureId: string
   };
 }
 
-function buildMoneylineOdds(bookmaker: NovibetBookmakerConfig, fixtureId: string, event: NovibetEventDetails): OddRow[] {
+function buildMoneylineOdds(bookmaker: NovibetBookmakerConfig, fixtureId: string, event: NovibetEventDetails, orientation: EventMatchResult["orientation"]): OddRow[] {
   const rows: OddRow[] = [];
   const markets = flattenMarkets(event.marketCategories).filter(isMoneylineMarket);
   const paMarketIds = new Set(
@@ -197,7 +197,7 @@ function buildMoneylineOdds(bookmaker: NovibetBookmakerConfig, fixtureId: string
         bookmaker_slug: bookmaker.slug,
         market_code: "1X2",
         market_name: "MoneyLine",
-        selection,
+        selection: selectionForCanonicalOrientation(selection, orientation),
         price: Number(item.price),
         pa_category: pa.category,
         confidence_score: pa.confidence,
@@ -240,7 +240,7 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
     }
 
     try {
-      const bestByFixtureId = new Map<string, { fixture: CanonicalFixture; document: NovibetSearchDocument; score: number }>();
+      const bestByFixtureId = new Map<string, { fixture: CanonicalFixture; document: NovibetSearchDocument; score: number; orientation: EventMatchResult["orientation"] }>();
 
       await pMap(
         fixtures,
@@ -256,7 +256,7 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
 
               const previous = bestByFixtureId.get(fixture.id);
               if (!previous || result.score > previous.score) {
-                bestByFixtureId.set(fixture.id, { fixture, document, score: result.score });
+                bestByFixtureId.set(fixture.id, { fixture, document, score: result.score, orientation: result.orientation });
               }
             }
           } catch (error) {
@@ -275,11 +275,11 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
 
       await pMap(
         [...bestByFixtureId.values()],
-        async ({ fixture, document, score }) => {
+        async ({ fixture, document, score, orientation }) => {
           try {
             const event = await client.getEventDetails(document.betContextId, document.path);
             linksToSave.push(buildBookmakerLink(bookmaker, fixture.id, event, score));
-            oddsToSave.push(...buildMoneylineOdds(bookmaker, fixture.id, event));
+            oddsToSave.push(...buildMoneylineOdds(bookmaker, fixture.id, event, orientation));
             summary.eventsCollected += 1;
             summary.eventsMatched += 1;
           } catch (error) {

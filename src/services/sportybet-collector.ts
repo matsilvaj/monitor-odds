@@ -1,9 +1,10 @@
 import type { SportybetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents } from "../domain/matching/event-matcher.js";
+import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
-import { nameSimilarity, normalizeName } from "../domain/text.js";
+import { teamNameSimilarity } from "../domain/matching/text-similarity.js";
+import { normalizeName } from "../domain/text.js";
 import { SportybetClient, type SportybetEvent, type SportybetMarket, type SportybetOutcome } from "../providers/sportybet.js";
 import { errorMessage } from "../utils/errors.js";
 
@@ -66,7 +67,7 @@ async function getCanonicalFixtures() {
 function matchFixture(event: SportybetEvent, fixtures: CanonicalFixture[]) {
   const homeTeam = event.homeTeamName ?? null;
   const awayTeam = event.awayTeamName ?? null;
-  let best: { fixture: CanonicalFixture; score: number } | null = null;
+  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
   for (const fixture of fixtures) {
     const result = matchEvents(
       {
@@ -84,7 +85,7 @@ function matchFixture(event: SportybetEvent, fixtures: CanonicalFixture[]) {
     );
 
     if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { fixture, score: result.score };
+    if (!best || result.score > best.score) best = { ...result, fixture };
   }
 
   if (!best) return null;
@@ -114,11 +115,18 @@ function paForMarket(market: SportybetMarket): { category: PaCategory; confidenc
 }
 
 function selectionFromOutcome(outcome: SportybetOutcome, homeTeam: string | null, awayTeam: string | null): Selection | null {
+  if (outcome.id === "1") return "HOME";
+  if (outcome.id === "2") return "DRAW";
+  if (outcome.id === "3") return "AWAY";
+
   const desc = outcome.desc ?? "";
   if (/empate/i.test(desc)) return "DRAW";
-  if (nameSimilarity(desc, homeTeam) >= 0.5) return "HOME";
-  if (nameSimilarity(desc, awayTeam) >= 0.5) return "AWAY";
-  return null;
+
+  const homeScore = homeTeam ? teamNameSimilarity(desc, homeTeam) : 0;
+  const awayScore = awayTeam ? teamNameSimilarity(desc, awayTeam) : 0;
+  if (Math.max(homeScore, awayScore) < 0.72) return null;
+
+  return homeScore > awayScore ? "HOME" : "AWAY";
 }
 
 function externalEventId(eventId: string) {
@@ -144,7 +152,7 @@ function buildBookmakerLink(bookmaker: SportybetBookmakerConfig, fixtureId: stri
   };
 }
 
-function buildMoneylineOdds(bookmaker: SportybetBookmakerConfig, fixtureId: string, event: SportybetEvent): OddRow[] {
+function buildMoneylineOdds(bookmaker: SportybetBookmakerConfig, fixtureId: string, event: SportybetEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
   const rows: OddRow[] = [];
 
   for (const market of (event.markets ?? []).filter(isMoneylineMarket)) {
@@ -161,7 +169,7 @@ function buildMoneylineOdds(bookmaker: SportybetBookmakerConfig, fixtureId: stri
         bookmaker_slug: bookmaker.slug,
         market_code: "1X2",
         market_name: "MoneyLine",
-        selection,
+        selection: selectionForCanonicalOrientation(selection, orientation),
         price: Number(outcome.odds),
         pa_category: pa.category,
         confidence_score: pa.confidence,
@@ -245,7 +253,7 @@ export function createSportybetCollector(bookmaker: SportybetBookmakerConfig) {
           }
 
           linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
-          oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event));
+          oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
           summary.eventsCollected += 1;
           summary.eventsMatched += 1;
         } catch (error) {

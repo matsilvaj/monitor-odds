@@ -2,7 +2,7 @@ import pMap from "p-map";
 import type { BetfairBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents } from "../domain/matching/event-matcher.js";
+import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetfairClient, type BetfairMarket, type BetfairMarketWithContext, type BetfairRunner, type BetfairSearchResult } from "../providers/betfair.js";
@@ -154,7 +154,13 @@ function buildBookmakerLink(bookmaker: BetfairBookmakerConfig, fixtureId: string
   };
 }
 
-function buildMoneylineOdds(bookmaker: BetfairBookmakerConfig, fixtureId: string, event: BetfairSearchResult, markets: BetfairMarketWithContext[]): OddRow[] {
+function buildMoneylineOdds(
+  bookmaker: BetfairBookmakerConfig,
+  fixtureId: string,
+  event: BetfairSearchResult,
+  markets: BetfairMarketWithContext[],
+  orientation: EventMatchResult["orientation"]
+): OddRow[] {
   const rows: OddRow[] = [];
 
   for (const marketWithContext of markets) {
@@ -176,7 +182,7 @@ function buildMoneylineOdds(bookmaker: BetfairBookmakerConfig, fixtureId: string
         bookmaker_slug: bookmaker.slug,
         market_code: "1X2",
         market_name: "MoneyLine",
-        selection,
+        selection: selectionForCanonicalOrientation(selection, orientation),
         price,
         pa_category: pa.category,
         confidence_score: pa.confidence,
@@ -215,7 +221,7 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
     }
 
     try {
-      const bestByFixtureId = new Map<string, { fixture: CanonicalFixture; event: BetfairSearchResult; score: number }>();
+      const bestByFixtureId = new Map<string, { fixture: CanonicalFixture; event: BetfairSearchResult; score: number; orientation: EventMatchResult["orientation"] }>();
 
       await pMap(
         fixtures,
@@ -235,7 +241,7 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
 
               const previous = bestByFixtureId.get(fixture.id);
               if (!previous || result.score > previous.score) {
-                bestByFixtureId.set(fixture.id, { fixture, event, score: result.score });
+                bestByFixtureId.set(fixture.id, { fixture, event, score: result.score, orientation: result.orientation });
               }
             }
           } catch (error) {
@@ -254,14 +260,14 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
 
       await pMap(
         [...bestByFixtureId.values()],
-        async ({ fixture, event, score }) => {
+        async ({ fixture, event, score, orientation }) => {
           try {
             const eventId = eventIdFromUrn(event.urn);
             if (!eventId || !event.url) throw new Error(`Invalid Betfair event reference: ${event.urn ?? event.sportevent?.name}`);
 
             const markets = await client.getMatchOdds(eventId, event.url);
             linksToSave.push(buildBookmakerLink(bookmaker, fixture.id, event, score));
-            oddsToSave.push(...buildMoneylineOdds(bookmaker, fixture.id, event, markets));
+            oddsToSave.push(...buildMoneylineOdds(bookmaker, fixture.id, event, markets, orientation));
             summary.eventsCollected += 1;
             summary.eventsMatched += 1;
           } catch (error) {

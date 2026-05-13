@@ -2,7 +2,7 @@ import pMap from "p-map";
 import type { SegurobetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents } from "../domain/matching/event-matcher.js";
+import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeForMatching } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -89,7 +89,7 @@ function eventTeams(event: SegurobetGame) {
 
 function findBestMatch(event: SegurobetGame, fixtures: CanonicalFixture[]) {
   const { homeTeam, awayTeam } = eventTeams(event);
-  let best: { fixture: CanonicalFixture; score: number } | null = null;
+  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
 
   for (const fixture of fixtures) {
     const result = matchEvents(
@@ -110,7 +110,7 @@ function findBestMatch(event: SegurobetGame, fixtures: CanonicalFixture[]) {
     );
 
     if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { fixture, score: result.score };
+    if (!best || result.score > best.score) best = { ...result, fixture };
   }
 
   return best;
@@ -209,7 +209,7 @@ function compactEventRaw(event: SegurobetGame) {
   };
 }
 
-function buildMoneylineOdds(bookmaker: SegurobetBookmakerConfig, fixtureId: string, event: SegurobetGame): OddRow[] {
+function buildMoneylineOdds(bookmaker: SegurobetBookmakerConfig, fixtureId: string, event: SegurobetGame, orientation: EventMatchResult["orientation"]): OddRow[] {
   const rows: OddRow[] = [];
   const eventRaw = compactEventRaw(event);
 
@@ -228,7 +228,7 @@ function buildMoneylineOdds(bookmaker: SegurobetBookmakerConfig, fixtureId: stri
         bookmaker_slug: bookmaker.slug,
         market_code: "1X2",
         market_name: "MoneyLine",
-        selection,
+        selection: selectionForCanonicalOrientation(selection, orientation),
         price,
         pa_category: pa.category,
         confidence_score: pa.confidence,
@@ -299,7 +299,7 @@ export function createSegurobetCollector(bookmaker: SegurobetBookmakerConfig) {
 
       for (const { event, matched } of bestMatchByFixtureId.values()) {
         linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
-        oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event));
+        oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
         summary.eventsCollected += 1;
         summary.eventsMatched += 1;
       }

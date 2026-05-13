@@ -2,7 +2,7 @@ import pMap from "p-map";
 import type { BetesporteBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents } from "../domain/matching/event-matcher.js";
+import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetesporteClient, type BetesporteEvent, type BetesporteMarket, type BetesporteOption } from "../providers/betesporte.js";
@@ -100,7 +100,7 @@ function isNearCanonicalFixtureWindow(event: BetesporteEvent, fixtures: Canonica
 }
 
 function findBestMatch(event: BetesporteEvent, fixtures: CanonicalFixture[]) {
-  let best: { fixture: CanonicalFixture; score: number } | null = null;
+  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
 
   for (const fixture of fixtures) {
     const result = matchEvents(
@@ -121,7 +121,7 @@ function findBestMatch(event: BetesporteEvent, fixtures: CanonicalFixture[]) {
     );
 
     if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { fixture, score: result.score };
+    if (!best || result.score > best.score) best = { ...result, fixture };
   }
 
   return best;
@@ -196,7 +196,7 @@ function buildBookmakerLink(bookmaker: BetesporteBookmakerConfig, fixtureId: str
   };
 }
 
-function buildMoneylineOdds(bookmaker: BetesporteBookmakerConfig, fixtureId: string, event: BetesporteEvent): OddRow[] {
+function buildMoneylineOdds(bookmaker: BetesporteBookmakerConfig, fixtureId: string, event: BetesporteEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
   const rows: OddRow[] = [];
 
   for (const market of uniqueMarkets(event.markets ?? []).filter(isMoneylineMarket)) {
@@ -214,7 +214,7 @@ function buildMoneylineOdds(bookmaker: BetesporteBookmakerConfig, fixtureId: str
         bookmaker_slug: bookmaker.slug,
         market_code: "1X2",
         market_name: "MoneyLine",
-        selection,
+        selection: selectionForCanonicalOrientation(selection, orientation),
         price,
         pa_category: pa.category,
         confidence_score: pa.confidence,
@@ -295,7 +295,7 @@ export function createBetesporteCollector(bookmaker: BetesporteBookmakerConfig) 
           try {
             const detailEvent = await client.getEventDetail(event);
             linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, detailEvent, matched.score));
-            oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, detailEvent));
+            oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, detailEvent, matched.orientation));
             summary.eventsCollected += 1;
             summary.eventsMatched += 1;
           } catch (error) {

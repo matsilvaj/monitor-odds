@@ -2,9 +2,10 @@ import pMap from "p-map";
 import type { VaidebetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents } from "../domain/matching/event-matcher.js";
+import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
-import { nameSimilarity, normalizeName } from "../domain/text.js";
+import { teamNameSimilarity } from "../domain/matching/text-similarity.js";
+import { normalizeName } from "../domain/text.js";
 import { VaidebetClient, type VaidebetFixture, type VaidebetMarket, type VaidebetOdd } from "../providers/vaidebet.js";
 import { errorMessage } from "../utils/errors.js";
 
@@ -77,7 +78,7 @@ function fixtureLeague(fixture: CanonicalFixture) {
 }
 
 function findBestMatch(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
-  let best: { fixture: CanonicalFixture; score: number } | null = null;
+  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
 
   for (const fixture of fixtures) {
     const result = matchEvents(
@@ -98,7 +99,7 @@ function findBestMatch(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
     );
 
     if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { fixture, score: result.score };
+    if (!best || result.score > best.score) best = { ...result, fixture };
   }
 
   if (!best) return null;
@@ -135,11 +136,19 @@ function paForMarket(market: VaidebetMarket): { category: PaCategory; confidence
 }
 
 function selectionFromOdd(odd: VaidebetOdd, homeTeam: string | null, awayTeam: string | null): Selection | null {
-  const label = `${odd.pSh ?? ""} ${odd.hSh ?? ""} ${odd.oc ?? ""}`;
+  const sideLabel = `${odd.pSh ?? ""} ${odd.btN ?? ""}`;
+  if (/empate|draw/i.test(sideLabel)) return "DRAW";
+  if (/home|casa/i.test(sideLabel)) return "HOME";
+  if (/away|fora/i.test(sideLabel)) return "AWAY";
+
+  const label = `${odd.hSh ?? ""} ${odd.oc ?? ""}`;
   if (/empate|draw/i.test(label)) return "DRAW";
-  if (/home/i.test(String(odd.pSh ?? "")) || nameSimilarity(odd.hSh, homeTeam) >= 0.5 || nameSimilarity(odd.oc, homeTeam) >= 0.5) return "HOME";
-  if (/away/i.test(String(odd.pSh ?? "")) || nameSimilarity(odd.hSh, awayTeam) >= 0.5 || nameSimilarity(odd.oc, awayTeam) >= 0.5) return "AWAY";
-  return null;
+
+  const homeScore = Math.max(homeTeam ? teamNameSimilarity(odd.hSh, homeTeam) : 0, homeTeam ? teamNameSimilarity(odd.oc, homeTeam) : 0);
+  const awayScore = Math.max(awayTeam ? teamNameSimilarity(odd.hSh, awayTeam) : 0, awayTeam ? teamNameSimilarity(odd.oc, awayTeam) : 0);
+  if (Math.max(homeScore, awayScore) < 0.72) return null;
+
+  return homeScore > awayScore ? "HOME" : "AWAY";
 }
 
 function sourceUrl(bookmaker: VaidebetBookmakerConfig, event: VaidebetFixture) {
@@ -171,7 +180,7 @@ function buildBookmakerLink(bookmaker: VaidebetBookmakerConfig, fixtureId: strin
   };
 }
 
-function buildMoneylineOdds(bookmaker: VaidebetBookmakerConfig, fixtureId: string, event: VaidebetFixture): OddRow[] {
+function buildMoneylineOdds(bookmaker: VaidebetBookmakerConfig, fixtureId: string, event: VaidebetFixture, orientation: EventMatchResult["orientation"]): OddRow[] {
   const rows: OddRow[] = [];
 
   for (const market of (event.btgs ?? []).filter(isMoneylineMarket)) {
@@ -188,7 +197,7 @@ function buildMoneylineOdds(bookmaker: VaidebetBookmakerConfig, fixtureId: strin
         bookmaker_slug: bookmaker.slug,
         market_code: "1X2",
         market_name: "MoneyLine",
-        selection,
+        selection: selectionForCanonicalOrientation(selection, orientation),
         price: Number(odd.hO),
         pa_category: pa.category,
         confidence_score: pa.confidence,
@@ -274,7 +283,7 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
       for (const { event, matched } of bestMatchByFixtureId.values()) {
         try {
           linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
-          oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event));
+          oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
           summary.eventsCollected += 1;
           summary.eventsMatched += 1;
         } catch (error) {

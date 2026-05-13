@@ -1,4 +1,5 @@
 import { matchingTokens, significantTokenSet, teamNameSimilarity, tokenSetSimilarity } from "./text-similarity.js";
+import type { Selection } from "../normalize.js";
 
 export type MatchableEvent = {
   id?: string | number;
@@ -80,6 +81,13 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
     orientation,
     reason: score >= threshold ? "matched" : "below-threshold"
   };
+}
+
+export function selectionForCanonicalOrientation(selection: Selection, orientation: EventMatchResult["orientation"]): Selection {
+  if (orientation !== "INVERTED") return selection;
+  if (selection === "HOME") return "AWAY";
+  if (selection === "AWAY") return "HOME";
+  return selection;
 }
 
 export function findBestEventMatch<T extends MatchableEvent>(canonical: MatchableEvent, candidates: T[]) {

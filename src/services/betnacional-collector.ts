@@ -1,7 +1,7 @@
 import type { BetnacionalBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents } from "../domain/matching/event-matcher.js";
+import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeForMatching } from "../domain/matching/text-similarity.js";
 import type { Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -154,7 +154,7 @@ function isNearCanonicalFixtureWindow(event: BetnacionalEvent, fixtures: Canonic
 }
 
 function findBestMatch(event: BetnacionalEvent, fixtures: CanonicalFixture[]) {
-  let best: { fixture: CanonicalFixture; score: number } | null = null;
+  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
 
   for (const fixture of fixtures) {
     const result = matchEvents(
@@ -175,7 +175,7 @@ function findBestMatch(event: BetnacionalEvent, fixtures: CanonicalFixture[]) {
     );
 
     if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { fixture, score: result.score };
+    if (!best || result.score > best.score) best = { ...result, fixture };
   }
 
   return best;
@@ -246,7 +246,7 @@ function buildBookmakerLink(bookmaker: BetnacionalBookmakerConfig, fixtureId: st
   };
 }
 
-function buildMoneylineOdds(bookmaker: BetnacionalBookmakerConfig, fixtureId: string, event: BetnacionalEvent): OddRow[] {
+function buildMoneylineOdds(bookmaker: BetnacionalBookmakerConfig, fixtureId: string, event: BetnacionalEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
   const rows: OddRow[] = [];
 
   for (const odd of event.odds.filter(isMoneylineOdd)) {
@@ -260,7 +260,7 @@ function buildMoneylineOdds(bookmaker: BetnacionalBookmakerConfig, fixtureId: st
       bookmaker_slug: bookmaker.slug,
       market_code: "1X2",
       market_name: "MoneyLine",
-      selection,
+      selection: selectionForCanonicalOrientation(selection, orientation),
       price,
       pa_category: "SEM_PA",
       confidence_score: 1,
@@ -358,7 +358,7 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
 
             const previous = bestMatchByFixtureId.get(fixture.id);
             if (!previous || result.score > previous.matched.score) {
-              bestMatchByFixtureId.set(fixture.id, { event: fallbackEvent, matched: { fixture, score: result.score } });
+              bestMatchByFixtureId.set(fixture.id, { event: fallbackEvent, matched: { ...result, fixture } });
             }
           }
 
@@ -371,7 +371,7 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
 
       for (const { event, matched } of bestMatchByFixtureId.values()) {
         linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
-        oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event));
+        oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
         summary.eventsCollected += 1;
         summary.eventsMatched += 1;
       }

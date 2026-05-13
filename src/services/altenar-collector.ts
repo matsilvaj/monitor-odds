@@ -4,7 +4,7 @@ import { env } from "../config/env.js";
 import { MVP_LEAGUES } from "../config/leagues.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents } from "../domain/matching/event-matcher.js";
+import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { AltenarClient, type AltenarEventDetails, type AltenarMarket, type AltenarOdd } from "../providers/altenar.js";
@@ -86,7 +86,7 @@ async function getCanonicalFixtures(apiFootballLeagueId: number) {
 
 function matchFixture(details: AltenarEventDetails, fixtures: CanonicalFixture[]) {
   const { homeTeam, awayTeam } = splitTeams(details);
-  let best: { fixture: CanonicalFixture; score: number } | null = null;
+  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
   for (const fixture of fixtures) {
     const result = matchEvents(
       {
@@ -104,7 +104,7 @@ function matchFixture(details: AltenarEventDetails, fixtures: CanonicalFixture[]
     );
 
     if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { fixture, score: result.score };
+    if (!best || result.score > best.score) best = { ...result, fixture };
   }
 
   if (!best) return null;
@@ -147,7 +147,7 @@ function buildBookmakerLink(bookmaker: AltenarBookmakerConfig, fixtureId: string
   };
 }
 
-function buildMoneylineOdds(bookmaker: AltenarBookmakerConfig, fixtureId: string, details: AltenarEventDetails): OddRow[] {
+function buildMoneylineOdds(bookmaker: AltenarBookmakerConfig, fixtureId: string, details: AltenarEventDetails, orientation: EventMatchResult["orientation"]): OddRow[] {
   const markets = [...(details.markets ?? []), ...(details.childMarkets ?? [])].filter((market) =>
     isMoneylineMarket(market.name ?? market.shortName, market.typeId)
   );
@@ -169,7 +169,7 @@ function buildMoneylineOdds(bookmaker: AltenarBookmakerConfig, fixtureId: string
         bookmaker_slug: bookmaker.slug,
         market_code: "1X2",
         market_name: "MoneyLine",
-        selection,
+        selection: selectionForCanonicalOrientation(selection, orientation),
         price: Number(odd.price),
         pa_category: pa.category,
         confidence_score: pa.confidence,
@@ -238,7 +238,7 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
               }
 
               linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, details, matched.score));
-              oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, details));
+              oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, details, matched.orientation));
 
               summary.eventsMatched += 1;
               summary.eventsCollected += 1;
