@@ -1,5 +1,6 @@
 import { BOOKMAKER_COLLECTORS } from "../bookmakers/registry.js";
 import type { BookmakerCollectOptions } from "../bookmakers/types.js";
+import { formatBookmakerResultLines, formatBookmakerStartLine, getBookmakerOddsReport, getFixtureReport } from "../services/sync-report.js";
 
 const [slug, ...args] = process.argv.slice(2);
 
@@ -25,6 +26,20 @@ function parseOptions(rawArgs: string[]): BookmakerCollectOptions {
       continue;
     }
 
+    if (arg === "--force") {
+      options.force = true;
+      continue;
+    }
+
+    if (arg === "--trigger") {
+      const trigger = rawArgs[index + 1];
+      if (trigger === "manual" || trigger === "sync" || trigger === "watch") {
+        options.trigger = trigger;
+        index += 1;
+      }
+      continue;
+    }
+
     if (!arg.startsWith("--") && !options.date) {
       options.date = arg;
     }
@@ -45,9 +60,15 @@ if (!slug) {
   } else {
     try {
       const options = parseOptions(args);
-      console.log(`[collect] iniciando ${bookmaker.slug}${options.date ? ` para ${options.date}` : ""}...`);
+      const fixtureReport = await getFixtureReport();
+      console.log(formatBookmakerStartLine(bookmaker.slug, fixtureReport));
+      const startedAt = performance.now();
       const summary = await bookmaker.collect(options);
-      console.log(JSON.stringify({ bookmaker: bookmaker.slug, summary }, null, 2));
+      const durationMs = Math.round(performance.now() - startedAt);
+      const report = await getBookmakerOddsReport(bookmaker.slug, fixtureReport);
+      for (const line of formatBookmakerResultLines({ bookmaker: bookmaker.slug, summary, durationMs }, report)) {
+        console.log(line);
+      }
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;

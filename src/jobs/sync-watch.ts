@@ -2,6 +2,7 @@ import { collectAllBookmakers } from "../bookmakers/registry.js";
 import { supabase } from "../db/supabase.js";
 import { cleanupOldLogs } from "../services/log-retention.js";
 import { syncApiFootballFixtures } from "../services/api-football-sync.js";
+import { formatFixtureSyncSummary } from "../services/sync-report.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -46,31 +47,21 @@ let lastFixtureSyncDate: string | null = null;
 while (true) {
   const startedAt = new Date();
   const todayKey = localDateKey(startedAt);
-  console.log(`[${startedAt.toISOString()}] sincronizando odds${lastFixtureSyncDate === todayKey ? "" : " e fixtures"}...`);
+  console.log(`[sync] Ciclo iniciado às ${startedAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`);
 
-  console.log("[sync] limpando logs antigos...");
+  console.log("[sync] Limpando logs antigos...");
   await cleanupOldLogs();
-  console.log(lastFixtureSyncDate === todayKey ? "[sync] fixtures ja sincronizadas hoje; pulando API-Football." : "[sync] sincronizando fixtures via API-Football...");
+  console.log(lastFixtureSyncDate === todayKey ? "[sync] API-Football já sincronizada hoje." : "[sync] Sincronizando jogos via API-Football...");
   const fixtures = lastFixtureSyncDate === todayKey ? { skippedByWatchDate: true } : await syncApiFootballFixtures();
-  console.log("[sync] fixtures finalizadas.");
+  console.log(formatFixtureSyncSummary(fixtures));
   lastFixtureSyncDate = todayKey;
 
-  const bookmakers = await collectAllBookmakers({ concurrency: 2, logProgress: true });
+  await collectAllBookmakers({ concurrency: 2, logProgress: true, trigger: "watch" });
   const minutesToNext = await getMinutesToNextFixture();
   const waitMs = nextIntervalMs(minutesToNext);
 
-  console.log(
-    JSON.stringify(
-      {
-        fixtures,
-        bookmakers,
-        nextFixtureInMinutes: minutesToNext === null ? null : Math.round(minutesToNext),
-        nextRunIn: formatMs(waitMs)
-      },
-      null,
-      2
-    )
-  );
+  console.log(`[sync] Próximo jogo: ${minutesToNext === null ? "nenhum jogo futuro no banco" : `em ${Math.round(minutesToNext)} minutos`}.`);
+  console.log(`[sync] Próximo ciclo em ${formatMs(waitMs)}.`);
 
   await sleep(waitMs);
 }

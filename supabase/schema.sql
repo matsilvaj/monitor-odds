@@ -137,6 +137,44 @@ create table if not exists bookmaker_event_snapshots (
   unique (bookmaker_slug, external_event_id)
 );
 
+create table if not exists bookmaker_collection_state (
+  bookmaker_slug text primary key references bookmakers(slug) on delete cascade,
+  status text not null default 'idle',
+  last_started_at timestamptz,
+  last_finished_at timestamptz,
+  next_run_at timestamptz,
+  lease_until timestamptz,
+  last_error text,
+  summary jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create or replace function try_acquire_bookmaker_collection_lock(
+  p_bookmaker_slug text,
+  p_lease_until timestamptz
+) returns boolean
+language plpgsql
+as $$
+declare
+  acquired boolean;
+begin
+  insert into bookmaker_collection_state (bookmaker_slug, status, lease_until, last_started_at, updated_at)
+  values (p_bookmaker_slug, 'running', p_lease_until, now(), now())
+  on conflict (bookmaker_slug) do update
+    set status = 'running',
+        lease_until = p_lease_until,
+        last_started_at = now(),
+        updated_at = now()
+    where bookmaker_collection_state.lease_until is null
+       or bookmaker_collection_state.lease_until < now()
+       or bookmaker_collection_state.status <> 'running'
+  returning true into acquired;
+
+  return coalesce(acquired, false);
+end;
+$$;
+
 create index if not exists fixtures_search_idx on fixtures using gin (
   to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(home_team, '') || ' ' || coalesce(away_team, ''))
 );
@@ -149,3 +187,4 @@ create index if not exists odds_fixture_id_idx on odds (fixture_id);
 create index if not exists bookmaker_event_links_fixture_id_idx on bookmaker_event_links (fixture_id);
 create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on bookmaker_event_snapshots (bookmaker_slug, date_key);
 create index if not exists bookmaker_event_snapshots_league_idx on bookmaker_event_snapshots (league_api_football_id);
+create index if not exists bookmaker_collection_state_next_run_idx on bookmaker_collection_state (next_run_at);

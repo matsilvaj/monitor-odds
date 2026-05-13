@@ -14,6 +14,13 @@ import { createSportingbetCollector } from "../services/sportingbet-collector.js
 import { createSportybetCollector } from "../services/sportybet-collector.js";
 import { createSuperbetCollector } from "../services/superbet-collector.js";
 import { createVaidebetCollector } from "../services/vaidebet-collector.js";
+import {
+  formatBookmakerResultLines,
+  formatBookmakerStartLine,
+  formatFixtureReportLines,
+  getBookmakerOddsReport,
+  getFixtureReport
+} from "../services/sync-report.js";
 import { errorMessage } from "../utils/errors.js";
 import type { BookmakerCollector, BookmakerCollectorResult } from "./types.js";
 
@@ -132,35 +139,61 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
 export type CollectAllBookmakersOptions = {
   concurrency?: number;
   logProgress?: boolean;
+  trigger?: "manual" | "sync" | "watch";
+  force?: boolean;
 };
 
 export async function collectAllBookmakers(options: CollectAllBookmakersOptions = {}) {
   const concurrency = options.concurrency ?? 2;
   const logProgress = options.logProgress ?? true;
+  const trigger = options.trigger ?? "sync";
+  const fixtureReport = await getFixtureReport();
 
-  return pMap(
-    BOOKMAKER_COLLECTORS,
-    async (bookmaker) => {
-      const start = performance.now();
-      if (logProgress) {
-        console.log(`[sync] coletando ${bookmaker.slug}...`);
-      }
+  if (logProgress) {
+    for (const line of formatFixtureReportLines(fixtureReport)) console.log(line);
+  }
 
-      try {
-        const summary = await bookmaker.collect({ logToConsole: logProgress, manualFallback: false });
-        const durationMs = Math.round(performance.now() - start);
+  const printBookmakerResult = async (result: BookmakerCollectorResult) => {
+    if (!logProgress) return;
 
-        if (logProgress) {
-          console.log(`[sync] ${bookmaker.slug} concluida em ${durationMs}ms`);
-        }
+    try {
+      const report = await getBookmakerOddsReport(result.bookmaker, fixtureReport);
+      for (const line of formatBookmakerResultLines(result, report)) console.log(line);
+    } catch (error) {
+      console.warn(`[${result.bookmaker}] Coleta finalizada, mas não consegui montar o resumo do banco: ${errorMessage(error)}`);
+    }
+  };
 
-        return { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
-      } catch (error) {
-        const durationMs = Math.round(performance.now() - start);
-        console.error(`[sync] ${bookmaker.slug} falhou apos ${durationMs}ms:`, error);
-        return { bookmaker: bookmaker.slug, summary: null, error: errorMessage(error), durationMs } satisfies BookmakerCollectorResult;
-      }
-    },
-    { concurrency }
-  );
+  const collectOne = async (bookmaker: BookmakerCollector) => {
+    const start = performance.now();
+    if (logProgress) {
+      console.log(formatBookmakerStartLine(bookmaker.slug, fixtureReport));
+    }
+
+    try {
+      const summary = await bookmaker.collect({ logToConsole: logProgress, manualFallback: false, force: options.force, trigger });
+      const durationMs = Math.round(performance.now() - start);
+      const result = { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
+      await printBookmakerResult(result);
+      return result;
+    } catch (error) {
+      const durationMs = Math.round(performance.now() - start);
+      const result = { bookmaker: bookmaker.slug, summary: null, error: errorMessage(error), durationMs } satisfies BookmakerCollectorResult;
+      await printBookmakerResult(result);
+      return result;
+    }
+  };
+
+  const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => bookmaker.slug !== "bet365");
+  const slowCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => bookmaker.slug === "bet365");
+
+  if (logProgress && slowCollectors.length) {
+    console.log("[sync] bet365 iniciada em uma raia própria; as outras casas continuam em paralelo.");
+  }
+
+  const fastResultsPromise = pMap(fastCollectors, collectOne, { concurrency });
+  const slowResultsPromise = Promise.all(slowCollectors.map((bookmaker) => collectOne(bookmaker)));
+  const [fastResults, slowResults] = await Promise.all([fastResultsPromise, slowResultsPromise]);
+
+  return [...fastResults, ...slowResults];
 }
