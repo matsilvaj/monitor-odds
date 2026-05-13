@@ -3,6 +3,7 @@ import { env } from "../config/env.js";
 import { supabase } from "../db/supabase.js";
 import { normalizeName } from "../domain/text.js";
 import { ApiFootballClient, type ApiFootballFixtureRow } from "../providers/api-football.js";
+import { cleanupStartedFixtures } from "./fixture-cleanup.js";
 
 const TARGET_LEAGUE_IDS = new Set(MVP_LEAGUES.map((league) => league.apiFootballLeagueId));
 const LEAGUE_IDS_HASH = [...TARGET_LEAGUE_IDS].sort((a, b) => a - b).join(",");
@@ -34,20 +35,6 @@ async function log(level: "info" | "warn" | "error", message: string, context: R
     message,
     context
   });
-}
-
-async function cleanupStartedCanonicalFixtures() {
-  const { data, error } = await supabase.from("fixtures").select("id").lte("starts_at", new Date().toISOString());
-
-  if (error) throw error;
-
-  const ids = (data ?? []).map((row) => row.id);
-  if (!ids.length) return 0;
-
-  const { error: deleteError } = await supabase.from("fixtures").delete().in("id", ids);
-  if (deleteError) throw deleteError;
-
-  return ids.length;
 }
 
 async function hasTargetFixturesForDate(key: string) {
@@ -147,11 +134,14 @@ export async function syncApiFootballFixtures() {
     fixturesKept: 0,
     fixturesDeleted: 0,
     startedFixturesDeleted: 0,
+    startedSnapshotsDeleted: 0,
     errors: 0
   };
 
   try {
-    summary.startedFixturesDeleted = await cleanupStartedCanonicalFixtures();
+    const cleanup = await cleanupStartedFixtures();
+    summary.startedFixturesDeleted = cleanup.startedFixturesDeleted;
+    summary.startedSnapshotsDeleted = cleanup.startedSnapshotsDeleted;
   } catch (error) {
     summary.errors += 1;
     await log("error", "started fixtures cleanup failed", {

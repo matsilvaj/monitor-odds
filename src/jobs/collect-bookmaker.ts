@@ -1,5 +1,6 @@
 import { BOOKMAKER_COLLECTORS } from "../bookmakers/registry.js";
 import type { BookmakerCollectOptions } from "../bookmakers/types.js";
+import { cleanupStartedFixtures, formatStartedFixtureCleanupSummary } from "../services/fixture-cleanup.js";
 import { formatBookmakerResultLines, formatBookmakerStartLine, getBookmakerOddsReport, getFixtureReport } from "../services/sync-report.js";
 
 const [slug, ...args] = process.argv.slice(2);
@@ -60,6 +61,8 @@ if (!slug) {
   } else {
     try {
       const options = parseOptions(args);
+      const cleanup = await cleanupStartedFixtures();
+      console.log(formatStartedFixtureCleanupSummary(cleanup));
       const fixtureReport = await getFixtureReport();
       console.log(formatBookmakerStartLine(bookmaker.slug, fixtureReport));
       const startedAt = performance.now();

@@ -242,8 +242,10 @@ export function formatFixtureSyncSummary(summary: unknown) {
   const seen = numberField(record, ["fixturesSeen"]);
   const kept = numberField(record, ["fixturesKept"]);
   const deleted = numberField(record, ["fixturesDeleted"]);
+  const startedDeleted = numberField(record, ["startedFixturesDeleted"]);
+  const snapshotsDeleted = numberField(record, ["startedSnapshotsDeleted"]);
   const errors = numberField(record, ["errors"]);
   const apiCalls = numberField(record, ["apiCalls"]);
 
-  return `[sync] API-Football: ${countText(seen, "jogo lido", "jogos lidos")} | ${kept} salvos | ${deleted} removidos | ${apiCalls} chamadas | ${errors} erros.`;
+  return `[sync] API-Football: ${countText(seen, "jogo lido", "jogos lidos")} | ${kept} salvos | ${deleted} removidos pela API | ${startedDeleted} iniciados removidos | ${snapshotsDeleted} snapshots removidos | ${apiCalls} chamadas | ${errors} erros.`;
 }

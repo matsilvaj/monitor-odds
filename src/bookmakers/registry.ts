@@ -14,6 +14,7 @@ import { createSportingbetCollector } from "../services/sportingbet-collector.js
 import { createSportybetCollector } from "../services/sportybet-collector.js";
 import { createSuperbetCollector } from "../services/superbet-collector.js";
 import { createVaidebetCollector } from "../services/vaidebet-collector.js";
+import { cleanupStartedFixtures, formatStartedFixtureCleanupSummary } from "../services/fixture-cleanup.js";
 import {
   formatBookmakerResultLines,
   formatBookmakerStartLine,
@@ -147,6 +148,11 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
   const concurrency = options.concurrency ?? 2;
   const logProgress = options.logProgress ?? true;
   const trigger = options.trigger ?? "sync";
+  const cleanup = await cleanupStartedFixtures();
+  if (logProgress) {
+    console.log(formatStartedFixtureCleanupSummary(cleanup));
+  }
+
   const fixtureReport = await getFixtureReport();
 
   if (logProgress) {
