@@ -108,6 +108,17 @@ export type Bet7kBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type KtoBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "kto";
+  baseUrl: string;
+  apiBaseUrl: string;
+  referer: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type Bet365BookmakerConfig = {
   slug: string;
   name: string;
@@ -201,6 +212,7 @@ export type BookmakerConfig =
   | BetanoBookmakerConfig
   | ApostabetBookmakerConfig
   | Bet7kBookmakerConfig
+  | KtoBookmakerConfig
   | Bet365BookmakerConfig
   | BetfairBookmakerConfig
   | BetesporteBookmakerConfig
@@ -361,6 +373,16 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: "https://7k.bet.br/",
     apiBaseUrl: "https://prod20350-kbet-152319626.fssb.io/",
     referer: "https://prod20350-kbet-152319626.fssb.io/br-pt/spbkv4?operatorToken=logout",
+    engine: "fetch"
+  },
+  {
+    slug: "kto",
+    name: "KTO",
+    enabled: true,
+    provider: "kto",
+    baseUrl: "https://www.kto.bet.br/",
+    apiBaseUrl: "https://us.offering-api.kambicdn.com/offering/v2018/ktobr/",
+    referer: "https://www.kto.bet.br/esportes/",
     engine: "fetch"
   },
   {
