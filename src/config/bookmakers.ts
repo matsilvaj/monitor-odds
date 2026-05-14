@@ -212,6 +212,20 @@ export type BetboomBookmakerConfig = {
   wsUrl: string;
 };
 
+export type TradeballBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "tradeball";
+  baseUrl: string;
+  apiBaseUrl: string;
+  referer: string;
+  sportId: string;
+  perPage: number;
+  maxPages: number;
+  engine: BookmakerHttpEngine;
+};
+
 export type BookmakerConfig =
   | AltenarBookmakerConfig
   | SportingbetBookmakerConfig
@@ -230,7 +244,8 @@ export type BookmakerConfig =
   | BetmgmBookmakerConfig
   | CasaDeApostasBookmakerConfig
   | SegurobetBookmakerConfig
-  | BetboomBookmakerConfig;
+  | BetboomBookmakerConfig
+  | TradeballBookmakerConfig;
 
 export const BOOKMAKERS: BookmakerConfig[] = [
   {
@@ -480,5 +495,18 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: "https://betboom.bet.br/",
     referer: "https://betboom.bet.br/sport/football/",
     wsUrl: "wss://com-br-ws.sporthub.bet:444/api/tree_ws/v1"
+  },
+  {
+    slug: "tradeball",
+    name: "Tradeball",
+    enabled: true,
+    provider: "tradeball",
+    baseUrl: "https://mexchange2.bolsadeaposta.bet.br/",
+    apiBaseUrl: "https://mexchange-api.bolsadeaposta.bet.br/",
+    referer: "https://mexchange2.bolsadeaposta.bet.br/exchange/sport/soccer",
+    sportId: "15",
+    perPage: 50,
+    maxPages: 5,
+    engine: "fetch"
   }
 ];
