@@ -19,6 +19,7 @@ import { createSportybetCollector } from "../services/sportybet-collector.js";
 import { createSuperbetCollector } from "../services/superbet-collector.js";
 import { createTradeballCollector } from "../services/tradeball-collector.js";
 import { createVaidebetCollector } from "../services/vaidebet-collector.js";
+import { createVersusbetCollector } from "../services/versusbet-collector.js";
 import { cleanupStartedFixtures, formatStartedFixtureCleanupSummary } from "../services/fixture-cleanup.js";
 import {
   formatBookmakerResultLines,
@@ -92,6 +93,14 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
       slug: bookmaker.slug,
       name: bookmaker.name,
       collect: createTradeballCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "versusbet") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createVersusbetCollector(bookmaker)
     };
   }
 

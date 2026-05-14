@@ -226,6 +226,18 @@ export type TradeballBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type VersusbetBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "versusbet";
+  baseUrl: string;
+  cdnBaseUrl: string;
+  referer: string;
+  language: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type BookmakerConfig =
   | AltenarBookmakerConfig
   | SportingbetBookmakerConfig
@@ -245,7 +257,8 @@ export type BookmakerConfig =
   | CasaDeApostasBookmakerConfig
   | SegurobetBookmakerConfig
   | BetboomBookmakerConfig
-  | TradeballBookmakerConfig;
+  | TradeballBookmakerConfig
+  | VersusbetBookmakerConfig;
 
 export const BOOKMAKERS: BookmakerConfig[] = [
   {
@@ -507,6 +520,17 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     sportId: "15",
     perPage: 50,
     maxPages: 5,
+    engine: "fetch"
+  },
+  {
+    slug: "versusbet",
+    name: "VersusBet",
+    enabled: true,
+    provider: "versusbet",
+    baseUrl: "https://www.versus.bet.br/",
+    cdnBaseUrl: "https://sportswidget-cdn.versus.bet.br/",
+    referer: "https://www.versus.bet.br/esportes/sports/soccer",
+    language: "pt_BR",
     engine: "fetch"
   }
 ];
