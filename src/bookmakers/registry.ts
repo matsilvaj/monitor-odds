@@ -3,6 +3,7 @@ import { BOOKMAKERS } from "../config/bookmakers.js";
 import { createAltenarCollector } from "../services/altenar-collector.js";
 import { createApostabetCollector } from "../services/apostabet-collector.js";
 import { createBet365Collector } from "../services/bet365-collector.js";
+import { createBet7kCollector } from "../services/bet7k-collector.js";
 import { createBetanoCollector } from "../services/betano-collector.js";
 import { createBetesporteCollector } from "../services/betesporte-collector.js";
 import { createBetfairCollector } from "../services/betfair-collector.js";
@@ -80,6 +81,14 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
       slug: bookmaker.slug,
       name: bookmaker.name,
       collect: createApostabetCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "bet7k") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createBet7kCollector(bookmaker)
     };
   }
 

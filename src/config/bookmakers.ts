@@ -97,6 +97,17 @@ export type ApostabetBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type Bet7kBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "bet7k";
+  baseUrl: string;
+  apiBaseUrl: string;
+  referer: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type Bet365BookmakerConfig = {
   slug: string;
   name: string;
@@ -189,6 +200,7 @@ export type BookmakerConfig =
   | NovibetBookmakerConfig
   | BetanoBookmakerConfig
   | ApostabetBookmakerConfig
+  | Bet7kBookmakerConfig
   | Bet365BookmakerConfig
   | BetfairBookmakerConfig
   | BetesporteBookmakerConfig
@@ -339,6 +351,16 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     apiBaseUrl: "https://sportsbook.aposta.bet.br/",
     frontbackBaseUrl: "https://sportsbook-frontback.aposta.bet.br/",
     referer: "https://aposta.bet.br/esportes",
+    engine: "fetch"
+  },
+  {
+    slug: "bet7k",
+    name: "Bet7k",
+    enabled: true,
+    provider: "bet7k",
+    baseUrl: "https://7k.bet.br/",
+    apiBaseUrl: "https://prod20350-kbet-152319626.fssb.io/",
+    referer: "https://prod20350-kbet-152319626.fssb.io/br-pt/spbkv4?operatorToken=logout",
     engine: "fetch"
   },
   {
