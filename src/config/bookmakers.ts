@@ -202,6 +202,16 @@ export type SegurobetBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type BetboomBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "betboom";
+  baseUrl: string;
+  referer: string;
+  wsUrl: string;
+};
+
 export type BookmakerConfig =
   | AltenarBookmakerConfig
   | SportingbetBookmakerConfig
@@ -219,7 +229,8 @@ export type BookmakerConfig =
   | BetnacionalBookmakerConfig
   | BetmgmBookmakerConfig
   | CasaDeApostasBookmakerConfig
-  | SegurobetBookmakerConfig;
+  | SegurobetBookmakerConfig
+  | BetboomBookmakerConfig;
 
 export const BOOKMAKERS: BookmakerConfig[] = [
   {
@@ -460,5 +471,14 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     source: 42,
     language: "pt-br",
     engine: "fetch"
+  },
+  {
+    slug: "betboom",
+    name: "BetBoom",
+    enabled: true,
+    provider: "betboom",
+    baseUrl: "https://betboom.bet.br/",
+    referer: "https://betboom.bet.br/sport/football/",
+    wsUrl: "wss://com-br-ws.sporthub.bet:444/api/tree_ws/v1"
   }
 ];
