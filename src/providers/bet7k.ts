@@ -82,8 +82,62 @@ const MARKET_TYPES_BY_SPORTS = JSON.stringify({
   default: ["ML0", "OU0", "HC0", "ML39", "OU39", "HC39", "OU6001"]
 });
 
+function localizedText(value: unknown) {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return undefined;
+
+  const record = value as Record<string, unknown>;
+  const direct = record["BR-PT"] ?? record["pt-BR"] ?? record.pt ?? record.en;
+  if (typeof direct === "string") return direct;
+
+  const first = Object.values(record).find((item) => typeof item === "string");
+  return typeof first === "string" ? first : undefined;
+}
+
+function parseEventPageSelection(value: unknown): Bet7kSelection | null {
+  if (!Array.isArray(value)) return null;
+
+  const decimal = Array.isArray(value[8]) ? value[8][1] : value[6];
+  return {
+    _id: String(value[0] ?? ""),
+    Name: localizedText(value[1]) ?? localizedText(value[2]) ?? "",
+    OutcomeType: typeof value[3] === "string" ? value[3] : undefined,
+    Side: Number.isFinite(Number(value[9])) ? Number(value[9]) : undefined,
+    IsDisabled: value[5] === true,
+    DisplayOdds: {
+      Decimal: decimal == null ? undefined : String(decimal)
+    },
+    raw: value
+  };
+}
+
+function parseEventPageMarket(value: unknown): Bet7kMarket | null {
+  if (!Array.isArray(value)) return null;
+
+  const marketType = Array.isArray(value[5]) ? value[5] : [];
+  const selections = Array.isArray(value[13]) ? value[13].map(parseEventPageSelection).filter((item): item is Bet7kSelection => Boolean(item)) : [];
+  if (!selections.length) return null;
+
+  return {
+    _id: String(value[0] ?? ""),
+    EventId: value[6] == null ? undefined : String(value[6]),
+    IsLive: false,
+    IsRemoved: false,
+    IsSuspended: false,
+    MarketType: {
+      _id: marketType[0] == null ? undefined : String(marketType[0]),
+      Name: localizedText(marketType[1]) ?? "",
+      LineTypeName: localizedText(marketType[4]) ?? localizedText(marketType[1]) ?? ""
+    },
+    Name: localizedText(value[1]) ?? localizedText(value[3]) ?? localizedText(marketType[1]) ?? "",
+    Selections: selections,
+    raw: value
+  };
+}
+
 export class Bet7kClient {
   private readonly headers: Record<string, string>;
+  private authHeaders: Record<string, string> | null = null;
 
   constructor(private readonly config: Bet7kBookmakerConfig) {
     this.headers = {
@@ -139,5 +193,62 @@ export class Bet7kClient {
       timeoutMs: 25_000,
       maxRetries: 1
     });
+  }
+
+  private async getAuthHeaders() {
+    if (this.authHeaders) return this.authHeaders;
+
+    const url = new URL("br-pt/spbkv4", this.config.apiBaseUrl);
+    url.searchParams.set("operatorToken", "logout");
+
+    const html = await httpClient<string>({
+      url,
+      headers: { ...this.headers, accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 25_000,
+      maxRetries: 1,
+      responseType: "text"
+    });
+
+    const internalToken = html.match(/internalToken['"]?\s*:\s*['"]([^'"]+)/)?.[1];
+    const sessionToken = html.match(/sessionToken['"]?\s*:\s*['"]([^'"]+)/)?.[1];
+    if (!internalToken || !sessionToken) {
+      throw new Error("Bet7k auth tokens not found in sportsbook bootstrap HTML");
+    }
+
+    this.authHeaders = {
+      authorization: internalToken,
+      session: sessionToken
+    };
+
+    return this.authHeaders;
+  }
+
+  async getEventPageMarkets(event: Bet7kEvent | string) {
+    const eventId = typeof event === "string" ? event : event._id;
+    const url = new URL(`api/eventpage/events/${encodeURIComponent(eventId)}`, this.config.apiBaseUrl);
+    url.searchParams.set("hideX25X75Selections", "false");
+
+    const eventReferer =
+      typeof event === "string"
+        ? this.config.referer
+        : new URL(
+            `br-pt/spbkv4/${event.UrlSportName ?? "Futebol"}/${event.UrlLeagueName ?? event.LeagueName ?? "liga"}/${event.UrlEventName ?? event.EventName ?? event._id}/${event._id}?operatorToken=logout`,
+            this.config.apiBaseUrl
+          ).href;
+
+    const response = await httpClient<{ data?: unknown[] }>({
+      url,
+      headers: { ...this.headers, ...(await this.getAuthHeaders()), accept: "application/json" },
+      referer: eventReferer,
+      engine: this.config.engine,
+      timeoutMs: 25_000,
+      maxRetries: 1
+    });
+
+    const pageEvent = Array.isArray(response.data) ? response.data[0] : undefined;
+    const markets = Array.isArray(pageEvent) && Array.isArray(pageEvent[20]) ? pageEvent[20] : [];
+    return markets.map(parseEventPageMarket).filter((market): market is Bet7kMarket => Boolean(market));
   }
 }

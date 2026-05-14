@@ -1,3 +1,4 @@
+import pMap from "p-map";
 import type { Bet7kBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
@@ -127,13 +128,28 @@ function isMoneylineMarket(market: Bet7kMarket) {
   const typeName = normalizeForMatching(market.MarketType?.LineTypeName);
   const name = normalizeForMatching(market.Name ?? market.MarketType?.Name);
 
-  return type === "ML0" && typeName === "1x2" && name.includes("resultado final") && market.IsLive !== true && market.IsRemoved !== true && market.IsSuspended !== true;
+  const isStandardMoneyline = type === "ML0" && typeName === "1x2" && name.includes("resultado final");
+  const isSuperOddsMoneyline = type === "ML5000" && (typeName.includes("super odds") || name.includes("super odds"));
+
+  return (isStandardMoneyline || isSuperOddsMoneyline) && market.IsLive !== true && market.IsRemoved !== true && market.IsSuspended !== true;
 }
 
-function paForEvent(event: Bet7kEvent): { category: PaCategory; confidence: number; reason: string } {
-  const earlyPayout = event.Settings?.EarlyPayout;
-  if (earlyPayout === true || Number(earlyPayout) > 0) {
-    return { category: "COM_PA", confidence: 0.95, reason: "bet7k-event-early-payout" };
+function paForMarket(market: Bet7kMarket): { category: PaCategory; confidence: number; reason: string } {
+  const type = market.MarketType?._id;
+  const text = normalizeForMatching([market.Name, market.MarketType?.Name, market.MarketType?.LineTypeName].filter(Boolean).join(" "));
+  const raw = Array.isArray(market.raw) ? market.raw : [];
+  const earlyPayoutMarker = Number(raw[29]);
+
+  if (type === "ML5000" || text.includes("super odds")) {
+    return { category: "SEM_PA", confidence: 1, reason: "bet7k-super-odds" };
+  }
+
+  if (text.includes("pagamento antecipado") || text.includes("early payout") || text.includes("2up") || text.includes("2 up")) {
+    return { category: "COM_PA", confidence: 1, reason: "bet7k-explicit-early-payout-market" };
+  }
+
+  if (type === "ML0" && Number.isFinite(earlyPayoutMarker) && earlyPayoutMarker > 0) {
+    return { category: "COM_PA", confidence: 0.95, reason: "bet7k-market-early-payout-marker" };
   }
 
   return { category: "SEM_PA", confidence: 1, reason: "bet7k-standard-1x2" };
@@ -193,9 +209,10 @@ function buildMoneylineOdds(
 ): OddRow[] {
   const rows: OddRow[] = [];
   const { homeTeam, awayTeam } = eventTeams(event);
-  const pa = paForEvent(event);
 
   for (const market of markets.filter(isMoneylineMarket)) {
+    const pa = paForMarket(market);
+
     for (const selectionItem of market.Selections ?? []) {
       const price = Number(selectionItem.DisplayOdds?.Decimal);
       if (!Number.isFinite(price) || price <= 0 || selectionItem.IsDisabled === true) continue;
@@ -234,6 +251,8 @@ export function createBet7kCollector(bookmaker: Bet7kBookmakerConfig) {
       eventsCollected: 0,
       eventsMatched: 0,
       eventsUnmatched: 0,
+      eventDetailsFetched: 0,
+      eventDetailsFailed: 0,
       oddsUpserted: 0,
       errors: 0,
       lastError: null as string | null
@@ -277,10 +296,34 @@ export function createBet7kCollector(bookmaker: Bet7kBookmakerConfig) {
 
       const linksToSave: BookmakerLinkRow[] = [];
       const oddsToSave: OddRow[] = [];
+      const matchedItems = Array.from(bestMatchByFixtureId.values());
+      const detailEntries = await pMap(
+        matchedItems,
+        async ({ event }): Promise<readonly [string, Bet7kMarket[]]> => {
+          try {
+            return [event._id, await client.getEventPageMarkets(event)] as const;
+          } catch (error) {
+            summary.eventDetailsFailed += 1;
+            await log(bookmaker, "warn", "bet7k event page failed; using featured markets fallback", {
+              eventId: event._id,
+              eventName: event.EventName,
+              error: errorMessage(error)
+            });
+            return [event._id, [] as Bet7kMarket[]] as const;
+          }
+        },
+        { concurrency: 3 }
+      );
+      const detailMarketsByEventId = new Map(detailEntries);
+      summary.eventDetailsFetched = detailEntries.length;
 
-      for (const { event, matched } of bestMatchByFixtureId.values()) {
+      for (const { event, matched } of matchedItems) {
+        const detailMarkets = detailMarketsByEventId.get(event._id) ?? [];
+        const fallbackMarkets = marketsByEventId.get(event._id) ?? [];
+        const markets = detailMarkets.length ? detailMarkets : fallbackMarkets;
+
         linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
-        oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, marketsByEventId.get(event._id) ?? [], matched.orientation));
+        oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, markets, matched.orientation));
         summary.eventsCollected += 1;
         summary.eventsMatched += 1;
       }

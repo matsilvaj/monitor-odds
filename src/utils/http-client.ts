@@ -12,6 +12,7 @@ export interface RequestOptions {
   timeoutMs?: number;
   maxRetries?: number;
   engine?: "fetch" | "got-scraping";
+  responseType?: "json" | "text";
 }
 
 function sleep(ms: number) {
@@ -51,7 +52,8 @@ export async function httpClient<T>(options: RequestOptions): Promise<T> {
     json,
     timeoutMs = 7000,
     maxRetries = 1,
-    engine = "fetch"
+    engine = "fetch",
+    responseType = "json"
   } = options;
 
   const requestUrl = url instanceof URL ? url.href : url;
@@ -76,7 +78,7 @@ export async function httpClient<T>(options: RequestOptions): Promise<T> {
           });
 
           if (!res.ok) throw { response: { statusCode: res.status } };
-          return (await res.json()) as T;
+          return (responseType === "text" ? await res.text() : await res.json()) as T;
         } finally {
           clearTimeout(timeoutId);
         }
@@ -96,7 +98,7 @@ export async function httpClient<T>(options: RequestOptions): Promise<T> {
         json,
         cookieJar: jar,
         timeout: { request: timeoutMs },
-        responseType: "json",
+        responseType,
         retry: { limit: 0 }
       });
       return res.body as T;

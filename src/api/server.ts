@@ -506,7 +506,8 @@ function renderSearchPage() {
     function groupByBookmaker(items) {
       const map = new Map();
       for (const odd of items) {
-        const key = odd.bookmaker_slug || "bookmaker";
+        const marketKey = odd.raw_market_name || odd.market_name || odd.market_code || "";
+        const key = (odd.bookmaker_slug || "bookmaker") + "::" + marketKey;
         const row = map.get(key) || {
           bookmaker: odd.bookmaker_name || key,
           odds: { HOME: null, DRAW: null, AWAY: null }

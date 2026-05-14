@@ -373,7 +373,7 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: "https://7k.bet.br/",
     apiBaseUrl: "https://prod20350-kbet-152319626.fssb.io/",
     referer: "https://prod20350-kbet-152319626.fssb.io/br-pt/spbkv4?operatorToken=logout",
-    engine: "fetch"
+    engine: "got-scraping"
   },
   {
     slug: "kto",
