@@ -85,6 +85,18 @@ export type BetanoBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type ApostabetBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "apostabet";
+  baseUrl: string;
+  apiBaseUrl: string;
+  frontbackBaseUrl: string;
+  referer: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type Bet365BookmakerConfig = {
   slug: string;
   name: string;
@@ -176,6 +188,7 @@ export type BookmakerConfig =
   | SuperbetBookmakerConfig
   | NovibetBookmakerConfig
   | BetanoBookmakerConfig
+  | ApostabetBookmakerConfig
   | Bet365BookmakerConfig
   | BetfairBookmakerConfig
   | BetesporteBookmakerConfig
@@ -227,6 +240,17 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://lotogreen.bet.br",
     referer: "https://lotogreen.bet.br/",
+    engine: "fetch"
+  },
+  {
+    slug: "jogodeouro",
+    name: "Jogo de Ouro",
+    enabled: true,
+    provider: "altenar",
+    integration: "jogodeouro",
+    baseUrl: env.ALTENAR_BASE_URL,
+    origin: "https://jogodeouro.bet.br",
+    referer: "https://jogodeouro.bet.br/",
     engine: "fetch"
   },
   {
@@ -305,6 +329,17 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: "https://www.betano.bet.br/",
     referer: "https://www.betano.bet.br/sport/futebol/",
     engine: "got-scraping"
+  },
+  {
+    slug: "apostabet",
+    name: "Aposta Bet",
+    enabled: true,
+    provider: "apostabet",
+    baseUrl: "https://aposta.bet.br/",
+    apiBaseUrl: "https://sportsbook.aposta.bet.br/",
+    frontbackBaseUrl: "https://sportsbook-frontback.aposta.bet.br/",
+    referer: "https://aposta.bet.br/esportes",
+    engine: "fetch"
   },
   {
     slug: "bet365",

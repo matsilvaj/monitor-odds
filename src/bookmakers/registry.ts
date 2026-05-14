@@ -1,6 +1,7 @@
 import pMap from "p-map";
 import { BOOKMAKERS } from "../config/bookmakers.js";
 import { createAltenarCollector } from "../services/altenar-collector.js";
+import { createApostabetCollector } from "../services/apostabet-collector.js";
 import { createBet365Collector } from "../services/bet365-collector.js";
 import { createBetanoCollector } from "../services/betano-collector.js";
 import { createBetesporteCollector } from "../services/betesporte-collector.js";
@@ -71,6 +72,14 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
       slug: bookmaker.slug,
       name: bookmaker.name,
       collect: createBetanoCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "apostabet") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createApostabetCollector(bookmaker)
     };
   }
 

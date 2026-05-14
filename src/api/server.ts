@@ -1,9 +1,12 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import { BOOKMAKERS } from "../config/bookmakers.js";
 import { env } from "../config/env.js";
 import { supabase } from "../db/supabase.js";
 import { syncApiFootballFixtures } from "../services/api-football-sync.js";
 import { cleanupOldLogs } from "../services/log-retention.js";
+
+const BOOKMAKER_NAME_BY_SLUG = new Map(BOOKMAKERS.map((bookmaker) => [bookmaker.slug, bookmaker.name]));
 
 export function buildServer() {
   const app = Fastify({ logger: true });
@@ -175,9 +178,14 @@ export function buildServer() {
 function groupByPa(odds: unknown[]) {
   const grouped: { COM_PA: unknown[]; SEM_PA: unknown[] } = { COM_PA: [], SEM_PA: [] };
 
-  for (const odd of odds as Array<{ pa_category?: "COM_PA" | "SEM_PA" }>) {
-    if (odd.pa_category === "COM_PA") grouped.COM_PA.push(odd);
-    else grouped.SEM_PA.push(odd);
+  for (const odd of odds as Array<{ bookmaker_slug?: string; pa_category?: "COM_PA" | "SEM_PA" }>) {
+    const item = {
+      ...odd,
+      bookmaker_name: odd.bookmaker_slug ? (BOOKMAKER_NAME_BY_SLUG.get(odd.bookmaker_slug) ?? odd.bookmaker_slug) : "Casa"
+    };
+
+    if (item.pa_category === "COM_PA") grouped.COM_PA.push(item);
+    else grouped.SEM_PA.push(item);
   }
 
   return grouped;
@@ -500,7 +508,7 @@ function renderSearchPage() {
       for (const odd of items) {
         const key = odd.bookmaker_slug || "bookmaker";
         const row = map.get(key) || {
-          bookmaker: key,
+          bookmaker: odd.bookmaker_name || key,
           odds: { HOME: null, DRAW: null, AWAY: null }
         };
         const bucket = row.odds;
@@ -522,7 +530,7 @@ function renderSearchPage() {
 
     function renderBookmakerRow(row) {
       return '<tr>' +
-        '<td><div class="bookmaker">' + escapeHtml(formatBookmaker(row.bookmaker)) + '</div></td>' +
+        '<td><div class="bookmaker">' + escapeHtml(row.bookmaker) + '</div></td>' +
         renderPriceCell(row.odds.HOME) +
         renderPriceCell(row.odds.DRAW) +
         renderPriceCell(row.odds.AWAY) +
@@ -533,10 +541,6 @@ function renderSearchPage() {
       if (!odd) return '<td class="price-cell"><span class="dash">-</span></td>';
       const price = Number(odd.price);
       return '<td class="price-cell"><span class="price">' + price.toFixed(2) + '</span></td>';
-    }
-
-    function formatBookmaker(slug) {
-      return slug === "esportiva" ? "Esportiva" : slug;
     }
 
     function escapeHtml(value) {
