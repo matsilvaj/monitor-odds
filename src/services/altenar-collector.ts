@@ -206,6 +206,8 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
     const oddsToSave: OddRow[] = [];
 
     for (const league of MVP_LEAGUES) {
+      if (league.altenarChampId == null) continue;
+
       summary.leagues += 1;
       const canonicalFixtures = await getCanonicalFixtures(league.apiFootballLeagueId);
       if (!canonicalFixtures.length) {
