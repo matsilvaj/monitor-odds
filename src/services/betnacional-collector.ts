@@ -2,7 +2,6 @@ import type { BetnacionalBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
-import { normalizeForMatching } from "../domain/matching/text-similarity.js";
 import type { Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetnacionalClient, type BetnacionalOdd, type BetnacionalSearchEvent } from "../providers/betnacional.js";

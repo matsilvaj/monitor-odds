@@ -87,6 +87,21 @@ create table if not exists bookmaker_league_links (
   unique (bookmaker_slug, api_football_league_id)
 );
 
+create table if not exists bookmaker_payload_cache (
+  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
+  endpoint text not null,
+  url text not null,
+  pd text,
+  body text not null,
+  body_length integer not null default 0,
+  captured_at timestamptz not null,
+  expires_at timestamptz not null,
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (bookmaker_slug, endpoint, url)
+);
+
 create table if not exists odds (
   id uuid primary key default gen_random_uuid(),
   fixture_id uuid not null references fixtures(id) on delete cascade,
@@ -202,6 +217,158 @@ create index if not exists teams_normalized_name_idx on teams (normalized_name);
 create index if not exists odds_fixture_id_idx on odds (fixture_id);
 create index if not exists bookmaker_event_links_fixture_id_idx on bookmaker_event_links (fixture_id);
 create index if not exists bookmaker_league_links_slug_league_idx on bookmaker_league_links (bookmaker_slug, api_football_league_id);
+create index if not exists bookmaker_payload_cache_expires_at_idx on bookmaker_payload_cache (expires_at);
+create index if not exists bookmaker_payload_cache_bookmaker_endpoint_idx on bookmaker_payload_cache (bookmaker_slug, endpoint);
 create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on bookmaker_event_snapshots (bookmaker_slug, date_key);
 create index if not exists bookmaker_event_snapshots_league_idx on bookmaker_event_snapshots (league_api_football_id);
 create index if not exists bookmaker_collection_state_next_run_idx on bookmaker_collection_state (next_run_at);
+
+create or replace view public.public_odds_feed
+with (security_invoker = true)
+as
+select
+  f.id as fixture_id,
+  f.api_football_fixture_id,
+  f.name as fixture_name,
+  f.home_team,
+  f.away_team,
+  f.starts_at,
+  f.date_key,
+  f.status,
+  f.round,
+  l.name as league_name,
+  l.slug as league_slug,
+  l.country as league_country,
+  o.bookmaker_slug,
+  b.name as bookmaker_name,
+  o.market_code,
+  o.market_name,
+  o.selection,
+  o.price,
+  o.pa_category,
+  o.confidence_score,
+  o.updated_at as odd_updated_at
+from fixtures f
+join leagues l on l.id = f.league_id
+join odds o on o.fixture_id = f.id
+join bookmakers b on b.slug = o.bookmaker_slug
+where f.starts_at > now()
+  and l.enabled = true;
+
+create or replace view public.public_odds_feed_status
+with (security_invoker = true)
+as
+select
+  max(o.updated_at) as latest_odd_updated_at,
+  count(distinct f.id) as upcoming_fixture_count,
+  count(o.fixture_id) as odd_count
+from fixtures f
+join leagues l on l.id = f.league_id
+left join odds o on o.fixture_id = f.id
+where f.starts_at > now()
+  and l.enabled = true;
+
+-- Security baseline: public API clients get read-only access to safe columns only.
+-- Server-side jobs keep using the Supabase secret/service role, which bypasses RLS.
+grant usage on schema public to anon, authenticated;
+
+revoke all on
+  bookmakers,
+  leagues,
+  teams,
+  fixtures,
+  bookmaker_event_links,
+  bookmaker_league_links,
+  bookmaker_payload_cache,
+  odds,
+  fixture_sync_runs,
+  collection_logs,
+  bookmaker_event_snapshots,
+  bookmaker_collection_state
+from anon, authenticated;
+revoke all on function public.try_acquire_bookmaker_collection_lock(text, timestamptz) from anon, authenticated;
+
+alter table bookmakers enable row level security;
+alter table leagues enable row level security;
+alter table teams enable row level security;
+alter table fixtures enable row level security;
+alter table bookmaker_event_links enable row level security;
+alter table bookmaker_league_links enable row level security;
+alter table bookmaker_payload_cache enable row level security;
+alter table odds enable row level security;
+alter table fixture_sync_runs enable row level security;
+alter table collection_logs enable row level security;
+alter table bookmaker_event_snapshots enable row level security;
+alter table bookmaker_collection_state enable row level security;
+
+drop policy if exists public_read_bookmakers on bookmakers;
+create policy public_read_bookmakers
+  on bookmakers
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists public_read_enabled_leagues on leagues;
+create policy public_read_enabled_leagues
+  on leagues
+  for select
+  to anon, authenticated
+  using (enabled = true);
+
+drop policy if exists public_read_upcoming_fixtures on fixtures;
+create policy public_read_upcoming_fixtures
+  on fixtures
+  for select
+  to anon, authenticated
+  using (starts_at > now());
+
+drop policy if exists public_read_upcoming_odds on odds;
+create policy public_read_upcoming_odds
+  on odds
+  for select
+  to anon, authenticated
+  using (
+    exists (
+      select 1
+      from fixtures
+      where fixtures.id = odds.fixture_id
+        and fixtures.starts_at > now()
+    )
+  );
+
+drop policy if exists public_read_fixture_sync_status on fixture_sync_runs;
+create policy public_read_fixture_sync_status
+  on fixture_sync_runs
+  for select
+  to anon, authenticated
+  using (source = 'api-football');
+
+grant select (slug, name) on bookmakers to anon, authenticated;
+grant select (id, api_football_league_id, name, slug, country, season, enabled) on leagues to anon, authenticated;
+grant select (
+  id,
+  api_football_fixture_id,
+  league_id,
+  name,
+  home_team,
+  away_team,
+  starts_at,
+  date_key,
+  status,
+  round,
+  updated_at
+) on fixtures to anon, authenticated;
+grant select (
+  fixture_id,
+  bookmaker_slug,
+  market_code,
+  market_name,
+  selection,
+  price,
+  pa_category,
+  confidence_score,
+  updated_at
+) on odds to anon, authenticated;
+grant select (date_key, source, status, fixtures_seen, synced_at) on fixture_sync_runs to anon, authenticated;
+grant select on public.public_odds_feed to anon, authenticated;
+grant select on public.public_odds_feed_status to anon, authenticated;

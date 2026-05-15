@@ -1,17 +1,78 @@
+import { timingSafeEqual } from "node:crypto";
 import cors from "@fastify/cors";
-import Fastify from "fastify";
+import helmet from "@fastify/helmet";
+import rateLimit from "@fastify/rate-limit";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { BOOKMAKERS } from "../config/bookmakers.js";
 import { env } from "../config/env.js";
-import { supabase } from "../db/supabase.js";
+import { supabasePublic } from "../db/supabase.js";
 import { syncApiFootballFixtures } from "../services/api-football-sync.js";
 import { cleanupOldLogs } from "../services/log-retention.js";
 
 const BOOKMAKER_NAME_BY_SLUG = new Map(BOOKMAKERS.map((bookmaker) => [bookmaker.slug, bookmaker.name]));
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function buildServer() {
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: {
+      redact: [
+        "req.headers.authorization",
+        "req.headers.x-internal-token",
+        "req.headers.x-public-api-token",
+        "headers.authorization",
+        "headers.x-internal-token",
+        "headers.x-public-api-token"
+      ]
+    }
+  });
 
-  app.register(cors, { origin: true });
+  app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'self'"],
+        connectSrc: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        imgSrc: ["'self'", "data:"],
+        objectSrc: ["'none'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"]
+      }
+    }
+  });
+  app.register(cors, {
+    origin: corsOrigins(),
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["authorization", "content-type", "x-internal-token", "x-public-api-token"],
+    credentials: false,
+    maxAge: 600
+  });
+  app.register(rateLimit, {
+    max: env.RATE_LIMIT_MAX,
+    timeWindow: env.RATE_LIMIT_WINDOW_MS
+  });
+
+  app.setErrorHandler((error, request, reply) => {
+    request.log.error(error);
+    const statusCode = errorStatusCode(error);
+    const message = env.NODE_ENV === "production" && statusCode >= 500 ? "internal server error" : errorMessage(error);
+    return reply.code(statusCode).send({ error: message });
+  });
+
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.method === "OPTIONS") return;
+
+    if (!request.url.startsWith("/internal/")) return;
+    if (!authorizeInternalRequest(request, reply)) return reply;
+
+    return;
+  });
+
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.method === "OPTIONS" || !request.url.startsWith("/v1/")) return;
+    if (!authorizePublicApiRequest(request, reply)) return reply;
+  });
 
   app.get("/", async (_request, reply) => {
     return reply.type("text/html; charset=utf-8").send(renderSearchPage());
@@ -20,39 +81,41 @@ export function buildServer() {
   app.get("/health", async () => ({ ok: true, service: "monitor-odds" }));
 
   app.get("/v1/status", async () => {
-    const [{ data: latestOdd, error: latestOddError }, { data: fixtureSync, error: fixtureSyncError }, { data: bookmakerSync, error: bookmakerSyncError }] =
-      await Promise.all([
-        supabase.from("odds").select("updated_at").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
-        supabase.from("fixture_sync_runs").select("date_key,status,fixtures_seen,synced_at").eq("source", "api-football").order("synced_at", { ascending: false }).limit(3),
-        supabase.from("collection_logs").select("bookmaker_slug,message,context,created_at").eq("level", "info").order("created_at", { ascending: false }).limit(3)
-      ]);
+    const [{ data: latestOdd, error: latestOddError }, { data: fixtureSync, error: fixtureSyncError }] = await Promise.all([
+      supabasePublic.from("odds").select("updated_at").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+      supabasePublic
+        .from("fixture_sync_runs")
+        .select("date_key,status,fixtures_seen,synced_at")
+        .eq("source", "api-football")
+        .order("synced_at", { ascending: false })
+        .limit(3)
+    ]);
 
     if (latestOddError) throw latestOddError;
     if (fixtureSyncError) throw fixtureSyncError;
-    if (bookmakerSyncError) throw bookmakerSyncError;
 
     return {
       data: {
         latestOddUpdatedAt: latestOdd?.updated_at ?? null,
         fixtureSyncRuns: fixtureSync ?? [],
-        recentSyncLogs: bookmakerSync ?? []
+        recentSyncLogs: []
       }
     };
   });
 
   app.get("/v1/fixtures", async (request) => {
     const query = request.query as { search?: string; limit?: string };
-    const limit = Math.min(Number(query.limit ?? 30) || 30, 100);
+    const limit = parseLimit(query.limit, 30, 100);
 
-    let builder = supabase
+    let builder = supabasePublic
       .from("fixtures")
       .select("id,api_football_fixture_id,name,home_team,away_team,starts_at,status,round,leagues(name,slug)")
       .gt("starts_at", new Date().toISOString())
       .order("starts_at", { ascending: true })
       .limit(limit);
 
-    if (query.search?.trim()) {
-      const term = query.search.trim().replace(/[%_]/g, "");
+    const term = sanitizeSearchTerm(query.search);
+    if (term) {
       builder = builder.or(`name.ilike.%${term}%,home_team.ilike.%${term}%,away_team.ilike.%${term}%`);
     }
 
@@ -63,12 +126,12 @@ export function buildServer() {
 
   app.get("/v1/odds/search", async (request) => {
     const query = request.query as { q?: string; limit?: string };
-    const limit = Math.min(Number(query.limit ?? 20) || 20, 50);
-    const term = query.q?.trim().replace(/[%_]/g, "");
+    const limit = parseLimit(query.limit, 20, 50);
+    const term = sanitizeSearchTerm(query.q);
 
     if (!term) return { data: [] };
 
-    const { data: fixtures, error: fixtureError } = await supabase
+    const { data: fixtures, error: fixtureError } = await supabasePublic
       .from("fixtures")
       .select("id,api_football_fixture_id,name,home_team,away_team,starts_at,status,round,leagues(name,slug)")
       .gt("starts_at", new Date().toISOString())
@@ -81,9 +144,9 @@ export function buildServer() {
     const fixtureIds = (fixtures ?? []).map((fixture) => fixture.id);
     if (!fixtureIds.length) return { data: [] };
 
-    const { data: odds, error: oddsError } = await supabase
+    const { data: odds, error: oddsError } = await supabasePublic
       .from("odds")
-      .select("fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,updated_at")
+      .select("fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,updated_at")
       .in("fixture_id", fixtureIds)
       .order("selection", { ascending: true });
 
@@ -103,10 +166,13 @@ export function buildServer() {
     };
   });
 
-  app.get("/v1/fixtures/:id/odds", async (request) => {
+  app.get("/v1/fixtures/:id/odds", async (request, reply) => {
     const params = request.params as { id: string };
+    if (!UUID_RE.test(params.id)) {
+      return reply.code(400).send({ error: "invalid fixture id" });
+    }
 
-    const { data: fixture, error: fixtureError } = await supabase
+    const { data: fixture, error: fixtureError } = await supabasePublic
       .from("fixtures")
       .select("id,api_football_fixture_id,name,home_team,away_team,starts_at,status,round,leagues(name,slug)")
       .eq("id", params.id)
@@ -114,9 +180,9 @@ export function buildServer() {
 
     if (fixtureError) throw fixtureError;
 
-    const { data: odds, error: oddsError } = await supabase
+    const { data: odds, error: oddsError } = await supabasePublic
       .from("odds")
-      .select("bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,updated_at")
+      .select("bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,updated_at")
       .eq("fixture_id", params.id)
       .order("selection", { ascending: true });
 
@@ -125,12 +191,7 @@ export function buildServer() {
   });
 
   app.post("/internal/collect/:bookmaker", async (request, reply) => {
-    if (env.INTERNAL_COLLECT_TOKEN) {
-      const token = request.headers["x-internal-token"];
-      if (token !== env.INTERNAL_COLLECT_TOKEN) {
-        return reply.code(401).send({ error: "unauthorized" });
-      }
-    }
+    if (!authorizeInternalRequest(request, reply)) return;
 
     const params = request.params as { bookmaker: string };
     const { BOOKMAKER_COLLECTORS } = await import("../bookmakers/registry.js");
@@ -145,12 +206,7 @@ export function buildServer() {
   });
 
   app.post("/internal/sync/fixtures", async (request, reply) => {
-    if (env.INTERNAL_COLLECT_TOKEN) {
-      const token = request.headers["x-internal-token"];
-      if (token !== env.INTERNAL_COLLECT_TOKEN) {
-        return reply.code(401).send({ error: "unauthorized" });
-      }
-    }
+    if (!authorizeInternalRequest(request, reply)) return;
 
     await cleanupOldLogs();
     const summary = await syncApiFootballFixtures();
@@ -158,12 +214,7 @@ export function buildServer() {
   });
 
   app.post("/internal/sync/all", async (request, reply) => {
-    if (env.INTERNAL_COLLECT_TOKEN) {
-      const token = request.headers["x-internal-token"];
-      if (token !== env.INTERNAL_COLLECT_TOKEN) {
-        return reply.code(401).send({ error: "unauthorized" });
-      }
-    }
+    if (!authorizeInternalRequest(request, reply)) return;
 
     await cleanupOldLogs();
     const fixtures = await syncApiFootballFixtures();
@@ -173,6 +224,112 @@ export function buildServer() {
   });
 
   return app;
+}
+
+function corsOrigins() {
+  const configured = env.CORS_ORIGINS.split(",")
+    .map((origin) => normalizeCorsOrigin(origin.trim()))
+    .filter(Boolean);
+
+  if (configured.length) return configured;
+  if (env.NODE_ENV === "production") return false;
+
+  return [`http://localhost:${env.PORT}`, `http://127.0.0.1:${env.PORT}`];
+}
+
+function normalizeCorsOrigin(origin: string) {
+  if (!origin) return "";
+
+  try {
+    return new URL(origin).origin;
+  } catch {
+    throw new Error(`CORS_ORIGINS contem uma origem invalida: ${origin}`);
+  }
+}
+
+function errorStatusCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("statusCode" in error)) return 500;
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  return typeof statusCode === "number" && statusCode >= 400 && statusCode < 500 ? statusCode : 500;
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return "internal server error";
+}
+
+function authorizeInternalRequest(request: FastifyRequest, reply: FastifyReply) {
+  const expectedToken = env.INTERNAL_COLLECT_TOKEN;
+  if (!expectedToken) {
+    if (env.NODE_ENV === "production") {
+      reply.code(500).send({ error: "internal token is not configured" });
+      return false;
+    }
+
+    return true;
+  }
+
+  const header = request.headers["x-internal-token"];
+  const providedToken = Array.isArray(header) ? header[0] : header;
+  if (!providedToken || !tokensMatch(providedToken, expectedToken)) {
+    reply.code(401).send({ error: "unauthorized" });
+    return false;
+  }
+
+  return true;
+}
+
+function authorizePublicApiRequest(request: FastifyRequest, reply: FastifyReply) {
+  const expectedToken = env.PUBLIC_API_TOKEN;
+  if (!expectedToken) {
+    if (env.NODE_ENV === "production") {
+      reply.code(500).send({ error: "public API token is not configured" });
+      return false;
+    }
+
+    return true;
+  }
+
+  const providedToken = bearerToken(request.headers.authorization) ?? headerToken(request.headers["x-public-api-token"]);
+  if (!providedToken || !tokensMatch(providedToken, expectedToken)) {
+    reply.code(401).send({ error: "unauthorized" });
+    return false;
+  }
+
+  return true;
+}
+
+function bearerToken(authorization: string | undefined) {
+  const match = authorization?.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || undefined;
+}
+
+function headerToken(header: string | string[] | undefined) {
+  const token = Array.isArray(header) ? header[0] : header;
+  return token?.trim() || undefined;
+}
+
+function tokensMatch(providedToken: string, expectedToken: string) {
+  const provided = Buffer.from(providedToken);
+  const expected = Buffer.from(expectedToken);
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
+}
+
+function parseLimit(value: string | undefined, fallback: number, max: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(Math.trunc(parsed), max);
+}
+
+function sanitizeSearchTerm(value: string | undefined) {
+  const term = (value ?? "")
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+
+  return term.length >= 2 ? term : "";
 }
 
 function groupByPa(odds: unknown[]) {
@@ -506,7 +663,7 @@ function renderSearchPage() {
     function groupByBookmaker(items) {
       const map = new Map();
       for (const odd of items) {
-        const marketKey = odd.raw_market_name || odd.market_name || odd.market_code || "";
+        const marketKey = odd.market_name || odd.market_code || "";
         const key = (odd.bookmaker_slug || "bookmaker") + "::" + marketKey;
         const row = map.get(key) || {
           bookmaker: odd.bookmaker_name || key,

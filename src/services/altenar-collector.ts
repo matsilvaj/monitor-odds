@@ -147,7 +147,7 @@ function buildBookmakerLink(bookmaker: AltenarBookmakerConfig, fixtureId: string
 
 function buildMoneylineOdds(bookmaker: AltenarBookmakerConfig, fixtureId: string, details: AltenarEventDetails, orientation: EventMatchResult["orientation"]): OddRow[] {
   const markets = [...(details.markets ?? []), ...(details.childMarkets ?? [])].filter((market) =>
-    isMoneylineMarket(market.name ?? market.shortName, market.typeId)
+    isMoneylineMarket(market.name ?? market.shortName)
   );
 
   const odds = details.odds ?? [];

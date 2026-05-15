@@ -8,7 +8,7 @@ const normalizeText = (value: unknown) =>
     .toLowerCase()
     .trim();
 
-export function isMoneylineMarket(marketName: unknown, typeId?: unknown) {
+export function isMoneylineMarket(marketName: unknown) {
   const text = normalizeText(marketName);
   const exactAliases = new Set([
     "1x2",
