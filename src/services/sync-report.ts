@@ -246,6 +246,8 @@ export function formatFixtureSyncSummary(summary: unknown) {
   const snapshotsDeleted = numberField(record, ["startedSnapshotsDeleted"]);
   const errors = numberField(record, ["errors"]);
   const apiCalls = numberField(record, ["apiCalls"]);
+  const skippedByCache = numberField(record, ["skippedByCache"]);
+  const skippedByExistingData = numberField(record, ["skippedByExistingData"]);
 
-  return `[sync] API-Football: ${countText(seen, "jogo lido", "jogos lidos")} | ${kept} salvos | ${deleted} removidos pela API | ${startedDeleted} iniciados removidos | ${snapshotsDeleted} snapshots removidos | ${apiCalls} chamadas | ${errors} erros.`;
+  return `[sync] API-Football: ${countText(seen, "jogo lido", "jogos lidos")} | ${kept} salvos | ${deleted} removidos pela API | ${startedDeleted} iniciados removidos | ${snapshotsDeleted} snapshots removidos | ${skippedByCache} pulos por cache | ${skippedByExistingData} pulos por dados existentes | ${apiCalls} chamadas | ${errors} erros.`;
 }

@@ -1,5 +1,6 @@
 import type { TradeballBookmakerConfig } from "../config/bookmakers.js";
 import { httpClient } from "../utils/http-client.js";
+import { randomUUID } from "node:crypto";
 
 export type TradeballPrice = {
   odds?: number;
@@ -64,6 +65,109 @@ type TradeballEventsResponse = {
   lastUpdated?: string;
 };
 
+type TradeballDballEvent = {
+  ceId?: string;
+  dg?: string;
+  cthName?: string;
+  ctaName?: string;
+  clName?: string;
+  iso3?: string;
+  wldHm?: string | number;
+  wldDm?: string | number;
+  wldAm?: string | number;
+  [key: string]: unknown;
+};
+
+type TradeballDballResponse = {
+  init?: TradeballDballEvent[];
+};
+
+function dateKey(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function collectionDates(start: Date, end: Date) {
+  const dates: string[] = [];
+  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(), 0, 0, 0, 0));
+  const limit = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate(), 0, 0, 0, 0));
+
+  while (cursor <= limit) {
+    dates.push(dateKey(cursor));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return dates;
+}
+
+function parseDballDateTime(value: string | undefined) {
+  const match = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (!match) return new Date(value ?? "").toISOString();
+
+  const [, year, month, day, hour, minute, second] = match.map(Number);
+  return new Date(Date.UTC(year, month - 1, day, hour - 1, minute, second, 0)).toISOString();
+}
+
+function dballRunner(eventId: string, code: string, name: string, price: unknown): TradeballRunner {
+  const eventDigits = eventId.replace(/\D/g, "").slice(-14);
+
+  return {
+    id: `${eventDigits}${code}`,
+    name,
+    status: "open",
+    withdrawn: false,
+    prices: [
+      {
+        side: "back",
+        odds: Number(price),
+        "decimal-odds": Number(price)
+      }
+    ]
+  };
+}
+
+function dballEventToTradeballEvent(event: TradeballDballEvent): TradeballEvent | null {
+  if (!event.ceId || !event.dg || !event.cthName || !event.ctaName) return null;
+
+  const homePrice = Number(event.wldHm);
+  const drawPrice = Number(event.wldDm);
+  const awayPrice = Number(event.wldAm);
+  if (![homePrice, drawPrice, awayPrice].every((price) => Number.isFinite(price) && price > 0)) return null;
+
+  return {
+    id: String(event.ceId),
+    name: `${event.cthName} x ${event.ctaName}`,
+    start: parseDballDateTime(event.dg),
+    status: "open",
+    "in-running-flag": false,
+    "sport-id": "15",
+    "event-participants": [
+      { id: `${event.ceId}:1`, number: "1", "participant-name": event.cthName },
+      { id: `${event.ceId}:2`, number: "2", "participant-name": event.ctaName }
+    ],
+    "meta-tags": [
+      {
+        name: event.clName,
+        type: "COMPETITION"
+      }
+    ],
+    markets: [
+      {
+        id: `${event.ceId}:1x2`,
+        name: "Tradeball 1X2",
+        live: false,
+        status: "open",
+        "market-type": "one_x_two",
+        runners: [
+          dballRunner(String(event.ceId), "001", event.cthName, homePrice),
+          dballRunner(String(event.ceId), "002", "Empate", drawPrice),
+          dballRunner(String(event.ceId), "003", event.ctaName, awayPrice)
+        ]
+      }
+    ],
+    rawDball: event
+  };
+}
+
 export class TradeballClient {
   private readonly headers: Record<string, string>;
 
@@ -89,7 +193,8 @@ export class TradeballClient {
       if (pageEvents.length < this.config.perPage) break;
     }
 
-    return [...new Map(events.map((event) => [event.id, event])).values()];
+    const dballEvents = await this.getDballGuestEvents(start, end);
+    return [...new Map([...events, ...dballEvents].map((event) => [event.id, event])).values()];
   }
 
   private async getSoccerMoneylinePage(start: Date, end: Date, offset: number) {
@@ -111,6 +216,43 @@ export class TradeballClient {
       referer: this.config.referer,
       engine: this.config.engine,
       timeoutMs: 15_000,
+      maxRetries: 1
+    });
+  }
+
+  private async getDballGuestEvents(start: Date, end: Date) {
+    const results = await Promise.allSettled([this.getDballGuestPage(), ...collectionDates(start, end).map((date) => this.getDballGuestPage(date))]);
+    const pages = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+
+    return pages
+      .flatMap((page) => page.init ?? [])
+      .map(dballEventToTradeballEvent)
+      .filter((event): event is TradeballEvent => Boolean(event));
+  }
+
+  private async getDballGuestPage(date?: string) {
+    const url = new URL("api/feedDballGuest/list", this.config.dballBaseUrl);
+    url.searchParams.set("page", "1");
+    url.searchParams.set("filter", JSON.stringify({ line: 1, periodTypeId: 1, tradingTypeId: 2, marketId: 2, ...(date ? { date } : {}) }));
+    url.searchParams.set("start", "0");
+    url.searchParams.set("limit", "50");
+    url.searchParams.set("sort", JSON.stringify([{ property: "created_at", direction: "desc" }]));
+    url.searchParams.append("requiredDictionaries[]", "LeagueGroup");
+    url.searchParams.set("version", "0");
+    url.searchParams.set("currencyId", "4");
+    url.searchParams.set("uniqAppId", randomUUID());
+    url.searchParams.set("locale", "pt");
+    url.searchParams.set("_", String(Date.now()));
+
+    return httpClient<TradeballDballResponse>({
+      url,
+      headers: {
+        ...this.headers,
+        "x-requested-with": "XMLHttpRequest"
+      },
+      referer: new URL("dballTradingFeed", this.config.dballBaseUrl).href,
+      engine: this.config.engine,
+      timeoutMs: 20_000,
       maxRetries: 1
     });
   }

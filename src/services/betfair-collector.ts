@@ -66,21 +66,27 @@ function eventIdFromUrn(urn: string | undefined) {
 function compactSearchName(value: string | null | undefined) {
   return String(value ?? "")
     .replace(/\s*\([^)]*\)/g, "")
+    .replace(/^\d+\.\s*/, "")
     .replace(/^\d{2,4}\s+/, "")
     .replace(/^(?:vfb|vfl|fc|sc|ec|ac|cf)\s+/i, "")
+    .replace(/\s+(?:fc|sc|ec|ac|cf)$/i, "")
     .trim();
 }
 
 function searchKeywords(fixture: CanonicalFixture) {
-  const names = [
-    fixture.home_team,
-    compactSearchName(fixture.home_team),
-    fixture.away_team,
-    compactSearchName(fixture.away_team),
-    fixture.name
-  ];
+  const names = [fixture.home_team, compactSearchName(fixture.home_team), fixture.away_team, compactSearchName(fixture.away_team), fixture.name];
+  const keywords = new Set<string>();
 
-  return [...new Set(names.map((name) => String(name ?? "").split(/\s+/).filter(Boolean).slice(0, 3).join(" ")).filter(Boolean))];
+  for (const name of names) {
+    const tokens = String(name ?? "").split(/\s+/).filter(Boolean);
+    if (!tokens.length) continue;
+
+    keywords.add(tokens.slice(0, 3).join(" "));
+    keywords.add(tokens.slice(0, 2).join(" "));
+    keywords.add(tokens[0]);
+  }
+
+  return [...keywords].filter(Boolean);
 }
 
 function eventTeams(event: BetfairSearchResult) {
@@ -279,7 +285,9 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
         { concurrency: 2 }
       );
 
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+      });
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

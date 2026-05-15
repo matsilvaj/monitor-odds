@@ -108,10 +108,16 @@ function translatedCountryTokens(country: string | null | undefined) {
     england: ["inglaterra", "eng"],
     italy: ["italia", "ita"],
     france: ["franca", "fra"],
+    usa: ["estados unidos", "eua", "usa", "united states"],
+    "united states": ["estados unidos", "eua", "usa", "united states"],
     world: ["clubes internacionais", "internacionais", "internacional"]
   };
 
   return aliases[normalized] ?? [normalized];
+}
+
+function searchKeywords(fixture: CanonicalFixture) {
+  return [...new Set([fixture.home_team, fixture.away_team, fixture.normalized_home_team, fixture.normalized_away_team].filter(Boolean).map(String))];
 }
 
 function countryScore(country: string | null | undefined, tournament: FlatTournament) {
@@ -221,6 +227,10 @@ function isMoneylineMarket(market: ApostabetMarket) {
 }
 
 function paForEvent(event: ApostabetEvent, earlyPayoutTournamentIds: Set<string>): { category: PaCategory; confidence: number; reason: string } {
+  if (event.isEarlyPayout === true) {
+    return { category: "COM_PA", confidence: 0.96, reason: "apostabet-event-early-payout" };
+  }
+
   if (event.tournamentId && earlyPayoutTournamentIds.has(event.tournamentId)) {
     return { category: "COM_PA", confidence: 0.96, reason: "apostabet-early-payout-tournament" };
   }
@@ -251,6 +261,49 @@ function compactEventRaw(event: ApostabetEvent) {
 function numericId(value: unknown) {
   const digits = String(value ?? "").replace(/\D/g, "");
   return Number(digits.slice(0, 15));
+}
+
+async function searchMissingEvents(client: ApostabetClient, fixtures: CanonicalFixture[], alreadyMatchedFixtureIds: Set<string>) {
+  const eventsById = new Map<string, ApostabetEvent>();
+  const missingFixtures = fixtures.filter((fixture) => !alreadyMatchedFixtureIds.has(fixture.id));
+
+  await pMap(
+    missingFixtures,
+    async (fixture) => {
+      const seenSearchEventIds = new Set<string>();
+
+      for (const keyword of searchKeywords(fixture)) {
+        const searchResults = await client.searchEvents(keyword);
+
+        for (const searchEvent of searchResults) {
+          if (!searchEvent.matchId || seenSearchEventIds.has(searchEvent.matchId) || searchEvent.status !== 0) continue;
+          seenSearchEventIds.add(searchEvent.matchId);
+
+          const candidate: ApostabetEvent = {
+            id: searchEvent.matchId,
+            tournamentId: searchEvent.tournamentId,
+            tournamentName: searchEvent.tournamentName,
+            seasonName: searchEvent.seasonName ?? null,
+            sportId: searchEvent.sportId,
+            producerId: searchEvent.producerId,
+            name: searchEvent.matchName,
+            scheduleTime: searchEvent.scheduleTime,
+            status: searchEvent.status
+          };
+
+          const matched = findBestMatch(candidate, [fixture]);
+          if (!matched) continue;
+
+          const detailEvent = await client.getEventWithPrincipalMarkets(searchEvent.matchId);
+          eventsById.set(detailEvent.id, detailEvent);
+          return;
+        }
+      }
+    },
+    { concurrency: 3 }
+  );
+
+  return [...eventsById.values()];
 }
 
 function buildBookmakerLink(bookmaker: ApostabetBookmakerConfig, fixtureId: string, event: ApostabetEvent, confidenceScore: number): BookmakerLinkRow {
@@ -344,13 +397,22 @@ export function createApostabetCollector(bookmaker: ApostabetBookmakerConfig) {
       summary.tournamentsSeen = flattenTournaments(categories).length;
       summary.tournamentsSelected = selectedTournaments.length;
 
-      const eventPages = await pMap(
-        selectedTournaments,
-        async ({ tournament }) => client.getEventsByTournament(tournament.tournamentId),
-        { concurrency: 3 }
-      );
+      const [eventPages, principalEvents] = await Promise.all([
+        pMap(
+          selectedTournaments,
+          async ({ tournament }) => client.getEventsByTournament(tournament.tournamentId),
+          { concurrency: 3 }
+        ),
+        client.getPrincipalTournamentEvents()
+      ]);
 
-      const events = [...new Map(eventPages.flat().filter((event) => event.sportId === "sr:sport:1" && event.status === 0).map((event) => [event.id, event])).values()];
+      const events = [
+        ...new Map(
+          [...eventPages.flat(), ...principalEvents]
+            .filter((event) => event.sportId === "sr:sport:1" && event.status === 0)
+            .map((event) => [event.id, event])
+        ).values()
+      ];
       summary.eventsSeen = events.length;
 
       const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, fixtures));
@@ -371,6 +433,17 @@ export function createApostabetCollector(bookmaker: ApostabetBookmakerConfig) {
         }
       }
 
+      const fallbackEvents = await searchMissingEvents(client, fixtures, new Set(bestMatchByFixtureId.keys()));
+      for (const event of fallbackEvents) {
+        const matched = findBestMatch(event, fixtures);
+        if (!matched) continue;
+
+        const previous = bestMatchByFixtureId.get(matched.fixture.id);
+        if (!previous || matched.score > previous.matched.score) {
+          bestMatchByFixtureId.set(matched.fixture.id, { event, matched });
+        }
+      }
+
       const linksToSave: BookmakerLinkRow[] = [];
       const oddsToSave: OddRow[] = [];
 
@@ -382,7 +455,9 @@ export function createApostabetCollector(bookmaker: ApostabetBookmakerConfig) {
       }
 
       summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+      });
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

@@ -47,8 +47,10 @@ export type VaidebetFixture = {
 export type VaidebetSeason = {
   sId: number;
   seaN?: string;
+  pseaN?: string;
   lName?: string;
   fs?: VaidebetFixture[];
+  sns?: VaidebetSeason[];
   [key: string]: unknown;
 };
 
@@ -69,8 +71,13 @@ function sportsFromResponse(data: unknown) {
   return data.data as VaidebetSport[];
 }
 
+function flattenSeasons(seasons: VaidebetSeason[]): VaidebetSeason[] {
+  return seasons.flatMap((season) => [season, ...flattenSeasons(season.sns ?? [])]);
+}
+
 function seasonsFromSports(sports: VaidebetSport[]) {
-  return sports.flatMap((sport) => (sport.cs ?? []).flatMap((country) => country.sns ?? []));
+  const seasons = sports.flatMap((sport) => (sport.cs ?? []).flatMap((country) => country.sns ?? []));
+  return flattenSeasons(seasons);
 }
 
 function fixturesFromSports(sports: VaidebetSport[]) {
@@ -78,7 +85,7 @@ function fixturesFromSports(sports: VaidebetSport[]) {
     (season.fs ?? []).map((fixture) => ({
       ...fixture,
       sourceSeasonId: season.sId,
-      sourceSeasonName: season.seaN,
+      sourceSeasonName: [season.pseaN, season.seaN].filter(Boolean).join(" "),
       sourceLeagueName: season.lName
     }))
   );
@@ -125,6 +132,22 @@ export class VaidebetClient {
     const payload = payloadPath({ requestBody: { seasonIds } });
     const joinedSeasonIds = seasonIds.join("-");
     const path = `api-v2/league-card/${this.config.routeSegment}/${this.config.languageId}/${this.config.brand}/${joinedSeasonIds}/${payload}`;
+    const data = await httpClient<unknown>({
+      url: new URL(path, this.config.baseUrl),
+      headers: this.requestHeaders(payload),
+      referer: this.config.referer,
+      engine: this.config.engine
+    });
+    const sports = sportsFromResponse(data);
+    return fixturesFromSports(sports.filter((sport) => sport.stN === "Futebol"));
+  }
+
+  async getEventCard(fixtureIds: number[]) {
+    if (!fixtureIds.length) return [];
+
+    const payload = payloadPath({ requestBody: { fixtureIds } });
+    const joinedFixtureIds = fixtureIds.join("-");
+    const path = `api-v2/event-card/${this.config.routeSegment}/${this.config.languageId}/${this.config.brand}/${joinedFixtureIds}/${payload}`;
     const data = await httpClient<unknown>({
       url: new URL(path, this.config.baseUrl),
       headers: this.requestHeaders(payload),

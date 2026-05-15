@@ -27,6 +27,18 @@ export type SportybetEvent = {
   matchStatus?: string;
   homeTeamName?: string;
   awayTeamName?: string;
+  sport?: {
+    id?: string;
+    name?: string;
+    category?: {
+      id?: string;
+      name?: string;
+      tournament?: {
+        id?: string;
+        name?: string;
+      };
+    };
+  };
   markets?: SportybetMarket[];
   [key: string]: unknown;
 };
@@ -66,5 +78,33 @@ export class SportybetClient {
       totalNum: data.data?.totalNum ?? 0,
       events: (data.data?.tournaments ?? []).flatMap((tournament) => tournament.events ?? [])
     };
+  }
+
+  async getTournamentEvents(tournamentId: string) {
+    const data = await httpClient<{ bizCode?: number; data?: Array<{ events?: SportybetEvent[] }> }>({
+      url: new URL("api/int/factsCenter/pcEvents", this.config.baseUrl),
+      method: "POST",
+      headers: {
+        ...this.headers,
+        "content-type": "application/json"
+      },
+      referer: this.config.referer,
+      engine: this.config.engine,
+      json: [
+        {
+          sportId: "sr:sport:1",
+          marketId: "1,60100",
+          tournamentId: [[tournamentId]]
+        }
+      ],
+      timeoutMs: 20_000,
+      maxRetries: 1
+    });
+
+    if (data.bizCode !== 10000) {
+      throw new Error(`SportyBet tournament response failed: ${data.bizCode ?? "unknown"}`);
+    }
+
+    return (data.data ?? []).flatMap((item) => item.events ?? []);
   }
 }

@@ -2,7 +2,7 @@ import type { BetboomBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
-import { normalizeForMatching } from "../domain/matching/text-similarity.js";
+import { normalizeForMatching, tokenSetSimilarity } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetboomClient, type BetboomEvent, type BetboomOdd, type BetboomTournament } from "../providers/betboom.js";
@@ -44,11 +44,20 @@ type CanonicalFixture = {
 };
 
 const COUNTRY_HINTS: Record<string, string[]> = {
+  argentina: ["argentina"],
+  belgium: ["belgica", "belgium"],
   brazil: ["brasil"],
   brasil: ["brasil"],
   england: ["inglaterra"],
+  france: ["franca", "frança", "france"],
   germany: ["alemanha"],
+  italy: ["italia", "itália", "italy"],
+  netherlands: ["holanda", "paises baixos", "países baixos", "netherlands"],
+  portugal: ["portugal"],
+  scotland: ["escocia", "escócia", "scotland"],
   spain: ["espanha"],
+  turkey: ["turquia", "turkey"],
+  usa: ["eua", "usa", "estados unidos"],
   world: ["copa", "uefa", "conmebol"],
   europe: ["uefa", "europa"]
 };
@@ -98,33 +107,41 @@ function countryMatches(country: string | null | undefined, tournamentText: stri
   return hints.some((hint) => tournamentText.includes(hint));
 }
 
-function tournamentMatchesLeague(tournament: BetboomTournament, league: ReturnType<typeof fixtureLeague>) {
+function tournamentMatchesLeague(tournament: BetboomTournament, league: ReturnType<typeof fixtureLeague>, categoryText = "") {
   if (!league) return false;
 
   const leagueName = normalizeForMatching(league.name);
   const leagueCompact = compact(league.name);
-  const tournamentText = normalizeForMatching(`${tournament.name} ${tournament.alias ?? ""}`);
-  const tournamentCompact = compact(`${tournament.name} ${tournament.alias ?? ""}`);
+  const tournamentText = normalizeForMatching(`${tournament.name} ${tournament.alias ?? ""} ${categoryText}`);
+  const tournamentCompact = compact(`${tournament.name} ${tournament.alias ?? ""} ${categoryText}`);
   const hasCountry = countryMatches(league.country, tournamentText);
+  const nameScore = Math.max(tokenSetSimilarity(league.name, tournament.name), tokenSetSimilarity(league.name, `${tournament.name} ${tournament.alias ?? ""}`));
 
   if (leagueCompact && tournamentCompact.includes(leagueCompact) && hasCountry) return true;
   if (leagueName.includes("la liga") && tournamentCompact.includes("laliga") && hasCountry) return true;
-  if (leagueName.includes("serie a") && tournamentText.includes("brasil") && tournamentText.includes("seria a")) return true;
-  if (leagueName.includes("bundesliga") && tournamentText.includes("alemanha") && tournamentText.includes("bundesliga") && !tournamentText.includes("bundesliga 2") && !tournamentText.includes("bundesliga 3")) return true;
-  if (leagueName.includes("premier league") && tournamentText.includes("inglaterra") && tournamentText.includes("premier league")) return true;
+  if (hasCountry && nameScore >= 0.62) return true;
   if (leagueName.includes("libertadores") && tournamentText.includes("libertadores")) return true;
   if (leagueName.includes("europa league") && tournamentText.includes("europa league")) return true;
+  if (leagueName.includes("conference league") && tournamentText.includes("conference league")) return true;
+  if (leagueName.includes("champions league") && tournamentText.includes("champions league")) return true;
 
   return false;
 }
 
 function selectTournamentsForFixtures(tournaments: BetboomTournament[], fixtures: CanonicalFixture[]) {
   const selected = new Map<number, BetboomTournament>();
+  const categoryTextById = new Map<number, string>();
+
+  for (const tournament of tournaments) {
+    if (tournament.categoryId == null) continue;
+    categoryTextById.set(tournament.categoryId, `${categoryTextById.get(tournament.categoryId) ?? ""} ${tournament.name} ${tournament.alias ?? ""}`);
+  }
 
   for (const fixture of fixtures) {
     const league = fixtureLeague(fixture);
     for (const tournament of tournaments) {
-      if (tournamentMatchesLeague(tournament, league)) selected.set(tournament.tournamentId, tournament);
+      const categoryText = tournament.categoryId == null ? "" : categoryTextById.get(tournament.categoryId) ?? "";
+      if (tournamentMatchesLeague(tournament, league, categoryText)) selected.set(tournament.tournamentId, tournament);
     }
   }
 
@@ -338,7 +355,9 @@ export function createBetboomCollector(bookmaker: BetboomBookmakerConfig) {
       }
 
       summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+      });
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

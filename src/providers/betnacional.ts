@@ -89,12 +89,19 @@ export class BetnacionalClient {
   }
 
   async getMoneylineOdds() {
+    const filters = ["", "2", "3"];
+    const pages = await Promise.all(filters.map((filter) => this.getMoneylineOddsByTimeFilter(filter)));
+    const odds = pages.flat();
+    return [...new Map(odds.map((odd) => [odd.id, odd])).values()];
+  }
+
+  private async getMoneylineOddsByTimeFilter(filterTimeEvent: string) {
     const url = new URL("api/odds/1/events-by-seasons", this.config.apiBaseUrl);
     url.searchParams.set("sport_id", "1");
     url.searchParams.set("category_id", "0");
     url.searchParams.set("tournament_id", "");
     url.searchParams.set("markets", "1");
-    url.searchParams.set("filter_time_event", "");
+    url.searchParams.set("filter_time_event", filterTimeEvent);
 
     const data = await httpClient<EventsBySeasonsResponse>({
       url,

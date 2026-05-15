@@ -74,6 +74,15 @@ export type Bet7kFeaturedMarkets = {
   [key: string]: unknown;
 };
 
+type Bet7kEventListResponse = {
+  data?: Bet7kEvent[];
+  meta?: {
+    hasMore?: boolean;
+    limit?: number;
+    skip?: number;
+  };
+};
+
 const MARKET_TYPES = "ML587,ML0,OU0,HC0,ML39,OU39,HC39";
 const MARKET_TYPES_BY_SPORTS = JSON.stringify({
   "1": ["ML0", "OU200", "ML39", "OU249", "QA158", "ML169", "OU1697", "QA1693", "ML1633", "OU1633", "ML167"],
@@ -193,6 +202,45 @@ export class Bet7kClient {
       timeoutMs: 25_000,
       maxRetries: 1
     });
+  }
+
+  async getPrematchEvents() {
+    const authHeaders = await this.getAuthHeaders();
+    const events: Bet7kEvent[] = [];
+    const seen = new Set<string>();
+    const limit = 100;
+    const maxPages = 12;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const response = await httpClient<Bet7kEventListResponse>({
+        url: new URL("api/eventlist/eu/events/v2/all", this.config.apiBaseUrl),
+        method: "POST",
+        json: {
+          sport: ["1"],
+          type: ["Fixture"],
+          live: false,
+          sortBy: "time",
+          limit,
+          skip: page * limit
+        },
+        headers: { ...this.headers, ...authHeaders, accept: "application/json" },
+        referer: this.config.referer,
+        engine: this.config.engine,
+        timeoutMs: 25_000,
+        maxRetries: 1
+      });
+
+      const pageEvents = Array.isArray(response.data) ? response.data : [];
+      for (const event of pageEvents) {
+        if (!event?._id || seen.has(event._id)) continue;
+        seen.add(event._id);
+        events.push(event);
+      }
+
+      if (!response.meta?.hasMore || pageEvents.length < limit) break;
+    }
+
+    return events;
   }
 
   private async getAuthHeaders() {

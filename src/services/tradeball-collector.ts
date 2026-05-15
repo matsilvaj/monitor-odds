@@ -151,7 +151,7 @@ function isMoneylineMarket(market: TradeballMarket) {
     market.status === "open" &&
     market.live !== true &&
     market["market-type"] === "one_x_two" &&
-    (name.includes("match odds") || name.includes("resultado da partida") || name.includes("moneyline") || name.includes("winner"))
+    (name.includes("match odds") || name.includes("resultado da partida") || name.includes("moneyline") || name.includes("winner") || name.includes("1x2"))
   );
 }
 
@@ -304,7 +304,9 @@ export function createTradeballCollector(bookmaker: TradeballBookmakerConfig) {
       }
 
       summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+      });
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

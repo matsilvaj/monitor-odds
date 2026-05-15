@@ -76,6 +76,14 @@ type SportPageResponse = {
       regionCode?: string;
       leagues?: BetanoLeague[];
     }>;
+    regionGroups?: Array<{
+      regions?: Array<{
+        id?: string;
+        name?: string;
+        regionCode?: string;
+        leagues?: BetanoLeague[];
+      }>;
+    }>;
     blocks?: Array<{
       id?: string;
       name?: string;

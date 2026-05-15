@@ -49,7 +49,7 @@ export class SportingbetClient {
     };
   }
 
-  async getFixtures() {
+  private async getFixturesPage(skip: number) {
     const params = new URLSearchParams({
       "x-bwin-accessid": this.config.accessId,
       lang: "pt-br",
@@ -63,7 +63,7 @@ export class SportingbetClient {
       sportIds: "4",
       isPriceBoost: "false",
       statisticsModes: "None",
-      skip: "0",
+      skip: String(skip),
       take: String(this.config.take),
       sortBy: "Tags"
     });
@@ -75,5 +75,26 @@ export class SportingbetClient {
       engine: this.config.engine
     });
     return Array.isArray(data.fixtures) ? data.fixtures : [];
+  }
+
+  async getFixtures() {
+    const fixtures: SportingbetFixture[] = [];
+    const seen = new Set<string>();
+    const maxPages = 10;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const pageFixtures = await this.getFixturesPage(page * this.config.take);
+      if (!pageFixtures.length) break;
+
+      for (const fixture of pageFixtures) {
+        if (seen.has(fixture.id)) continue;
+        seen.add(fixture.id);
+        fixtures.push(fixture);
+      }
+
+      if (pageFixtures.length < this.config.take) break;
+    }
+
+    return fixtures;
   }
 }

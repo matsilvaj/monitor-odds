@@ -58,6 +58,26 @@ async function ensureBaseRows(bookmaker: VaidebetBookmakerConfig) {
   if (error) throw error;
 }
 
+async function getCachedExternalEventIds(bookmakerSlug: string, fixtureIds: string[]) {
+  const externalIdByFixtureId = new Map<string, number>();
+  if (!fixtureIds.length) return externalIdByFixtureId;
+
+  const { data, error } = await supabase
+    .from("bookmaker_event_links")
+    .select("fixture_id,external_event_id")
+    .eq("bookmaker_slug", bookmakerSlug)
+    .in("fixture_id", fixtureIds);
+
+  if (error) throw error;
+
+  for (const row of data ?? []) {
+    const externalEventId = Number(row.external_event_id);
+    if (Number.isFinite(externalEventId)) externalIdByFixtureId.set(row.fixture_id, externalEventId);
+  }
+
+  return externalIdByFixtureId;
+}
+
 async function getCanonicalFixtures() {
   const now = new Date();
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2, 0, 0, 0, 0);
@@ -79,6 +99,7 @@ function fixtureLeague(fixture: CanonicalFixture) {
 
 function findBestMatch(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
   let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
+  const leagueName = event.sourceLeagueName ?? event.sourceSeasonName ?? null;
 
   for (const fixture of fixtures) {
     const result = matchEvents(
@@ -94,7 +115,7 @@ function findBestMatch(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
         startsAt: event.fsd,
         homeTeam: event.hcN ?? null,
         awayTeam: event.acN ?? null,
-        leagueName: `${event.sourceSeasonName ?? ""} ${event.sourceLeagueName ?? ""}`.trim()
+        leagueName
       }
     );
 
@@ -187,7 +208,8 @@ function buildMoneylineOdds(bookmaker: VaidebetBookmakerConfig, fixtureId: strin
     const pa = paForMarket(market);
 
     for (const odd of market.fos ?? []) {
-      if (!odd.valid || odd.freeze || Number(odd.hO) <= 0) continue;
+      const isValid = odd.valid !== false || odd.tvalid === true;
+      if (!isValid || odd.freeze || Number(odd.hO) <= 0) continue;
 
       const selection = selectionFromOdd(odd, event.hcN ?? null, event.acN ?? null);
       if (!selection) continue;
@@ -280,6 +302,31 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
         }
       }
 
+      const missingFixtures = fixtures.filter((fixture) => !bestMatchByFixtureId.has(fixture.id));
+      const cachedExternalEventIds = await getCachedExternalEventIds(
+        bookmaker.slug,
+        missingFixtures.map((fixture) => fixture.id)
+      );
+      const cachedEventIdChunks: number[][] = [];
+      const cachedEventIds = [...new Set(cachedExternalEventIds.values())];
+      for (let index = 0; index < cachedEventIds.length; index += 20) {
+        cachedEventIdChunks.push(cachedEventIds.slice(index, index + 20));
+      }
+
+      const cachedEventPages = await pMap(cachedEventIdChunks, (chunk) => client.getEventCard(chunk), { concurrency: 3 });
+      const cachedEvents = [...new Map(cachedEventPages.flat().map((event) => [event.fId, event])).values()];
+      summary.eventsSeen += cachedEvents.length;
+
+      for (const event of cachedEvents.filter((event) => event.vld !== false && event.frz !== true && isNearCanonicalFixtureWindow(event, fixtures))) {
+        const matched = findBestMatch(event, fixtures);
+        if (!matched) continue;
+
+        const previous = bestMatchByFixtureId.get(matched.fixture.id);
+        if (!previous || matched.score > previous.matched.score) {
+          bestMatchByFixtureId.set(matched.fixture.id, { event, matched });
+        }
+      }
+
       for (const { event, matched } of bestMatchByFixtureId.values()) {
         try {
           linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
@@ -293,7 +340,9 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
         }
       }
 
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+      });
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

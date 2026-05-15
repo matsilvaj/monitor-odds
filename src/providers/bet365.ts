@@ -2,7 +2,6 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { createInterface } from "node:readline/promises";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import type { Bet365BookmakerConfig } from "../config/bookmakers.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
@@ -54,6 +53,14 @@ export type Bet365CollectedEvent = {
   rawText: string;
 };
 
+type Bet365CompetitionTarget = {
+  label: string;
+  rawText: string;
+  x: number;
+  y: number;
+  area: number;
+};
+
 const MONEYLINE_MARKET_RE = /(full\s*time\s*result|resultado\s+final|resultado\s+da\s+partida|resultado\s+do\s+jogo|\b1x2\b)/i;
 const ODD_RE = /\b(?:[1-9]\d{0,2}|0)[.,]\d{2,3}\b/g;
 
@@ -103,10 +110,32 @@ function compactSpaces(value: string) {
 }
 
 function tokensFromName(value: unknown) {
-  const ignored = new Set(["fc", "cf", "sc", "ac", "ec", "afc", "club", "de", "da", "do", "dos", "das", "the", "real"]);
+  const ignored = new Set([
+    "fc",
+    "cf",
+    "sc",
+    "ac",
+    "ec",
+    "afc",
+    "club",
+    "de",
+    "da",
+    "do",
+    "dos",
+    "das",
+    "the",
+    "real",
+    "new",
+    "united",
+    "city",
+    "san",
+    "los",
+    "saint",
+    "st"
+  ]);
   return normalizeVisibleText(value)
     .split(/\s+/)
-    .filter((token) => token.length >= 3 && !ignored.has(token));
+    .filter((token) => (token.length >= 3 || token.length === 2) && !ignored.has(token));
 }
 
 function hasEveryImportantToken(text: string, tokens: string[]) {
@@ -139,43 +168,56 @@ function eventCandidateKey(event: Bet365LeagueEventCandidate) {
   return [event.dateKey, event.startTime ?? "", normalizeVisibleText(event.homeTeam), normalizeVisibleText(event.awayTeam)].join(":");
 }
 
-function leagueSearchTerms(leagueName: string, country: string | null) {
+function leagueCompetitionTerms(leagueName: string, country: string | null) {
   const terms = new Set<string>();
   terms.add(leagueName);
 
-  if (country) {
-    terms.add(`${country} ${leagueName}`);
-  }
-
-  const translatedCountries: Record<string, string[]> = {
-    spain: ["Spain", "Espanha"],
-    england: ["England", "Inglaterra", "Reino Unido", "United Kingdom"],
-    france: ["France", "Franca", "França"],
-    italy: ["Italy", "Italia", "Itália"],
-    germany: ["Germany", "Alemanha"],
-    brazil: ["Brazil", "Brasil"]
+  const competitionCountries: Record<string, string[]> = {
+    spain: ["Spain"],
+    england: ["England", "United Kingdom"],
+    france: ["France"],
+    italy: ["Italy"],
+    germany: ["Germany"],
+    brazil: ["Brazil"],
+    portugal: ["Portugal"],
+    belgium: ["Belgium"],
+    turkey: ["Türkiye", "Turkey"],
+    usa: ["USA", "United States"],
+    scotland: ["Scotland"],
+    netherlands: ["Netherlands"],
+    argentina: ["Argentina"],
+    mexico: ["Mexico"],
+    chile: ["Chile"],
+    peru: ["Peru"],
+    austria: ["Austria"]
   };
 
   const countryKey = normalizeVisibleText(country);
-  for (const translated of translatedCountries[countryKey] ?? []) {
-    terms.add(`${translated} ${leagueName}`);
-    terms.add(`${translated} - ${leagueName}`);
+  for (const competitionCountry of competitionCountries[countryKey] ?? []) {
+    terms.add(`${competitionCountry} ${leagueName}`);
   }
 
   const normalized = normalizeVisibleText(`${country ?? ""} ${leagueName}`);
   const aliases: Record<string, string[]> = {
-    "spain la liga": ["Spain La Liga", "Espanha - La Liga", "La Liga"],
-    "la liga": ["Spain La Liga", "Espanha - La Liga", "La Liga"],
-    "england premier league": ["England Premier League", "Inglaterra - Premier League", "Premier League"],
-    "premier league": ["England Premier League", "Inglaterra - Premier League", "Premier League"],
-    "france ligue 1": ["France Ligue 1", "Franca - Ligue 1", "França - Ligue 1", "Ligue 1"],
-    "ligue 1": ["France Ligue 1", "Franca - Ligue 1", "França - Ligue 1", "Ligue 1"],
-    "italy serie a": ["Italy Serie A", "Italia - Serie A", "Itália - Serie A", "Serie A"],
-    "serie a": ["Italy Serie A", "Italia - Serie A", "Itália - Serie A", "Serie A"],
-    "germany bundesliga": ["Germany Bundesliga", "Alemanha - Bundesliga", "Bundesliga"],
-    "bundesliga": ["Germany Bundesliga", "Alemanha - Bundesliga", "Bundesliga"],
-    brasileirao: ["Brazil Serie A", "Brasil - Serie A", "Brasileirao", "Brasileirão"],
-    "brazil brasileirao": ["Brazil Serie A", "Brasil - Serie A", "Brasileirao", "Brasileirão"],
+    "spain la liga": ["Spain La Liga", "La Liga"],
+    "england premier league": ["England Premier League", "Premier League"],
+    "england fa cup": ["England FA Cup", "FA Cup"],
+    "france ligue 1": ["France Ligue 1", "Ligue 1"],
+    "italy serie a": ["Italy Serie A", "Serie A"],
+    "germany bundesliga": ["Germany Bundesliga I", "Germany Bundesliga", "Bundesliga I", "Bundesliga"],
+    "portugal primeira liga": ["Portugal Primeira Liga", "Primeira Liga"],
+    "belgium belgian pro league": ["Belgium First Division A", "Belgian First Division A"],
+    "belgium pro league": ["Belgium First Division A", "Belgian First Division A"],
+    "belgian pro league": ["Belgium First Division A", "Belgian First Division A"],
+    "turkey super lig": ["Türkiye Super Lig", "Turkey Super Lig", "Super Lig"],
+    "usa mls": ["USA MLS", "MLS"],
+    mls: ["USA MLS", "MLS"],
+    brasileirao: ["Brasileirao"],
+    "brazil brasileirao": ["Brasileirao"],
+    "brazil serie a": ["Brazil Serie A"],
+    "brazil serie b": ["Brazil Serie B"],
+    "scotland premiership": ["Scotland Premiership"],
+    "scottish premiership": ["Scotland Premiership"],
     libertadores: ["Copa Libertadores", "Libertadores"],
     "europa league": ["UEFA Europa League", "Europa League"]
   };
@@ -186,7 +228,57 @@ function leagueSearchTerms(leagueName: string, country: string | null) {
     }
   }
 
+  const leagueOnly = leagueName.replace(
+    /^(?:spain|england|united kingdom|france|italy|germany|brazil|portugal|belgium|turkey|turkiye|türkiye|usa|united states|scotland)\s*[- ]\s*/i,
+    ""
+  );
+  if (leagueOnly && leagueOnly !== leagueName) terms.add(leagueOnly);
+  if (countryKey === "brazil" && normalized.includes("serie b")) terms.add("Brazil Serie B");
+  else if (countryKey === "brazil" && (normalized.includes("serie a") || normalized.includes("brasileirao"))) terms.add("Brazil Serie A");
+
   return [...terms].filter(Boolean).sort((left, right) => right.length - left.length);
+}
+
+function competitionTokens(value: unknown) {
+  const ignored = new Set(["league", "liga", "division", "championship", "serie", "series", "first", "second", "the"]);
+  return normalizeVisibleText(value)
+    .split(/\s+/)
+    .filter((token) => token.length >= 2 && !ignored.has(token));
+}
+
+function competitionLabelScore(label: string, leagueName: string, country: string | null, terms: string[]) {
+  const normalizedLabel = normalizeVisibleText(label);
+  const normalizedLeague = normalizeVisibleText(leagueName);
+  const normalizedCountry = normalizeVisibleText(country);
+  const labelTokens = new Set(competitionTokens(label));
+  const leagueTokens = competitionTokens(leagueName);
+  const targetTokens = new Set([...leagueTokens, ...competitionTokens(country)]);
+  let score = 0;
+
+  for (const term of terms) {
+    const normalizedTerm = normalizeVisibleText(term);
+    if (!normalizedTerm) continue;
+    const termTokens = competitionTokens(term);
+    const tokenHits = termTokens.filter((token) => labelTokens.has(token)).length;
+
+    if (normalizedLabel === normalizedTerm) score = Math.max(score, 140);
+    else if (normalizedLabel.includes(normalizedTerm)) score = Math.max(score, 120);
+    else if (normalizedTerm.includes(normalizedLabel)) score = Math.max(score, 100);
+    else if (termTokens.length && tokenHits >= Math.min(2, termTokens.length)) score = Math.max(score, 55 + tokenHits * 15);
+  }
+
+  const sharedTargetTokens = [...targetTokens].filter((token) => labelTokens.has(token)).length;
+  score += sharedTargetTokens * 8;
+
+  if (normalizedCountry && normalizedLabel.includes(normalizedCountry)) score += 18;
+  if (normalizedLeague && normalizedLabel.includes(normalizedLeague)) score += 18;
+
+  const targetAllowsWomen = /\b(women|feminino|feminina|u20|sub 20|reserve|reserva)\b/i.test(`${leagueName} ${country ?? ""}`);
+  if (!targetAllowsWomen && /\b(women|u20|u19|u21|reserve|reserves|youth|sub)\b/i.test(normalizedLabel)) score -= 55;
+  if (!/\bcup|copa|ta[cç]a\b/i.test(normalizedLeague) && /\bcup|copa\b/i.test(normalizedLabel)) score -= 30;
+  if (/\bvirtual|esoccer|e soccer|kings league\b/i.test(normalizedLabel)) score -= 80;
+
+  return score;
 }
 
 function classifyMarket(rawText: string): { category: PaCategory; confidence: number; reason: string } {
@@ -255,20 +347,12 @@ function moneylineBlocksFromText(rawText: string) {
   });
 }
 
-async function question(prompt: string) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    return await rl.question(prompt);
-  } finally {
-    rl.close();
-  }
-}
-
 export class Bet365BrowserClient {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private chromeProcess: ChildProcess | null = null;
+  private openedLeagueLabel: string | null = null;
 
   constructor(
     private readonly config: Bet365BookmakerConfig,
@@ -340,6 +424,10 @@ export class Bet365BrowserClient {
     return this.requirePage().url();
   }
 
+  currentLeagueLabel() {
+    return this.openedLeagueLabel;
+  }
+
   async goToUrl(url: string, label: string) {
     const page = this.requirePage();
     await this.logger("info", label, { url });
@@ -380,53 +468,122 @@ export class Bet365BrowserClient {
   }
 
   async collectLeagueCandidates() {
-    const text = await this.visibleText();
-    const ignored = new Set([
-      "featured",
-      "competitions",
-      "outrights",
-      "offers",
-      "free games",
-      "markets",
-      "popular",
-      "soccer",
-      "futebol",
-      "todos os esportes"
-    ]);
+    const labels = new Set<string>();
+    await this.scrollMainContent(-20000);
+    await this.requirePage().keyboard.press("Home").catch(() => undefined);
+    await this.requirePage().waitForTimeout(700);
 
-    return [
-      ...new Set(
-        text
-          .split(/\n+/)
-          .map((line) => compactSpaces(line.replace(/\d+\s*>?$/, "")))
-          .filter((line) => {
-            const normalized = normalizeVisibleText(line);
-            return line.length >= 4 && line.length <= 80 && /[a-zA-Z]/.test(line) && !ignored.has(normalized);
-          })
-      )
-    ];
+    for (let attempt = 0; attempt < 42; attempt += 1) {
+      for (const target of await this.visibleCompetitionTargets()) {
+        labels.add(target.label);
+      }
+
+      if (await this.isMainContentNearBottom()) break;
+      await this.scrollMainContent(900);
+      await this.requirePage().waitForTimeout(350);
+    }
+
+    return [...labels];
   }
 
   async openLeague(leagueName: string, country: string | null, expectedTeamNames: string[] = []) {
     const page = this.requirePage();
-    const beforeUrl = page.url();
-    const terms = leagueSearchTerms(leagueName, country);
-    await this.logger("info", "procurando liga na bet365", { leagueName, country, terms, expectedTeams: expectedTeamNames.slice(0, 8) });
+    const terms = leagueCompetitionTerms(leagueName, country);
+    await this.logger("info", "procurando liga nas competicoes da bet365", {
+      leagueName,
+      country,
+      terms: terms.slice(0, 8),
+      expectedTeams: expectedTeamNames.slice(0, 8)
+    });
 
-    for (const term of terms) {
-      const clicked = (await this.clickLeagueText(term)) || (await this.clickText(term));
-      if (!clicked) continue;
+    await this.scrollMainContent(-20000);
+    await page.keyboard.press("Home").catch(() => undefined);
+    await page.waitForTimeout(800);
 
-      await this.waitForUi();
-      const afterUrl = page.url();
-      const pageText = await this.visibleText();
-      if (afterUrl !== beforeUrl || this.hasExpectedTeams(pageText, expectedTeamNames) || /upcoming matches|proximos jogos|partidas/i.test(pageText)) {
-        await this.logger("info", "liga aberta na bet365", { leagueName, clickedTerm: term, url: afterUrl });
-        return true;
+    for (let attempt = 0; attempt < 42; attempt += 1) {
+      const targets = await this.visibleCompetitionTargets();
+      const ranked = targets
+        .map((target) => ({
+          target,
+          score: competitionLabelScore(target.label, leagueName, country, terms)
+        }))
+        .filter((item) => item.score >= 55)
+        .sort((left, right) => right.score - left.score || left.target.area - right.target.area);
+
+      const selected = ranked[0]?.target;
+      if (selected) {
+        const beforeUrl = page.url();
+        await this.logger("info", "clicando liga nas competicoes da bet365", {
+          leagueName,
+          country,
+          selectedLabel: selected.label,
+          attempt: attempt + 1,
+          score: ranked[0]?.score
+        });
+        await page.mouse.click(selected.x, selected.y);
+        await page.waitForTimeout(500);
+        await this.waitForUi();
+
+        const afterUrl = page.url();
+        const pageText = await this.visibleText();
+        if (afterUrl !== beforeUrl || this.hasExpectedTeams(pageText, expectedTeamNames) || /upcoming matches|proximos jogos|partidas/i.test(pageText)) {
+          this.openedLeagueLabel = selected.label;
+          await this.logger("info", "liga aberta na bet365", { leagueName, clickedTerm: selected.label, url: afterUrl });
+          return true;
+        }
       }
+
+      if (await this.isMainContentNearBottom()) break;
+      await this.scrollMainContent(900);
+      await page.waitForTimeout(450);
     }
 
-    await this.logger("warn", "nao consegui abrir a liga automaticamente", { leagueName, country });
+    await this.logger("warn", "nao consegui abrir a liga nas competicoes da bet365", { leagueName, country, terms: terms.slice(0, 8) });
+    return false;
+  }
+
+  async openFixtureWithRetries(fixture: Bet365FixtureTarget, leagueUrl: string, attempts = 3) {
+    const page = this.requirePage();
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      if (attempt > 1) {
+        await this.logger("info", "reabrindo jogo pela liga da bet365", {
+          fixtureId: fixture.id,
+          homeTeam: fixture.homeTeam,
+          awayTeam: fixture.awayTeam,
+          attempt,
+          attempts
+        });
+        await this.goToUrl(leagueUrl, "voltando para a liga antes de reabrir jogo");
+      }
+
+      const opened = await this.openFixture(fixture);
+      if (!opened) continue;
+      await this.waitForUi();
+      if (await this.verifyCurrentEvent(fixture)) return true;
+
+      if (this.isEventUrl(page.url())) {
+        await this.logger("warn", "pagina do evento abriu, mas os mercados ainda nao apareceram na validacao inicial", {
+          fixtureId: fixture.id,
+          homeTeam: fixture.homeTeam,
+          awayTeam: fixture.awayTeam,
+          url: page.url(),
+          attempt,
+          attempts
+        });
+        return true;
+      }
+
+      await this.logger("warn", "pagina do evento abriu, mas nao confirmou os times na bet365", {
+        fixtureId: fixture.id,
+        homeTeam: fixture.homeTeam,
+        awayTeam: fixture.awayTeam,
+        url: page.url(),
+        attempt,
+        attempts
+      });
+    }
+
     return false;
   }
 
@@ -560,30 +717,18 @@ export class Bet365BrowserClient {
     return false;
   }
 
-  async waitForManualEvent(fixture: Bet365FixtureTarget) {
-    if (!this.config.manualFallback || !process.stdin.isTTY) return false;
-
-    await this.logger("warn", "fallback manual solicitado para jogo da bet365", {
-      fixtureId: fixture.id,
-      homeTeam: fixture.homeTeam,
-      awayTeam: fixture.awayTeam
-    });
-
-    const answer = await question(
-      `[bet365] Abra manualmente "${fixture.homeTeam} x ${fixture.awayTeam}" no Chrome aberto e pressione ENTER para coletar, ou digite "pular": `
-    );
-
-    if (/^(pular|skip|s)$/i.test(answer.trim())) return false;
-    await this.waitForUi();
-    return this.verifyCurrentEvent(fixture);
-  }
-
   async verifyCurrentEvent(fixture: Bet365FixtureTarget) {
     const page = this.requirePage();
     const text = normalizeVisibleText(await this.visibleText());
     const hasTeams = hasEveryImportantToken(text, tokensFromName(fixture.homeTeam)) && hasEveryImportantToken(text, tokensFromName(fixture.awayTeam));
     const hasEventSignal = /\/AC\//i.test(page.url()) || MONEYLINE_MARKET_RE.test(text);
     return hasTeams && hasEventSignal;
+  }
+
+  async pageHasFixturePair(fixtures: Bet365FixtureTarget[]) {
+    if (!fixtures.length) return false;
+    const text = normalizeVisibleText(await this.visibleText());
+    return fixtures.some((fixture) => hasEveryImportantToken(text, tokensFromName(fixture.homeTeam)) && hasEveryImportantToken(text, tokensFromName(fixture.awayTeam)));
   }
 
   async collectCurrentEvent(fixture: Bet365FixtureTarget): Promise<Bet365CollectedEvent> {
@@ -669,6 +814,85 @@ export class Bet365BrowserClient {
     } catch {
       return false;
     }
+  }
+
+  private async visibleCompetitionTargets() {
+    const page = this.requirePage();
+    const script = String.raw`
+(() => {
+  const ignored = new Set([
+    "featured",
+    "competitions",
+    "outrights",
+    "offers",
+    "free games",
+    "markets",
+    "popular",
+    "soccer",
+    "futebol",
+    "todos os esportes",
+    "the americas",
+    "europe",
+    "united kingdom",
+    "esoccer",
+    "virtual soccer"
+  ]);
+  const norm = (value) => String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const cleanLabel = (text) => {
+    const lines = String(text ?? "")
+      .split(/\n+/)
+      .map((line) => line.replace(/\b\d+\s*(?:»|>|›)+\s*$/g, "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    return lines.find((line) => /[A-Za-z\u00C0-\u024F]/.test(line) && !/^\d+$/.test(line)) ?? "";
+  };
+
+  const nodes = [...document.querySelectorAll("a,button,[role='button'],div,span")];
+  const viewportArea = window.innerWidth * window.innerHeight;
+  const seen = new Set();
+  const candidates = [];
+
+  for (const node of nodes) {
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 40 || rect.height < 14 || rect.bottom < 90 || rect.top > window.innerHeight - 12) continue;
+    if (rect.width * rect.height > viewportArea * 0.22) continue;
+
+    const style = window.getComputedStyle(node);
+    if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) continue;
+
+    const rawText = (node.innerText || node.textContent || "").trim();
+    if (!rawText || rawText.length > 220) continue;
+    if ((rawText.match(/\n/g) ?? []).length > 3) continue;
+
+    const label = cleanLabel(rawText);
+    const normalized = norm(label);
+    if (!label || label.length < 3 || label.length > 90) continue;
+    if (ignored.has(normalized)) continue;
+    if (!/[A-Za-z\u00C0-\u024F]/.test(label)) continue;
+    if (/^(todos os esportes|ao vivo|casino|login|registre se|promocoes|pesquisar)$/i.test(normalized)) continue;
+
+    const key = normalized + ":" + Math.round(rect.top / 6);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    candidates.push({
+      label,
+      rawText,
+      x: rect.left + Math.min(Math.max(rect.width * 0.5, 48), rect.width - 8),
+      y: rect.top + rect.height / 2,
+      area: rect.width * rect.height
+    });
+  }
+
+  return candidates;
+})()
+`;
+
+    return page.evaluate(script) as Promise<Bet365CompetitionTarget[]>;
   }
 
   private hasExpectedTeams(pageText: string, expectedTeamNames: string[]) {
@@ -870,11 +1094,196 @@ export class Bet365BrowserClient {
     return line.length >= 2 && line.length <= 80 && /[A-Za-z\u00C0-\u024F]/.test(line);
   };
 
+  const addEventsFromCoordinateRows = () => {
+    const textNodes = [...document.querySelectorAll("div,span,p")]
+      .map((node) => {
+        const rect = node.getBoundingClientRect();
+        const style = window.getComputedStyle(node);
+        const text = (node.innerText || node.textContent || "").replace(/\s+/g, " ").trim();
+        return {
+          rect,
+          text,
+          sourceUrl: node.closest("a[href]")?.href ?? null,
+          hidden: style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0
+        };
+      })
+      .filter((item) => {
+        if (item.hidden || !item.text) return false;
+        if (item.rect.width < 8 || item.rect.height < 8 || item.rect.bottom < 0 || item.rect.top > window.innerHeight * 1.4) return false;
+        if (item.text.length > 90) return false;
+        return true;
+      });
+
+    const visibleHeaders = dateHeaders
+      .filter((header) => header.dateKey && targetDateSet.has(header.dateKey))
+      .sort((left, right) => left.top - right.top);
+
+    for (let headerIndex = 0; headerIndex < visibleHeaders.length; headerIndex += 1) {
+      const header = visibleHeaders[headerIndex];
+      const nextHeaderTop = visibleHeaders[headerIndex + 1]?.top ?? Number.POSITIVE_INFINITY;
+      const timeNodes = textNodes.filter(
+        (item) =>
+          /^([01]?\d|2[0-3]):[0-5]\d$/.test(item.text) &&
+          item.rect.top >= header.bottom - 8 &&
+          item.rect.top < nextHeaderTop - 8
+      );
+
+      for (const timeNode of timeNodes) {
+        const teamNodes = textNodes
+          .filter((item) => {
+            if (item === timeNode) return false;
+            if (!isTeamLine(item.text)) return false;
+            if (item.rect.left <= timeNode.rect.left + 18) return false;
+            if (item.rect.top < timeNode.rect.top - 18 || item.rect.top > timeNode.rect.top + 88) return false;
+            return true;
+          })
+          .sort((left, right) => left.rect.top - right.rect.top || left.rect.left - right.rect.left);
+
+        const teamLines = [];
+        const seenTeams = new Set();
+        for (const teamNode of teamNodes) {
+          const normalized = norm(teamNode.text);
+          if (seenTeams.has(normalized)) continue;
+          seenTeams.add(normalized);
+          teamLines.push(teamNode);
+          if (teamLines.length >= 2) break;
+        }
+
+        if (teamLines.length < 2) continue;
+
+        const startTime = timeNode.text.match(timeRe)?.[0] ?? null;
+        const startsAt = startTime ? toIso(header.dateKey, startTime) : null;
+        if (!startTime || !startsAt) continue;
+
+        const homeTeam = teamLines[0].text;
+        const awayTeam = teamLines[1].text;
+        const sourceUrl = teamLines[0].sourceUrl ?? teamLines[1].sourceUrl ?? null;
+        const urlEventId = sourceUrl?.match(/\/E(\d+)(?:\/|$)/i)?.[1] ?? null;
+        addEvent({
+          externalEventId: urlEventId ? Number(urlEventId) : stableHash([pageUrl, header.dateKey, startTime, homeTeam, awayTeam].join(":")),
+          homeTeam,
+          awayTeam,
+          startsAt,
+          dateKey: header.dateKey,
+          startTime,
+          sourceText: [header.text, startTime, homeTeam, awayTeam].join("\n"),
+          sourceUrl
+        });
+      }
+    }
+  };
+
+  addEventsFromCoordinateRows();
+
+  const parseTitleTeams = (line) => {
+    const clean = line.replace(/\s+/g, " ").trim();
+    if (!clean || clean.length > 120) return null;
+    if (oddRe.test(clean) || timeRe.test(clean) || parseDateKey(clean)) return null;
+
+    const parts = clean.split(/\s+(?:v|vs|x)\s+/i).map((part) => part.trim()).filter(Boolean);
+    if (parts.length !== 2) return null;
+    if (!isTeamLine(parts[0]) || !isTeamLine(parts[1])) return null;
+    return { homeTeam: parts[0], awayTeam: parts[1] };
+  };
+
+  const addEventsFromTitleDateLines = (rawLines, sourceUrl = null) => {
+    const chunkLines = rawLines
+      .map((line) => String(line ?? "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    for (let index = 1; index < chunkLines.length; index += 1) {
+      const line = chunkLines[index];
+      const parsedDateKey = parseDateKey(line);
+      const timeMatch = line.match(timeRe);
+      if (!parsedDateKey || !timeMatch || !targetDateSet.has(parsedDateKey)) continue;
+
+      let teams = null;
+      for (let cursor = index - 1; cursor >= Math.max(0, index - 5); cursor -= 1) {
+        teams = parseTitleTeams(chunkLines[cursor]);
+        if (teams) break;
+        if (looksLikeDateHeader(chunkLines[cursor])) break;
+      }
+
+      if (!teams) continue;
+
+      const startTime = timeMatch[1].padStart(2, "0") + ":" + timeMatch[2];
+      const startsAt = toIso(parsedDateKey, startTime);
+      if (!startsAt) continue;
+
+      const eventSourceUrl = sourceUrl || null;
+      const urlEventId = eventSourceUrl?.match(/\/E(\d+)(?:\/|$)/i)?.[1] ?? null;
+      addEvent({
+        externalEventId: urlEventId ? Number(urlEventId) : stableHash([pageUrl, parsedDateKey, startTime, teams.homeTeam, teams.awayTeam].join(":")),
+        homeTeam: teams.homeTeam,
+        awayTeam: teams.awayTeam,
+        startsAt,
+        dateKey: parsedDateKey,
+        startTime,
+        sourceText: [teams.homeTeam + " v " + teams.awayTeam, line].join("\n"),
+        sourceUrl: eventSourceUrl
+      });
+    }
+  };
+
+  const visibleChunks = [...document.querySelectorAll("a,button,[role='button'],div,span,p")]
+    .map((node) => {
+      const rect = node.getBoundingClientRect();
+      const style = window.getComputedStyle(node);
+      const text = (node.innerText || node.textContent || "").trim();
+      return {
+        rect,
+        text,
+        sourceUrl: node.closest("a[href]")?.href ?? null,
+        hidden: style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0
+      };
+    })
+    .filter((chunk) => {
+      if (chunk.hidden || !chunk.text) return false;
+      if (chunk.rect.width < 30 || chunk.rect.height < 12 || chunk.rect.bottom < 0 || chunk.rect.top > window.innerHeight * 1.4) return false;
+      if (chunk.text.length > 700) return false;
+      return timeRe.test(chunk.text) && /\s(?:v|vs|x)\s/i.test(chunk.text);
+    });
+
+  for (const chunk of visibleChunks) {
+    addEventsFromTitleDateLines(chunk.text.split(/\n+/), chunk.sourceUrl);
+  }
+
   const lines = (document.body.innerText || "")
     .split(/\n+/)
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean);
   let currentDateKey = null;
+
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const parsedDateKey = parseDateKey(line);
+    const timeMatch = line.match(timeRe);
+    if (!parsedDateKey || !timeMatch || !targetDateSet.has(parsedDateKey)) continue;
+
+    let teams = null;
+    for (let cursor = index - 1; cursor >= Math.max(0, index - 4); cursor -= 1) {
+      teams = parseTitleTeams(lines[cursor]);
+      if (teams) break;
+      if (looksLikeDateHeader(lines[cursor])) break;
+    }
+
+    if (!teams) continue;
+
+    const startTime = timeMatch[1].padStart(2, "0") + ":" + timeMatch[2];
+    const startsAt = toIso(parsedDateKey, startTime);
+    if (!startsAt) continue;
+
+    addEvent({
+      externalEventId: stableHash([pageUrl, parsedDateKey, startTime, teams.homeTeam, teams.awayTeam].join(":")),
+      homeTeam: teams.homeTeam,
+      awayTeam: teams.awayTeam,
+      startsAt,
+      dateKey: parsedDateKey,
+      startTime,
+      sourceText: [teams.homeTeam + " v " + teams.awayTeam, line].join("\n"),
+      sourceUrl: null
+    });
+  }
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -921,63 +1330,6 @@ export class Bet365BrowserClient {
 `;
 
     return page.evaluate(script) as Promise<Bet365LeagueEventCandidate[]>;
-  }
-
-  private async clickLeagueText(term: string) {
-    const page = this.requirePage();
-    const script = String.raw`
-(() => {
-  const candidateTerm = ${JSON.stringify(term)};
-  const norm = (value) => String(value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-
-  const normalizedTerm = norm(candidateTerm);
-  const termTokens = normalizedTerm.split(/\s+/).filter((token) => token.length >= 3);
-  const nodes = [...document.querySelectorAll("a,button,[role='button'],div,span")];
-  const candidates = [];
-
-  for (const node of nodes) {
-    const rect = node.getBoundingClientRect();
-    if (rect.width < 30 || rect.height < 14 || rect.bottom < 0 || rect.top > window.innerHeight) continue;
-    if (rect.width * rect.height > window.innerWidth * window.innerHeight * 0.35) continue;
-
-    const style = window.getComputedStyle(node);
-    if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) continue;
-
-    const text = (node.innerText || node.textContent || "").trim();
-    if (text.length < 3 || text.length > 220) continue;
-
-    const normalizedText = norm(text);
-    const tokenHits = termTokens.filter((token) => normalizedText.includes(token)).length;
-    const exactish = normalizedText.includes(normalizedTerm) || normalizedTerm.includes(normalizedText);
-    if (!exactish && tokenHits < Math.min(2, termTokens.length)) continue;
-
-    const area = rect.width * rect.height;
-    const score = (exactish ? 30 : 0) + tokenHits * 8 - area / 60000 - text.length / 300;
-    candidates.push({
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-      text,
-      score,
-      area
-    });
-  }
-
-  candidates.sort((left, right) => right.score - left.score || left.area - right.area);
-  return candidates[0] ?? null;
-})()
-`;
-    const target = (await page.evaluate(script)) as { x: number; y: number; text: string } | null;
-
-    if (!target) return false;
-
-    await this.logger("info", "clicando candidato visual de liga", { term, targetText: target.text.slice(0, 120) });
-    await page.mouse.click(target.x, target.y);
-    return true;
   }
 
   private async findFixtureClickTarget(homeTokens: string[], awayTokens: string[]) {

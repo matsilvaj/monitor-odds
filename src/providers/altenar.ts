@@ -89,6 +89,29 @@ export class AltenarClient {
     return Array.isArray(data.events) ? data.events : [];
   }
 
+  async getFootballEvents() {
+    const params = new URLSearchParams({
+      culture: "pt-BR",
+      timezoneOffset: "180",
+      integration: this.config.integration,
+      deviceType: "2",
+      numFormat: "en-GB",
+      countryCode: "BR",
+      eventCount: "0",
+      sportId: "66"
+    });
+
+    const data = await httpClient<{ events?: AltenarEvent[] }>({
+      url: new URL(`widget/GetEvents?${params}`, this.config.baseUrl),
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 30_000,
+      maxRetries: 1
+    });
+    return Array.isArray(data.events) ? data.events : [];
+  }
+
   async getEventDetails(eventId: number) {
     const params = new URLSearchParams({
       culture: "pt-BR",

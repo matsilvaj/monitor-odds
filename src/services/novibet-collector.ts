@@ -214,8 +214,24 @@ function buildMoneylineOdds(bookmaker: NovibetBookmakerConfig, fixtureId: string
   return rows;
 }
 
-function searchKeyword(fixture: CanonicalFixture) {
-  return (fixture.home_team ?? fixture.away_team ?? fixture.name).replace(/\s*\([^)]*\)/g, "").split(/\s+/).slice(0, 3).join(" ");
+function compactSearchName(value: string | null | undefined) {
+  return String(value ?? "")
+    .replace(/\s*\([^)]*\)/g, "")
+    .replace(/^\d{2,4}\s+/, "")
+    .replace(/^(?:vfb|vfl|fc|sc|ec|ac|cf)\s+/i, "")
+    .trim();
+}
+
+function searchKeywords(fixture: CanonicalFixture) {
+  const names = [
+    fixture.home_team,
+    compactSearchName(fixture.home_team),
+    fixture.away_team,
+    compactSearchName(fixture.away_team),
+    fixture.name
+  ];
+
+  return [...new Set(names.map((name) => String(name ?? "").split(/\s+/).filter(Boolean).slice(0, 3).join(" ")).filter(Boolean))];
 }
 
 export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
@@ -246,18 +262,22 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
         fixtures,
         async (fixture) => {
           try {
-            const documents = await client.searchDocuments(searchKeyword(fixture));
-            summary.searches += 1;
-            summary.eventsSeen += documents.length;
+            for (const keyword of searchKeywords(fixture)) {
+              const documents = await client.searchDocuments(keyword);
+              summary.searches += 1;
+              summary.eventsSeen += documents.length;
 
-            for (const document of documents.filter((item) => !item.isLive)) {
-              const result = matchDocument(fixture, document);
-              if (!result.matched) continue;
+              for (const document of documents.filter((item) => !item.isLive)) {
+                const result = matchDocument(fixture, document);
+                if (!result.matched) continue;
 
-              const previous = bestByFixtureId.get(fixture.id);
-              if (!previous || result.score > previous.score) {
-                bestByFixtureId.set(fixture.id, { fixture, document, score: result.score, orientation: result.orientation });
+                const previous = bestByFixtureId.get(fixture.id);
+                if (!previous || result.score > previous.score) {
+                  bestByFixtureId.set(fixture.id, { fixture, document, score: result.score, orientation: result.orientation });
+                }
               }
+
+              if (bestByFixtureId.has(fixture.id)) break;
             }
           } catch (error) {
             summary.errors += 1;
@@ -291,7 +311,9 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
         { concurrency: 2 }
       );
 
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+      });
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

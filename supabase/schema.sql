@@ -71,6 +71,22 @@ create table if not exists bookmaker_event_links (
   unique (bookmaker_slug, external_event_id)
 );
 
+create table if not exists bookmaker_league_links (
+  id uuid primary key default gen_random_uuid(),
+  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
+  api_football_league_id bigint not null,
+  league_name text not null,
+  league_country text,
+  source_url text not null,
+  bookmaker_league_name text,
+  source text not null default 'discovered',
+  raw jsonb not null default '{}'::jsonb,
+  last_verified_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (bookmaker_slug, api_football_league_id)
+);
+
 create table if not exists odds (
   id uuid primary key default gen_random_uuid(),
   fixture_id uuid not null references fixtures(id) on delete cascade,
@@ -185,6 +201,7 @@ create index if not exists fixtures_league_id_idx on fixtures (league_id);
 create index if not exists teams_normalized_name_idx on teams (normalized_name);
 create index if not exists odds_fixture_id_idx on odds (fixture_id);
 create index if not exists bookmaker_event_links_fixture_id_idx on bookmaker_event_links (fixture_id);
+create index if not exists bookmaker_league_links_slug_league_idx on bookmaker_league_links (bookmaker_slug, api_football_league_id);
 create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on bookmaker_event_snapshots (bookmaker_slug, date_key);
 create index if not exists bookmaker_event_snapshots_league_idx on bookmaker_event_snapshots (league_api_football_id);
 create index if not exists bookmaker_collection_state_next_run_idx on bookmaker_collection_state (next_run_at);

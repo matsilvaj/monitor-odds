@@ -70,6 +70,17 @@ type KtoBetOfferResponse = {
   betOffers?: KtoBetOffer[];
 };
 
+function formatKambiDateTime(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absOffset = Math.abs(offsetMinutes);
+
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}T${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}${sign}${pad(
+    Math.floor(absOffset / 60)
+  )}${pad(absOffset % 60)}`;
+}
+
 export class KtoClient {
   private readonly headers: Record<string, string>;
 
@@ -83,12 +94,14 @@ export class KtoClient {
     };
   }
 
-  async getFootballMatches() {
-    const url = new URL("listView/football/all/all/all/matches.json", this.config.apiBaseUrl);
+  async getFootballStartingWithin(start: Date, end: Date) {
+    const url = new URL("listView/football/all/all/all/starting-within.json", this.config.apiBaseUrl);
     url.searchParams.set("channel_id", "1");
     url.searchParams.set("client_id", "200");
     url.searchParams.set("lang", "pt_BR");
     url.searchParams.set("market", "BR");
+    url.searchParams.set("from", formatKambiDateTime(start));
+    url.searchParams.set("to", formatKambiDateTime(end));
     url.searchParams.set("useCombined", "true");
     url.searchParams.set("useCombinedLive", "true");
 

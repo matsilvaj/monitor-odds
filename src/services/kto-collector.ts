@@ -78,6 +78,18 @@ function fixtureLeague(fixture: CanonicalFixture) {
   return Array.isArray(fixture.league) ? fixture.league[0] ?? null : fixture.league;
 }
 
+function collectionWindow(fixtures: CanonicalFixture[]) {
+  const times = fixtures.map((fixture) => new Date(fixture.starts_at).getTime()).filter(Number.isFinite);
+  const minTime = Math.min(...times);
+  const maxTime = Math.max(...times);
+  const now = Date.now();
+
+  return {
+    start: new Date(Math.min(now, minTime - 60 * 60 * 1000)),
+    end: new Date(maxTime + 60 * 60 * 1000)
+  };
+}
+
 function eventFromListItem(item: KtoListEvent) {
   return item.event ?? null;
 }
@@ -256,7 +268,8 @@ export function createKtoCollector(bookmaker: KtoBookmakerConfig) {
     }
 
     try {
-      const listItems = await client.getFootballMatches();
+      const { start, end } = collectionWindow(fixtures);
+      const listItems = await client.getFootballStartingWithin(start, end);
       const events = [
         ...new Map(
           listItems
@@ -287,8 +300,11 @@ export function createKtoCollector(bookmaker: KtoBookmakerConfig) {
       }
 
       const eventIds = [...bestMatchByFixtureId.values()].map(({ event }) => event.id);
+      const detailBatchSize = 4;
       const detailPages = await pMap(
-        Array.from({ length: Math.ceil(eventIds.length / 12) }, (_, index) => eventIds.slice(index * 12, index * 12 + 12)),
+        Array.from({ length: Math.ceil(eventIds.length / detailBatchSize) }, (_, index) =>
+          eventIds.slice(index * detailBatchSize, index * detailBatchSize + detailBatchSize)
+        ),
         (chunk) => client.getEventBetOffers(chunk),
         { concurrency: 2 }
       );
@@ -313,7 +329,9 @@ export function createKtoCollector(bookmaker: KtoBookmakerConfig) {
       }
 
       summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+      });
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

@@ -3,7 +3,7 @@ import type { BetmgmBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
-import { normalizeForMatching, teamNameSimilarity, tokenSetSimilarity } from "../domain/matching/text-similarity.js";
+import { normalizeForMatching, teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetmgmClient, type BetmgmEvent, type BetmgmGroup, type BetmgmMarket, type BetmgmOutcome } from "../providers/betmgm.js";
@@ -86,81 +86,21 @@ function flattenGroups(group: BetmgmGroup, path: string[] = []): FlatGroup[] {
   return [{ ...group, path: currentPath }, ...(group.groups ?? []).flatMap((child) => flattenGroups(child, currentPath))];
 }
 
-function compact(value: unknown) {
-  return normalizeForMatching(value).replace(/\s+/g, "");
-}
-
-function translatedCountryTokens(country: string | null | undefined) {
-  const normalized = normalizeForMatching(country);
-  const aliases: Record<string, string[]> = {
-    brazil: ["brasil"],
-    germany: ["alemanha"],
-    spain: ["espanha"],
-    england: ["inglaterra"],
-    italy: ["italia"],
-    france: ["franca"],
-    world: ["clubes internacionais", "internacional"]
-  };
-
-  return aliases[normalized] ?? [normalized];
-}
-
-function countryScore(country: string | null | undefined, group: FlatGroup) {
-  const aliases = translatedCountryTokens(country);
-  if (!aliases.length || !aliases[0]) return 0.5;
-
-  const path = normalizeForMatching(group.path.join(" "));
-  if (aliases.some((alias) => path.includes(normalizeForMatching(alias)))) return 1;
-  if (normalizeForMatching(country) === "world" && path.includes("conmebol")) return 1;
-
-  return Math.max(...aliases.map((alias) => tokenSetSimilarity(alias, group.path.join(" "))));
-}
-
-function leagueScore(leagueName: string, group: FlatGroup) {
-  const leafName = group.name;
-  const pathName = group.path.join(" ");
-  const leafCompact = compact(leafName);
-  const leagueCompact = compact(leagueName);
-
-  if (leafCompact && leagueCompact && (leafCompact === leagueCompact || leafCompact.includes(leagueCompact) || leagueCompact.includes(leafCompact))) {
-    return 1;
-  }
-
-  return Math.max(tokenSetSimilarity(leagueName, leafName), tokenSetSimilarity(leagueName, pathName));
-}
-
-function selectGroupIds(fixtures: CanonicalFixture[], groups: BetmgmGroup[]) {
+function selectFootballGroupIds(groups: BetmgmGroup[]) {
   const football = groups.find((group) => normalizeForMatching(group.name) === "futebol");
   if (!football) return [];
 
-  const leaves = flattenGroups(football).filter((group) => !(group.groups ?? []).length && Number(group.eventCount ?? 0) > 0);
-  const leagues = [
-    ...new Map(
-      fixtures
-        .map((fixture) => fixtureLeague(fixture))
-        .filter((league): league is NonNullable<ReturnType<typeof fixtureLeague>> => Boolean(league))
-        .map((league) => [league.api_football_league_id, league])
-    ).values()
-  ];
+  return flattenGroups(football)
+    .filter((group) => !(group.groups ?? []).length && Number(group.eventCount ?? 0) > 0)
+    .map((group) => group.id);
+}
 
-  const selected = new Map<number, { group: FlatGroup; score: number; leagueName: string }>();
-
-  for (const league of leagues) {
-    const scored = leaves
-      .map((group) => {
-        const country = countryScore(league.country, group);
-        const leagueNameScore = leagueScore(league.name, group);
-        return { group, score: leagueNameScore * 0.75 + country * 0.25, leagueName: league.name, leagueNameScore, country };
-      })
-      .filter((item) => item.leagueNameScore >= 0.72 && item.country >= 0.72)
-      .sort((left, right) => right.score - left.score);
-
-    for (const item of scored.slice(0, 4)) {
-      selected.set(item.group.id, item);
-    }
+function chunks<T>(items: T[], size: number) {
+  const output: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    output.push(items.slice(index, index + size));
   }
-
-  return [...selected.values()];
+  return output;
 }
 
 function eventTeams(event: BetmgmEvent) {
@@ -334,13 +274,13 @@ export function createBetmgmCollector(bookmaker: BetmgmBookmakerConfig) {
 
     try {
       const groups = await client.getGroups();
-      const selectedGroups = selectGroupIds(fixtures, groups);
+      const selectedGroupIds = selectFootballGroupIds(groups);
       summary.groupsSeen = groups.length;
-      summary.groupsSelected = selectedGroups.length;
+      summary.groupsSelected = selectedGroupIds.length;
 
       const eventPages = await pMap(
-        selectedGroups,
-        async ({ group }) => client.getEventsByGroupIds([group.id]),
+        chunks(selectedGroupIds, 50),
+        async (groupIds) => client.getEventsByGroupIds(groupIds),
         { concurrency: 3 }
       );
 
@@ -376,7 +316,9 @@ export function createBetmgmCollector(bookmaker: BetmgmBookmakerConfig) {
       }
 
       summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+      });
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

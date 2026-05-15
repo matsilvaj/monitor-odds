@@ -1,7 +1,6 @@
 import pMap from "p-map";
 import type { AltenarBookmakerConfig } from "../config/bookmakers.js";
 import { env } from "../config/env.js";
-import { MVP_LEAGUES } from "../config/leagues.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
@@ -68,14 +67,13 @@ type CanonicalFixture = {
   starts_at: string;
 };
 
-async function getCanonicalFixtures(apiFootballLeagueId: number) {
+async function getCanonicalFixtures() {
   const now = new Date();
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2, 0, 0, 0, 0);
 
   const { data, error } = await supabase
     .from("fixtures")
-    .select("id,api_football_fixture_id,name,home_team,away_team,normalized_home_team,normalized_away_team,starts_at,leagues!inner(api_football_league_id)")
-    .eq("leagues.api_football_league_id", apiFootballLeagueId)
+    .select("id,api_football_fixture_id,name,home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
     .gt("starts_at", now.toISOString())
     .lt("starts_at", end.toISOString())
     .order("starts_at", { ascending: true });
@@ -204,70 +202,65 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
     await ensureBaseRows(bookmaker);
     const linksToSave: BookmakerLinkRow[] = [];
     const oddsToSave: OddRow[] = [];
+    const canonicalFixtures = await getCanonicalFixtures();
 
-    for (const league of MVP_LEAGUES) {
-      if (league.altenarChampId == null) continue;
-
-      summary.leagues += 1;
-      const canonicalFixtures = await getCanonicalFixtures(league.apiFootballLeagueId);
-      if (!canonicalFixtures.length) {
-        await log(bookmaker, "warn", "no canonical fixtures for league; run api-football sync first", { league: league.slug });
-        continue;
-      }
-
-      try {
-        const events = await client.getEvents(league.altenarChampId);
-        summary.eventsSeen += events.length;
-        const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event.startDate, canonicalFixtures));
-        summary.eventsInWindow += targetEvents.length;
-
-        await pMap(
-          targetEvents,
-          async (event) => {
-            try {
-              await sleep(env.COLLECT_DELAY_MS + Math.floor(Math.random() * 500));
-              const details = await client.getEventDetails(event.id);
-
-              const matched = matchFixture(details, canonicalFixtures);
-              if (!matched) {
-                summary.eventsUnmatched += 1;
-                await log(bookmaker, "warn", "bookmaker event did not match canonical fixture", {
-                  league: league.slug,
-                  eventId: event.id,
-                  eventName: event.name
-                });
-                return;
-              }
-
-              linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, details, matched.score));
-              oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, details, matched.orientation));
-
-              summary.eventsMatched += 1;
-              summary.eventsCollected += 1;
-            } catch (error) {
-              summary.errors += 1;
-              summary.lastError = errorMessage(error);
-              await log(bookmaker, "error", "event collection failed", {
-                league: league.slug,
-                eventId: event.id,
-                error: serializeError(error)
-              });
-            }
-          },
-          { concurrency: 4 }
-        );
-      } catch (error) {
-        summary.errors += 1;
-        summary.lastError = errorMessage(error);
-        await log(bookmaker, "error", "league collection failed", {
-          league: league.slug,
-          error: serializeError(error)
-        });
-      }
+    if (!canonicalFixtures.length) {
+      await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
+      return summary;
     }
 
     try {
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+      const events = await client.getFootballEvents();
+      summary.eventsSeen = events.length;
+      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event.startDate, canonicalFixtures));
+      summary.eventsInWindow = targetEvents.length;
+      summary.leagues = new Set(targetEvents.map((event) => event.champId).filter(Boolean)).size;
+
+      await pMap(
+        targetEvents,
+        async (event) => {
+          try {
+            await sleep(env.COLLECT_DELAY_MS + Math.floor(Math.random() * 500));
+            const details = await client.getEventDetails(event.id);
+
+            const matched = matchFixture(details, canonicalFixtures);
+            if (!matched) {
+              summary.eventsUnmatched += 1;
+              await log(bookmaker, "warn", "bookmaker event did not match canonical fixture", {
+                eventId: event.id,
+                eventName: event.name,
+                champId: event.champId
+              });
+              return;
+            }
+
+            linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, details, matched.score));
+            oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, details, matched.orientation));
+
+            summary.eventsMatched += 1;
+            summary.eventsCollected += 1;
+          } catch (error) {
+            summary.errors += 1;
+            summary.lastError = errorMessage(error);
+            await log(bookmaker, "error", "event collection failed", {
+              eventId: event.id,
+              champId: event.champId,
+              error: serializeError(error)
+            });
+          }
+        },
+        { concurrency: 4 }
+      );
+    } catch (error) {
+      summary.errors += 1;
+      summary.lastError = errorMessage(error);
+      await log(bookmaker, "error", "football collection failed", { error: serializeError(error) });
+    }
+
+    try {
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+        cleanupFixtureIds: canonicalFixtures.map((fixture) => fixture.id)
+      });
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

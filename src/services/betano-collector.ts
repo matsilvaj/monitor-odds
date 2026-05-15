@@ -28,11 +28,13 @@ type CanonicalFixture = {
         name: string;
         slug: string;
         api_football_league_id: number;
+        country: string | null;
       }
     | Array<{
         name: string;
         slug: string;
         api_football_league_id: number;
+        country: string | null;
       }>
     | null;
   home_team: string | null;
@@ -62,7 +64,7 @@ async function getCanonicalFixtures() {
 
   const { data, error } = await supabase
     .from("fixtures")
-    .select("id,api_football_fixture_id,name,league:leagues(name,slug,api_football_league_id),home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
+    .select("id,api_football_fixture_id,name,league:leagues(name,slug,api_football_league_id,country),home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
     .gt("starts_at", now.toISOString())
     .lt("starts_at", end.toISOString())
     .order("starts_at", { ascending: true });
@@ -119,11 +121,50 @@ function flattenLeagues(leagues: BetanoLeague[]) {
   return [...byUrl.values()];
 }
 
+function countryAliases(country: string | null | undefined) {
+  const normalized = normalizeForMatching(country);
+  const aliases: Record<string, string[]> = {
+    argentina: ["argentina"],
+    belgium: ["belgium", "belgica", "bélgica"],
+    brazil: ["brazil", "brasil"],
+    denmark: ["denmark", "dinamarca"],
+    england: ["england", "inglaterra"],
+    france: ["france", "franca", "frança"],
+    germany: ["germany", "alemanha"],
+    italy: ["italy", "italia", "itália"],
+    netherlands: ["netherlands", "holanda", "paises baixos", "países baixos"],
+    portugal: ["portugal"],
+    scotland: ["scotland", "escocia", "escócia"],
+    spain: ["spain", "espanha"],
+    turkey: ["turkey", "turquia"],
+    usa: ["usa", "eua", "estados unidos", "united states"],
+    world: []
+  };
+
+  return aliases[normalized] ?? [normalized];
+}
+
+function leagueRegionMatchesCountry(league: BetanoLeague, country: string | null | undefined) {
+  const aliases = countryAliases(country).map((alias) => normalizeForMatching(alias)).filter(Boolean);
+  if (!aliases.length) return false;
+
+  const region = normalizeForMatching(`${league.regionName ?? ""} ${league.regionCode ?? ""}`);
+  return aliases.some((alias) => region.includes(alias));
+}
+
 function selectLeagueUrls(fixtures: CanonicalFixture[], leagues: BetanoLeague[]) {
-  const canonicalLeagueNames = [...new Set(fixtures.map((fixture) => fixtureLeague(fixture)?.name).filter(Boolean) as string[])];
+  const canonicalLeagues = [
+    ...new Map(
+      fixtures
+        .map((fixture) => fixtureLeague(fixture))
+        .filter((league): league is NonNullable<ReturnType<typeof fixtureLeague>> => Boolean(league))
+        .map((league) => [league.api_football_league_id, league])
+    ).values()
+  ];
   const selected = new Map<string, { league: BetanoLeague; score: number; canonicalName: string }>();
 
-  for (const canonicalName of canonicalLeagueNames) {
+  for (const canonicalLeague of canonicalLeagues) {
+    const canonicalName = canonicalLeague.name;
     const scored = leagues
       .map((league) => ({ league, score: leagueScore(canonicalName, league), canonicalName }))
       .sort((left, right) => right.score - left.score);
@@ -135,6 +176,10 @@ function selectLeagueUrls(fixtures: CanonicalFixture[], leagues: BetanoLeague[])
 
     if (!strongMatches.length && scored[0]?.score >= 0.62) {
       selected.set(scored[0].league.url, scored[0]);
+    }
+
+    for (const league of leagues.filter((item) => leagueRegionMatchesCountry(item, canonicalLeague.country))) {
+      selected.set(league.url, { league, score: 0.5, canonicalName });
     }
   }
 
@@ -317,7 +362,16 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
       const footballPage = await client.getFootballPage();
       const leagues = flattenLeagues([
         ...(footballPage.data?.topLeagues ?? []),
-        ...(footballPage.data?.dropdownList ?? []).flatMap((region) => region.leagues ?? [])
+        ...(footballPage.data?.dropdownList ?? []).flatMap((region) => region.leagues ?? []),
+        ...(footballPage.data?.regionGroups ?? []).flatMap((group) =>
+          (group.regions ?? []).flatMap((region) =>
+            (region.leagues ?? []).map((league) => ({
+              ...league,
+              regionName: league.regionName ?? region.name,
+              regionCode: league.regionCode ?? region.regionCode
+            }))
+          )
+        )
       ]);
       const selectedLeagues = selectLeagueUrls(fixtures, leagues);
       summary.leaguesSeen = leagues.length;
@@ -375,7 +429,9 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
         { concurrency: 2 }
       );
 
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave);
+      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+      });
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);
