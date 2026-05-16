@@ -50,7 +50,7 @@ function parseOptions(rawArgs: string[]): BookmakerCollectOptions {
 }
 
 if (!slug) {
-  console.error("Informe a casa: npm run collect:bookmaker -- esportiva");
+  console.error("Informe a casa: npm run collect:bookmaker esportiva");
   process.exitCode = 1;
 } else {
   const bookmaker = BOOKMAKER_COLLECTORS.find((item) => item.slug === slug);

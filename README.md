@@ -2,6 +2,10 @@
 
 MVP API para monitoramento simplificado de odds pre-jogo.
 
+## Requisitos
+
+Veja [REQUIREMENTS.md](./REQUIREMENTS.md) para preparar Node, npm, Supabase, API-Football, Chrome e `.env` em um PC novo.
+
 ## Seguranca operacional
 
 Este projeto usa dois niveis de acesso ao Supabase:
