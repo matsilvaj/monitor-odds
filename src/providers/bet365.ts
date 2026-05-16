@@ -362,6 +362,67 @@ export class Bet365BrowserClient {
   ) {}
 
   async start() {
+    if (process.env.NODE_ENV === "production") {
+      await this.startAdsPowerBrowser();
+      return;
+    }
+
+    await this.startLocalChromeBrowser();
+  }
+
+  async stop() {
+    if (!this.browser || this.config.keepBrowserOpen) return;
+
+    if (process.env.NODE_ENV === "production") {
+      await this.stopAdsPowerBrowser();
+      return;
+    }
+
+    await this.stopLocalChromeBrowser();
+  }
+
+  private async startAdsPowerBrowser() {
+    const profileId = "k1cl0m4a";
+    await this.logger("info", "Iniciando...", { profileId });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:50325/api/v1/browser/start?user_id=${profileId}`);
+      const data = (await response.json()) as any;
+
+      if (data.code !== 0 || !data.data.ws.puppeteer) {
+        throw new Error(`Falha ao iniciar o AdsPower: ${JSON.stringify(data)}`);
+      }
+
+      const wsEndpoint = data.data.ws.puppeteer;
+      await this.logger("info", "Conectando Playwright ao AdsPower", { wsEndpoint });
+
+      this.browser = await chromium.connectOverCDP(wsEndpoint);
+      this.context = this.browser.contexts()[0] ?? null;
+
+      if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegacao");
+
+      this.page = await this.context.newPage();
+      this.page.setDefaultTimeout(this.config.navigationTimeoutMs);
+      this.page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
+    } catch (error) {
+      await this.logger("error", "Erro ao conectar", { error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+  }
+
+  private async stopAdsPowerBrowser() {
+    await this.logger("info", "Desconectando");
+
+    await this.browser?.close().catch(() => {});
+    await fetch("http://127.0.0.1:50325/api/v1/browser/stop?user_id=k1cl0m4a").catch(() => {});
+
+    this.browser = null;
+    this.context = null;
+    this.page = null;
+    this.chromeProcess = null;
+  }
+
+  private async startLocalChromeBrowser() {
     const profileDir = path.resolve(this.config.chromeProfileDir);
     await mkdir(profileDir, { recursive: true });
     const chromePath = findChromeExecutable(this.config.chromeExecutablePath);
@@ -411,10 +472,9 @@ export class Bet365BrowserClient {
     this.page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
   }
 
-  async stop() {
-    if (!this.browser || this.config.keepBrowserOpen) return;
+  private async stopLocalChromeBrowser() {
     await this.logger("info", "fechando Chrome da bet365");
-    await this.browser.close();
+    await this.browser?.close();
     this.chromeProcess?.kill();
     this.browser = null;
     this.context = null;
