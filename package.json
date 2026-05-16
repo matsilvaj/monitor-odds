@@ -20,6 +20,7 @@
     "sync:odds": "tsx src/jobs/sync-odds.ts",
     "collect": "tsx src/jobs/collect-bookmaker.ts",
     "collect:bookmaker": "tsx src/jobs/collect-bookmaker.ts",
+    "fechar:coleta": "tsx src/jobs/close-collection.ts",
     "sync:all": "tsx src/jobs/sync-all.ts",
     "sync:watch": "tsx src/jobs/sync-watch.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
