@@ -195,6 +195,12 @@ export class ApostabetClient {
       engine: this.config.engine,
       timeoutMs: 15_000,
       maxRetries: 1
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message.startsWith("HTTP 404 ")) {
+        return [];
+      }
+
+      throw error;
     });
 
     return sports.flatMap((sport) =>

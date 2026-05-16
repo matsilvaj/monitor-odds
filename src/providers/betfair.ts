@@ -155,6 +155,12 @@ export class BetfairClient {
       },
       timeoutMs: 15_000,
       maxRetries: 1
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message.startsWith("HTTP 404 ")) {
+        return {} as SearchResponse;
+      }
+
+      throw error;
     });
 
     return (data.data?.Search?.results ?? []).filter((result) => result?.__typename === "EventView" && result.sportevent?.sport?.sportId === 1);

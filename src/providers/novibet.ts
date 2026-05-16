@@ -125,6 +125,12 @@ export class NovibetClient {
       },
       timeoutMs: 15_000,
       maxRetries: 1
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message.startsWith("HTTP 404 ")) {
+        return [];
+      }
+
+      throw error;
     });
 
     return data.flatMap((group) => (group.categorySysname === "EVENT_HISTORY" ? group.documents ?? [] : []));

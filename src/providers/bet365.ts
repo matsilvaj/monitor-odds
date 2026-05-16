@@ -205,6 +205,8 @@ function leagueCompetitionTerms(leagueName: string, country: string | null) {
     "france ligue 1": ["France Ligue 1", "Ligue 1"],
     "italy serie a": ["Italy Serie A", "Serie A"],
     "germany bundesliga": ["Germany Bundesliga I", "Germany Bundesliga", "Bundesliga I", "Bundesliga"],
+    "germany 2 bundesliga": ["Germany Bundesliga II", "Germany 2. Bundesliga", "2. Bundesliga"],
+    "2 bundesliga": ["Germany Bundesliga II", "Germany 2. Bundesliga", "2. Bundesliga"],
     "portugal primeira liga": ["Portugal Primeira Liga", "Primeira Liga"],
     "belgium belgian pro league": ["Belgium First Division A", "Belgian First Division A"],
     "belgium pro league": ["Belgium First Division A", "Belgian First Division A"],

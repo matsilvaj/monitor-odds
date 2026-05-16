@@ -21,6 +21,7 @@ export const MVP_LEAGUES: LeagueConfig[] = [
   { slug: "brasileirao-serie-b", name: "Brasileirao Serie B", apiFootballLeagueId: 72 },
   { slug: "copa-do-brasil", name: "Copa do Brasil", apiFootballLeagueId: 73 },
   { slug: "bundesliga", name: "Bundesliga", apiFootballLeagueId: 78, altenarChampId: 2950 },
+  { slug: "2-bundesliga", name: "2. Bundesliga", apiFootballLeagueId: 79 },
   { slug: "dfb-pokal", name: "DFB Pokal", apiFootballLeagueId: 81 },
   { slug: "eredivisie", name: "Eredivisie", apiFootballLeagueId: 88 },
   { slug: "knvb-beker", name: "KNVB Beker", apiFootballLeagueId: 90 },

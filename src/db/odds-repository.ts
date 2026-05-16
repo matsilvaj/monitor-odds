@@ -1,5 +1,8 @@
 import { supabase } from "./supabase.js";
 
+const DEFAULT_BATCH_SIZE = 200;
+const DELETE_FIXTURE_BATCH_SIZE = 50;
+
 export type BookmakerLinkRow = {
   bookmaker_slug: string;
   external_event_id: string | number;
@@ -33,6 +36,15 @@ export type OddRow = {
   updated_at: string;
 };
 
+function chunks<T>(items: T[], size: number) {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    result.push(items.slice(index, index + size));
+  }
+
+  return result;
+}
+
 export class OddsRepository {
   static async saveAll(
     bookmakerSlug: string,
@@ -40,44 +52,56 @@ export class OddsRepository {
     odds: OddRow[],
     options: { marketCodes?: string[]; cleanupFixtureIds?: string[] } = {}
   ) {
+    const saveStartedAt = new Date().toISOString();
     const fixtureIds = [...new Set(options.cleanupFixtureIds?.length ? options.cleanupFixtureIds : links.map((link) => link.fixture_id))];
     const marketCodes = options.marketCodes?.length ? options.marketCodes : ["1X2"];
+    const linksToSave = links.map((link) => ({ ...link, updated_at: saveStartedAt }));
+    const oddsToSave = odds.map((odd) => ({ ...odd, updated_at: saveStartedAt }));
 
-    if (fixtureIds.length) {
-      const { error: deleteOddsError } = await supabase
-        .from("odds")
-        .delete()
-        .eq("bookmaker_slug", bookmakerSlug)
-        .in("market_code", marketCodes)
-        .in("fixture_id", fixtureIds);
+    for (const linkBatch of chunks(linksToSave, DEFAULT_BATCH_SIZE)) {
+      const { error: linksError } = await supabase.from("bookmaker_event_links").upsert(linkBatch, {
+        onConflict: "bookmaker_slug,external_event_id"
+      });
 
-      if (deleteOddsError) throw deleteOddsError;
-
-      const { error: deleteLinksError } = await supabase.from("bookmaker_event_links").delete().eq("bookmaker_slug", bookmakerSlug).in("fixture_id", fixtureIds);
-      if (deleteLinksError) throw deleteLinksError;
+      if (linksError) throw linksError;
     }
-
-    if (!links.length) return 0;
-
-    const { error: linksError } = await supabase.from("bookmaker_event_links").upsert(links, {
-      onConflict: "bookmaker_slug,external_event_id"
-    });
-
-    if (linksError) throw linksError;
-
-    if (!odds.length) return 0;
 
     const uniqueOdds = [
       ...new Map(
-        odds.map((row) => [`${row.fixture_id}:${row.bookmaker_slug}:${row.market_code}:${row.selection}:${row.pa_category}:${row.source_odd_id}`, row])
+        oddsToSave.map((row) => [`${row.fixture_id}:${row.bookmaker_slug}:${row.market_code}:${row.selection}:${row.pa_category}:${row.source_odd_id}`, row])
       ).values()
     ];
 
-    const { error: oddsError } = await supabase.from("odds").upsert(uniqueOdds, {
-      onConflict: "fixture_id,bookmaker_slug,market_code,selection,pa_category,source_odd_id"
-    });
+    for (const oddBatch of chunks(uniqueOdds, DEFAULT_BATCH_SIZE)) {
+      const { error: oddsError } = await supabase.from("odds").upsert(oddBatch, {
+        onConflict: "fixture_id,bookmaker_slug,market_code,selection,pa_category,source_odd_id"
+      });
 
-    if (oddsError) throw oddsError;
+      if (oddsError) throw oddsError;
+    }
+
+    if (fixtureIds.length) {
+      for (const fixtureIdBatch of chunks(fixtureIds, DELETE_FIXTURE_BATCH_SIZE)) {
+        const { error: deleteOddsError } = await supabase
+          .from("odds")
+          .delete()
+          .eq("bookmaker_slug", bookmakerSlug)
+          .in("market_code", marketCodes)
+          .in("fixture_id", fixtureIdBatch)
+          .lt("updated_at", saveStartedAt);
+
+        if (deleteOddsError) throw deleteOddsError;
+
+        const { error: deleteLinksError } = await supabase
+          .from("bookmaker_event_links")
+          .delete()
+          .eq("bookmaker_slug", bookmakerSlug)
+          .in("fixture_id", fixtureIdBatch)
+          .lt("updated_at", saveStartedAt);
+        if (deleteLinksError) throw deleteLinksError;
+      }
+    }
+
     return uniqueOdds.length;
   }
 }

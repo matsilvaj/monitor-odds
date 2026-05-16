@@ -1,6 +1,7 @@
 import pMap from "p-map";
 import type { ApostabetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
+import { cleanupFixtureIdsForRun } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeForMatching, teamNameSimilarity, tokenSetSimilarity } from "../domain/matching/text-similarity.js";
@@ -263,7 +264,12 @@ function numericId(value: unknown) {
   return Number(digits.slice(0, 15));
 }
 
-async function searchMissingEvents(client: ApostabetClient, fixtures: CanonicalFixture[], alreadyMatchedFixtureIds: Set<string>) {
+async function searchMissingEvents(
+  client: ApostabetClient,
+  fixtures: CanonicalFixture[],
+  alreadyMatchedFixtureIds: Set<string>,
+  onError: (message: string, context: Record<string, unknown>) => Promise<void>
+) {
   const eventsById = new Map<string, ApostabetEvent>();
   const missingFixtures = fixtures.filter((fixture) => !alreadyMatchedFixtureIds.has(fixture.id));
 
@@ -273,7 +279,17 @@ async function searchMissingEvents(client: ApostabetClient, fixtures: CanonicalF
       const seenSearchEventIds = new Set<string>();
 
       for (const keyword of searchKeywords(fixture)) {
-        const searchResults = await client.searchEvents(keyword);
+        let searchResults;
+        try {
+          searchResults = await client.searchEvents(keyword);
+        } catch (error) {
+          await onError("apostabet event search failed", {
+            fixtureId: fixture.id,
+            keyword,
+            error: serializeError(error)
+          });
+          continue;
+        }
 
         for (const searchEvent of searchResults) {
           if (!searchEvent.matchId || seenSearchEventIds.has(searchEvent.matchId) || searchEvent.status !== 0) continue;
@@ -294,7 +310,19 @@ async function searchMissingEvents(client: ApostabetClient, fixtures: CanonicalF
           const matched = findBestMatch(candidate, [fixture]);
           if (!matched) continue;
 
-          const detailEvent = await client.getEventWithPrincipalMarkets(searchEvent.matchId);
+          let detailEvent;
+          try {
+            detailEvent = await client.getEventWithPrincipalMarkets(searchEvent.matchId);
+          } catch (error) {
+            await onError("apostabet event detail collection failed", {
+              fixtureId: fixture.id,
+              eventId: searchEvent.matchId,
+              keyword,
+              error: serializeError(error)
+            });
+            continue;
+          }
+
           eventsById.set(detailEvent.id, detailEvent);
           return;
         }
@@ -433,7 +461,11 @@ export function createApostabetCollector(bookmaker: ApostabetBookmakerConfig) {
         }
       }
 
-      const fallbackEvents = await searchMissingEvents(client, fixtures, new Set(bestMatchByFixtureId.keys()));
+      const fallbackEvents = await searchMissingEvents(client, fixtures, new Set(bestMatchByFixtureId.keys()), async (message, context) => {
+        summary.errors += 1;
+        summary.lastError = errorMessage(context.error);
+        await log(bookmaker, "error", message, context);
+      });
       for (const event of fallbackEvents) {
         const matched = findBestMatch(event, fixtures);
         if (!matched) continue;
@@ -456,7 +488,7 @@ export function createApostabetCollector(bookmaker: ApostabetBookmakerConfig) {
 
       summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
       summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
-        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+        cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
       });
     } catch (error) {
       summary.errors += 1;

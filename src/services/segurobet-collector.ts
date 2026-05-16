@@ -1,6 +1,7 @@
 import pMap from "p-map";
 import type { SegurobetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
+import { cleanupFixtureIdsForRun } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeForMatching } from "../domain/matching/text-similarity.js";
@@ -272,7 +273,20 @@ export function createSegurobetCollector(bookmaker: SegurobetBookmakerConfig) {
       const terms = [...new Set(fixtures.flatMap(searchTermsForFixture))];
       summary.searchTerms = terms.length;
 
-      const searchResults = await pMap(terms, (term) => client.searchGames(term), { concurrency: 4 });
+      const searchResults = await pMap(
+        terms,
+        async (term) => {
+          try {
+            return await client.searchGames(term);
+          } catch (error) {
+            summary.errors += 1;
+            summary.lastError = errorMessage(error);
+            await log(bookmaker, "error", "segurobet search failed", { term, error: serializeError(error) });
+            return [];
+          }
+        },
+        { concurrency: 2 }
+      );
       const events = [...new Map(searchResults.flat().map((event) => [event.id, event])).values()];
       summary.eventsSeen = events.length;
 
@@ -306,7 +320,7 @@ export function createSegurobetCollector(bookmaker: SegurobetBookmakerConfig) {
 
       summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
       summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
-        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+        cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
       });
     } catch (error) {
       summary.errors += 1;

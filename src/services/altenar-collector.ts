@@ -2,6 +2,7 @@ import pMap from "p-map";
 import type { AltenarBookmakerConfig } from "../config/bookmakers.js";
 import { env } from "../config/env.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
+import { cleanupFixtureIdsForRun } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/normalize.js";
@@ -259,7 +260,7 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
 
     try {
       summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
-        cleanupFixtureIds: canonicalFixtures.map((fixture) => fixture.id)
+        cleanupFixtureIds: cleanupFixtureIdsForRun(canonicalFixtures, linksToSave, summary.errors)
       });
     } catch (error) {
       summary.errors += 1;

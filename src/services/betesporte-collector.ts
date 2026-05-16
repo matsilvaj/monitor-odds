@@ -1,12 +1,15 @@
 import pMap from "p-map";
 import type { BetesporteBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
+import { cleanupFixtureIdsForRun } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetesporteClient, type BetesporteEvent, type BetesporteMarket, type BetesporteOption } from "../providers/betesporte.js";
 import { errorMessage } from "../utils/errors.js";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -293,6 +296,7 @@ export function createBetesporteCollector(bookmaker: BetesporteBookmakerConfig) 
         [...bestMatchByFixtureId.values()],
         async ({ event, matched }) => {
           try {
+            await sleep(300 + Math.floor(Math.random() * 700));
             const detailEvent = await client.getEventDetail(event);
             linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, detailEvent, matched.score));
             oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, detailEvent, matched.orientation));
@@ -304,12 +308,12 @@ export function createBetesporteCollector(bookmaker: BetesporteBookmakerConfig) 
             await log(bookmaker, "error", "betesporte event detail collection failed", { eventId: event.id, error: serializeError(error) });
           }
         },
-        { concurrency: 2 }
+        { concurrency: 1 }
       );
 
       summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
       summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
-        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+        cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
       });
     } catch (error) {
       summary.errors += 1;

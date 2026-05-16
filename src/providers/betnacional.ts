@@ -127,6 +127,12 @@ export class BetnacionalClient {
       engine: this.config.engine,
       timeoutMs: 15_000,
       maxRetries: 1
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message.startsWith("HTTP 404 ")) {
+        return {} as SearchResponse;
+      }
+
+      throw error;
     });
 
     return (data.results ?? []).map((result) => result.data).filter((event): event is BetnacionalSearchEvent => event?.sport_id === 1 && event.event_status_id === 0);

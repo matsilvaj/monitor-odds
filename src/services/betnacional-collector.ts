@@ -1,5 +1,6 @@
 import type { BetnacionalBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
+import { cleanupFixtureIdsForRun } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { Selection } from "../domain/normalize.js";
@@ -325,8 +326,20 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
         const seenEventIds = new Set<number>();
 
         for (const keyword of searchKeywords(fixture)) {
-          const searchResults = await client.searchEvents(keyword);
-          summary.searches += 1;
+          let searchResults;
+          try {
+            searchResults = await client.searchEvents(keyword);
+            summary.searches += 1;
+          } catch (error) {
+            summary.errors += 1;
+            summary.lastError = errorMessage(error);
+            await log(bookmaker, "error", "betnacional event search failed", {
+              fixtureId: fixture.id,
+              keyword,
+              error: serializeError(error)
+            });
+            continue;
+          }
 
           for (const searchResult of searchResults) {
             if (!searchResult.event_id || seenEventIds.has(searchResult.event_id)) continue;
@@ -351,7 +364,21 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
 
             if (!result.matched) continue;
 
-            const detail = await client.getEventMoneylineOdds(searchResult.event_id);
+            let detail;
+            try {
+              detail = await client.getEventMoneylineOdds(searchResult.event_id);
+            } catch (error) {
+              summary.errors += 1;
+              summary.lastError = errorMessage(error);
+              await log(bookmaker, "error", "betnacional event detail collection failed", {
+                fixtureId: fixture.id,
+                eventId: searchResult.event_id,
+                keyword,
+                error: serializeError(error)
+              });
+              continue;
+            }
+
             const fallbackEvent = eventFromSearchResult(searchResult, detail.odds ?? []);
             if (!fallbackEvent) continue;
 
@@ -377,7 +404,7 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
 
       summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
       summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
-        cleanupFixtureIds: fixtures.map((fixture) => fixture.id)
+        cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
       });
     } catch (error) {
       summary.errors += 1;

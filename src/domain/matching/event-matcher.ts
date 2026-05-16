@@ -19,6 +19,7 @@ export type EventMatchResult = {
 };
 
 const MAX_TIME_DIFF_MS = 20 * 60 * 1000;
+const MIN_TEAM_SCORE = 0.65;
 
 function timestamp(value: string | number | Date) {
   if (value instanceof Date) return value.getTime();
@@ -72,6 +73,17 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
   const timeScore = 1 - diffMs / MAX_TIME_DIFF_MS;
   const score = timeScore * 0.4 + teamScore * 0.6;
   const threshold = timeScore >= 0.95 ? 0.58 : timeScore >= 0.85 ? 0.64 : 0.72;
+
+  if (teamScore < MIN_TEAM_SCORE) {
+    return {
+      matched: false,
+      score,
+      timeScore,
+      teamScore,
+      orientation,
+      reason: "team-score-rejected"
+    };
+  }
 
   return {
     matched: score >= threshold,

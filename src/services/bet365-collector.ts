@@ -74,6 +74,7 @@ type CollectionState = {
   next_run_at: string | null;
   lease_until: string | null;
   last_finished_at: string | null;
+  summary: unknown;
 };
 
 type Bet365LeagueLinkRow = {
@@ -117,6 +118,7 @@ const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   71: [{ label: "Brasileirao Serie A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E88369731/G40/" }],
   72: [{ label: "Brasileirao Serie B", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E102584281/G40/" }],
   78: [{ label: "Bundesliga", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E120439499/G40/H%5E1/" }],
+  79: [{ label: "2. Bundesliga", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E120439701/G40/" }],
   81: [{ label: "DFB Pokal", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E132422263/G40/" }],
   88: [{ label: "Eredivisie", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E92212336/G40/" }],
   94: [{ label: "Portugal Primeira Liga", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E121080183/G40/" }],
@@ -193,6 +195,16 @@ function targetDateKeys(date: BookmakerCollectOptions["date"]) {
   throw new Error(`Data invalida para coleta: ${date}. Use today, tomorrow ou YYYY-MM-DD.`);
 }
 
+function stateTargetDateKeys(summary: unknown) {
+  if (!summary || typeof summary !== "object") return [];
+  const value = (summary as { targetDateKeys?: unknown }).targetDateKeys;
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function dateWindowChanged(currentDateKeys: string[], previousDateKeys: string[]) {
+  return Boolean(previousDateKeys.length) && (currentDateKeys.length !== previousDateKeys.length || currentDateKeys.some((key, index) => key !== previousDateKeys[index]));
+}
+
 async function persistLog(bookmaker: Bet365BookmakerConfig, level: "info" | "warn" | "error", message: string, context: Record<string, unknown> = {}) {
   await supabase.from("collection_logs").insert({
     bookmaker_slug: bookmaker.slug,
@@ -232,6 +244,9 @@ function formatBet365ConsoleLine(level: "info" | "warn" | "error", message: stri
   }
   if (message === "bet365 pulada pelo sync:watch porque ainda nao chegou a proxima janela") {
     return `[bet365] Coleta pulada: aguardando próxima janela${context.nextRunAt ? ` (${contextValue(context, "nextRunAt")})` : ""}.`;
+  }
+  if (message === "janela de datas da bet365 mudou; executando apesar da proxima janela") {
+    return `[bet365] Janela de datas mudou (${contextValue(context, "previousDateKeys")} -> ${contextValue(context, "currentDateKeys")}); coletando agora.`;
   }
   if (message === "bet365 pulada porque outra coleta ainda esta rodando") return "[bet365] Coleta pulada: outra execução ainda está em andamento.";
   if (message === "ligas selecionadas para navegacao na bet365") {
@@ -333,7 +348,7 @@ async function ensureBaseRows(bookmaker: Bet365BookmakerConfig) {
 async function getCollectionState(bookmaker: Bet365BookmakerConfig) {
   const { data, error } = await supabase
     .from("bookmaker_collection_state")
-    .select("status,next_run_at,lease_until,last_finished_at")
+    .select("status,next_run_at,lease_until,last_finished_at,summary")
     .eq("bookmaker_slug", bookmaker.slug)
     .maybeSingle();
 
@@ -1035,7 +1050,9 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
 
     const state = await getCollectionState(bookmaker);
     const nextRunMs = state?.next_run_at ? new Date(state.next_run_at).getTime() : NaN;
-    if (trigger === "watch" && !force && Number.isFinite(nextRunMs) && nextRunMs > Date.now()) {
+    const previousDateKeys = stateTargetDateKeys(state?.summary);
+    const hasNewDateWindow = dateWindowChanged(dateKeys, previousDateKeys);
+    if (trigger === "watch" && !force && Number.isFinite(nextRunMs) && nextRunMs > Date.now() && !hasNewDateWindow) {
       summary.skipped = true;
       summary.skipReason = "cadence-not-due";
       summary.nextRunAt = state?.next_run_at ?? null;
@@ -1045,6 +1062,14 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
         fixturesTargeted: summary.fixturesTargeted
       });
       return summary;
+    }
+
+    if (trigger === "watch" && !force && Number.isFinite(nextRunMs) && nextRunMs > Date.now() && hasNewDateWindow) {
+      await logger("info", "janela de datas da bet365 mudou; executando apesar da proxima janela", {
+        previousDateKeys,
+        currentDateKeys: dateKeys,
+        nextRunAt: state?.next_run_at ?? null
+      });
     }
 
     const lockAcquired = await acquireCollectionLock(bookmaker);
