@@ -10,6 +10,4 @@ const clientOptions = {
 
 export const supabaseAdmin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, clientOptions);
 
-export const supabasePublic = createClient(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY ?? env.SUPABASE_SERVICE_ROLE_KEY, clientOptions);
-
 export const supabase = supabaseAdmin;

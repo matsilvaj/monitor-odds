@@ -20,7 +20,7 @@ Use `.nvmrc` ou `.node-version` para selecionar a mesma versao do Node quando o 
 
 ## Contas e acessos
 
-- Projeto Supabase com URL, publishable key, service role key e senha/URL do banco.
+- Projeto Supabase com URL, service role key e senha/URL do banco.
 - Chave da API-Football / API-SPORTS.
 - Permissao para aplicar `supabase/schema.sql` no banco.
 
@@ -35,7 +35,7 @@ npm ci
 
 3. Crie o arquivo `.env` a partir de `.env.example` e preencha os valores sensiveis.
 
-4. Aplique o schema/policies no Supabase:
+4. Aplique o schema/policies/views no Supabase:
 
 ```bash
 npm run db:setup
@@ -48,7 +48,7 @@ npm run typecheck
 npm run build
 ```
 
-6. Rode a API local:
+6. Rode o coletor local:
 
 ```bash
 npm run dev
@@ -58,21 +58,17 @@ npm run dev
 
 O `.env.example` deve espelhar o `.env` real, mas sem segredos preenchidos.
 
-- `PORT`
 - `NODE_ENV`
-- `CORS_ORIGINS`
-- `SUPABASE_DB_PASSWORD`
 - `SUPABASE_URL`
-- `SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_DB_URL`
 - `API_FOOTBALL_KEY`
-- `INTERNAL_COLLECT_TOKEN`
-- `PUBLIC_API_TOKEN`
+
+Para aplicar o schema, `SUPABASE_DB_PASSWORD` tambem pode ser usado quando a URL do banco vier com placeholder de senha.
 
 ## Overrides opcionais
 
-O codigo ja tem defaults para API host, rate limit, API-Football base URL/timezone/TTL, Altenar, retencao de logs e bet365. So adicione essas variaveis ao `.env` quando precisar sobrescrever algo localmente.
+O codigo ja tem defaults para API-Football base URL/timezone/TTL, Altenar, retencao de logs e bet365. So adicione essas variaveis ao `.env` quando precisar sobrescrever algo localmente.
 
 Para a bet365, o projeto tenta encontrar o Chrome instalado automaticamente. Se o Chrome estiver em um caminho fora do padrao, use `BET365_CHROME_EXECUTABLE` temporariamente no `.env` local.
 
@@ -80,7 +76,7 @@ Para a bet365, o projeto tenta encontrar o Chrome instalado automaticamente. Se 
 
 ```bash
 npm run dev
-npm run dev:all
+npm run sync:watch
 npm run sync:fixtures
 npm run sync:odds
 npm run sync

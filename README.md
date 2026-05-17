@@ -1,6 +1,8 @@
 # monitor-odds
 
-MVP API para monitoramento simplificado de odds pre-jogo.
+Coletor de odds pre-jogo com persistencia no Supabase.
+
+Este projeto nao expoe API HTTP. Ele sincroniza fixtures via API-Football, coleta odds nas casas configuradas, normaliza os dados e salva tudo no banco. Outros projetos, como o `lz`, devem consumir os dados lendo as views publicas do Supabase.
 
 ## Requisitos
 
@@ -8,36 +10,49 @@ Veja [REQUIREMENTS.md](./REQUIREMENTS.md) para preparar Node, npm, Supabase, API
 
 ## Seguranca operacional
 
-Este projeto usa dois niveis de acesso ao Supabase:
+Este projeto usa acesso de servidor ao Supabase:
 
-- `SUPABASE_PUBLISHABLE_KEY`: usada pelas rotas publicas da API. Essa chave respeita RLS.
-- `SUPABASE_SERVICE_ROLE_KEY`: usada apenas no servidor, jobs e collectors. Nunca exponha essa chave no frontend.
+- `SUPABASE_SERVICE_ROLE_KEY`: usada apenas pelos jobs e collectors. Nunca exponha essa chave no frontend.
+- `SUPABASE_DB_URL`: usada pelo comando `npm run db:setup` para aplicar `supabase/schema.sql`.
 
-Em producao, configure obrigatoriamente:
+Em producao, configure:
 
 ```bash
 NODE_ENV=production
 SUPABASE_URL=...
-SUPABASE_PUBLISHABLE_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
-INTERNAL_COLLECT_TOKEN=... # minimo 32 caracteres
-PUBLIC_API_TOKEN=... # minimo 32 caracteres
-CORS_ORIGINS=https://lzcommunity.com
+SUPABASE_DB_URL=...
+API_FOOTBALL_KEY=...
 ```
 
-Depois de alterar `supabase/schema.sql`, aplique as politicas e grants no banco:
+Depois de alterar `supabase/schema.sql`, aplique o schema, views, policies e grants no banco:
 
 ```bash
 npm run db:setup
 ```
 
-As rotas publicas devem usar somente o cliente Supabase publico. Em producao, chamadas para `/v1/*` tambem precisam enviar `Authorization: Bearer $PUBLIC_API_TOKEN` ou `x-public-api-token: $PUBLIC_API_TOKEN`.
+## Execucao
 
-O modo mais seguro para `lzcommunity.com` e chamar esta API a partir de um backend/proxy do proprio site, mantendo `PUBLIC_API_TOKEN` fora do navegador. Jobs, collectors e rotas `/internal/*` podem usar o cliente admin, sempre protegidos por `x-internal-token`.
+Para rodar o ciclo continuo de coleta:
+
+```bash
+npm run dev
+```
+
+Comandos uteis:
+
+```bash
+npm run sync:watch
+npm run sync
+npm run sync:fixtures
+npm run sync:odds
+npm run collect:bookmaker bet365
+npm run fechar:coleta bet365
+```
 
 ## Integracao com o lz
 
-O caminho recomendado e o `lz` ler o Supabase deste projeto pelo servidor do Next.js, sem usar a API HTTP do `monitor-odds`.
+O `lz` deve ler o Supabase deste projeto pelo servidor do Next.js, sem chamar uma API HTTP do `monitor-odds`.
 
 Use somente as views publicas:
 

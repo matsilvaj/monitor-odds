@@ -270,7 +270,7 @@ left join odds o on o.fixture_id = f.id
 where f.starts_at > now()
   and l.enabled = true;
 
--- Security baseline: public API clients get read-only access to safe columns only.
+-- Security baseline: external Supabase consumers get read-only access to safe columns only.
 -- Server-side jobs keep using the Supabase secret/service role, which bypasses RLS.
 grant usage on schema public to anon, authenticated;
 

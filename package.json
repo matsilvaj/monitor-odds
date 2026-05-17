@@ -1,8 +1,8 @@
 {
   "name": "monitor-odds",
   "version": "1.0.0",
-  "description": "MVP API para monitoramento simplificado de odds pre-jogo.",
-  "main": "dist/index.js",
+  "description": "Coletor de odds pre-jogo com persistencia no Supabase.",
+  "main": "dist/jobs/sync-watch.js",
   "type": "module",
   "packageManager": "npm@11.11.0",
   "engines": {
@@ -10,9 +10,8 @@
     "npm": ">=11 <12"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "dev:all": "node scripts/dev-all.cjs",
-    "start": "node dist/index.js",
+    "dev": "tsx src/jobs/sync-watch.ts",
+    "start": "node dist/jobs/sync-watch.js",
     "build": "tsc -p tsconfig.json",
     "db:setup": "tsx src/jobs/db-setup.ts",
     "sync": "npm run sync:all",
@@ -29,12 +28,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@fastify/cors": "^11.2.0",
-    "@fastify/helmet": "^13.0.2",
-    "@fastify/rate-limit": "^10.3.0",
     "@supabase/supabase-js": "^2.105.3",
     "dotenv": "^17.4.2",
-    "fastify": "^5.8.5",
     "got-scraping": "^4.2.1",
     "p-map": "^7.0.4",
     "pg": "^8.20.0",
