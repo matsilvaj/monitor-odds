@@ -402,8 +402,7 @@ export class Bet365BrowserClient {
       if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegacao");
 
       this.page = await this.context.newPage();
-      this.page.setDefaultTimeout(this.config.navigationTimeoutMs);
-      this.page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
+      await this.configurePage(this.page);
     } catch (error) {
       await this.logger("error", "Erro ao conectar", { error: error instanceof Error ? error.message : String(error) });
       throw error;
@@ -468,8 +467,22 @@ export class Bet365BrowserClient {
 
     if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegacao");
     this.page = await this.context.newPage();
-    this.page.setDefaultTimeout(this.config.navigationTimeoutMs);
-    this.page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
+    await this.configurePage(this.page);
+  }
+
+  private async configurePage(page: Page) {
+    page.setDefaultTimeout(this.config.navigationTimeoutMs);
+    page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
+
+    await page.route("**/*", (route) => {
+      const resourceType = route.request().resourceType();
+
+      if (["image", "media", "font", "stylesheet"].includes(resourceType)) {
+        return route.abort().catch(() => undefined);
+      }
+
+      return route.continue().catch(() => undefined);
+    });
   }
 
   private async stopLocalChromeBrowser() {
