@@ -108,6 +108,19 @@ export type Bet7kBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type BetfastBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "betfast";
+  baseUrl: string;
+  apiBaseUrl: string;
+  referer: string;
+  companyId: number;
+  language: string;
+  engine: BookmakerHttpEngine;
+};
+
 export type KtoBookmakerConfig = {
   slug: string;
   name: string;
@@ -249,6 +262,7 @@ export type BookmakerConfig =
   | BetanoBookmakerConfig
   | ApostabetBookmakerConfig
   | Bet7kBookmakerConfig
+  | BetfastBookmakerConfig
   | KtoBookmakerConfig
   | Bet365BookmakerConfig
   | BetfairBookmakerConfig
@@ -315,6 +329,17 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://jogodeouro.bet.br",
     referer: "https://jogodeouro.bet.br/",
+    engine: "fetch"
+  },
+  {
+    slug: "vupibet",
+    name: "VupiBet",
+    enabled: true,
+    provider: "altenar",
+    integration: "vupi",
+    baseUrl: env.ALTENAR_BASE_URL,
+    origin: "https://www.vupi.bet.br",
+    referer: "https://www.vupi.bet.br/",
     engine: "fetch"
   },
   {
@@ -414,6 +439,28 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     apiBaseUrl: "https://prod20350-kbet-152319626.fssb.io/",
     referer: "https://prod20350-kbet-152319626.fssb.io/br-pt/spbkv4?operatorToken=logout",
     engine: "got-scraping"
+  },
+  {
+    slug: "betvip",
+    name: "BetVIP",
+    enabled: true,
+    provider: "bet7k",
+    baseUrl: "https://betvip.bet.br/",
+    apiBaseUrl: "https://prod20524.fssb.io/",
+    referer: "https://prod20524.fssb.io/br-pt/spbkv4?operatorToken=logout",
+    engine: "got-scraping"
+  },
+  {
+    slug: "betfast",
+    name: "BetFast",
+    enabled: true,
+    provider: "betfast",
+    baseUrl: "https://betfast.bet.br/",
+    apiBaseUrl: "https://analytics-sp.googleserv.tech/",
+    referer: "https://betfast.bet.br/",
+    companyId: 99,
+    language: "br",
+    engine: "fetch"
   },
   {
     slug: "kto",
