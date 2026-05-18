@@ -59,6 +59,11 @@ Use somente as views publicas:
 - `public_odds_feed`: feed limpo de jogos futuros e odds.
 - `public_odds_feed_status`: ultima atualizacao e contadores do feed.
 
+O feed publico tambem expoe metadados visuais da liga:
+
+- `league_logo_url`: logo da competicao vindo da API-Football.
+- `league_country_flag_url`: bandeira/pais da competicao vindo da API-Football, quando disponivel.
+
 Nao use tabelas internas no `lz`, especialmente `collection_logs`, `bookmaker_event_snapshots`, `bookmaker_payload_cache`, `bookmaker_collection_state`, `bookmaker_event_links` e `bookmaker_league_links`.
 
 As envs esperadas no `lz` devem ser server-only:

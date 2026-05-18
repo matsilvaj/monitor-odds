@@ -67,7 +67,7 @@ type MeridianLogger = (level: "info" | "warn" | "error", message: string, contex
 
 const MINUTE_MS = 60 * 1000;
 const MERIDIAN_LOCK_LEASE_MS = 45 * MINUTE_MS;
-const STARTED_GRACE_MS = 60 * 1000;
+const MIN_PREMATCH_MS = 10 * MINUTE_MS;
 
 const MERIDIAN_SEEDED_LEAGUE_URLS: Record<number, Array<{ label: string; sourceUrl: string }>> = {
   1: [{ label: "Copa do Mundo 2026", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327" }],
@@ -116,15 +116,16 @@ function timestamp(value: string | number | Date) {
 }
 
 function isPrematch(startsAt: string | number | Date, now = new Date()) {
-  return timestamp(startsAt) > now.getTime() + STARTED_GRACE_MS;
+  return timestamp(startsAt) >= now.getTime() + MIN_PREMATCH_MS;
 }
 
 function refreshIntervalMsForStart(startsAt: string | number | Date, now = new Date()) {
   const minutes = (timestamp(startsAt) - now.getTime()) / MINUTE_MS;
-  if (minutes <= 120) return 10 * MINUTE_MS;
-  if (minutes <= 360) return 30 * MINUTE_MS;
-  if (minutes <= 24 * 60) return 60 * MINUTE_MS;
-  return 4 * 60 * MINUTE_MS;
+  if (minutes <= 30) return 5 * MINUTE_MS;
+  if (minutes <= 60) return 15 * MINUTE_MS;
+  if (minutes <= 6 * 60) return 60 * MINUTE_MS;
+  if (minutes <= 24 * 60) return 3 * 60 * MINUTE_MS;
+  return 6 * 60 * MINUTE_MS;
 }
 
 function formatDuration(ms: number) {

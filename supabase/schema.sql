@@ -14,12 +14,19 @@ create table if not exists leagues (
   name text not null,
   slug text not null unique,
   country text,
+  logo_url text,
+  country_flag_url text,
   season integer,
   enabled boolean not null default true,
+  deleted_at timestamptz,
   raw jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table leagues add column if not exists logo_url text;
+alter table leagues add column if not exists country_flag_url text;
+alter table leagues add column if not exists deleted_at timestamptz;
 
 create table if not exists teams (
   id uuid primary key default gen_random_uuid(),
@@ -269,7 +276,9 @@ select
   o.price,
   o.pa_category,
   o.confidence_score,
-  o.updated_at as odd_updated_at
+  o.updated_at as odd_updated_at,
+  l.logo_url as league_logo_url,
+  l.country_flag_url as league_country_flag_url
 from fixtures f
 join leagues l on l.id = f.league_id
 join odds o on o.fixture_id = f.id
@@ -368,7 +377,7 @@ create policy public_read_fixture_sync_status
   using (source = 'api-football');
 
 grant select (slug, name) on bookmakers to anon, authenticated;
-grant select (id, api_football_league_id, name, slug, country, season, enabled) on leagues to anon, authenticated;
+grant select (id, api_football_league_id, name, slug, country, logo_url, country_flag_url, season, enabled) on leagues to anon, authenticated;
 grant select (
   id,
   api_football_fixture_id,

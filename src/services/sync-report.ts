@@ -246,8 +246,11 @@ export function formatFixtureSyncSummary(summary: unknown) {
   const snapshotsDeleted = numberField(record, ["startedSnapshotsDeleted"]);
   const errors = numberField(record, ["errors"]);
   const apiCalls = numberField(record, ["apiCalls"]);
+  const leaguesSynced = numberField(record, ["leaguesSynced"]);
+  const leaguesMissing = numberField(record, ["leaguesMissing"]);
+  const leaguesDisabled = numberField(record, ["leaguesDisabled"]);
   const skippedByCache = numberField(record, ["skippedByCache"]);
   const skippedByExistingData = numberField(record, ["skippedByExistingData"]);
 
-  return `[sync] API-Football: ${countText(seen, "jogo lido", "jogos lidos")} | ${kept} salvos | ${deleted} removidos pela API | ${startedDeleted} iniciados removidos | ${snapshotsDeleted} snapshots removidos | ${skippedByCache} pulos por cache | ${skippedByExistingData} pulos por dados existentes | ${apiCalls} chamadas | ${errors} erros.`;
+  return `[sync] API-Football: ${leaguesSynced} ligas salvas | ${leaguesDisabled} ligas desativadas | ${leaguesMissing} ligas nao encontradas | ${countText(seen, "jogo lido", "jogos lidos")} | ${kept} salvos | ${deleted} removidos pela API | ${startedDeleted} iniciados removidos | ${snapshotsDeleted} snapshots removidos | ${skippedByCache} pulos por cache | ${skippedByExistingData} pulos por dados existentes | ${apiCalls} chamadas | ${errors} erros.`;
 }
