@@ -243,7 +243,6 @@ export type TradeballBookmakerConfig = {
   enabled: boolean;
   provider: "tradeball";
   baseUrl: string;
-  apiBaseUrl: string;
   dballBaseUrl: string;
   referer: string;
   sportId: string;
@@ -586,10 +585,9 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     name: "Tradeball",
     enabled: true,
     provider: "tradeball",
-    baseUrl: "https://mexchange2.bolsadeaposta.bet.br/",
-    apiBaseUrl: "https://mexchange-api.bolsadeaposta.bet.br/",
+    baseUrl: "https://bolsadeaposta.bet.br/tradeball/",
     dballBaseUrl: "https://tradeball.bolsadeaposta.bet.br/",
-    referer: "https://mexchange2.bolsadeaposta.bet.br/exchange/sport/soccer",
+    referer: "https://tradeball.bolsadeaposta.bet.br/dballTradingFeed",
     sportId: "15",
     perPage: 50,
     maxPages: 5,

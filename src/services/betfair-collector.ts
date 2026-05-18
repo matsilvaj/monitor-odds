@@ -9,6 +9,7 @@ import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetfairClient, type BetfairMarket, type BetfairMarketWithContext, type BetfairRunner, type BetfairSearchResult } from "../providers/betfair.js";
 import { errorMessage } from "../utils/errors.js";
+import { getSavedBookmakerEventLinks, objectRaw } from "./saved-bookmaker-events.js";
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -217,6 +218,9 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
       eventsMatched: 0,
       eventsUnmatched: 0,
       oddsUpserted: 0,
+      eventsCollectedDirect: 0,
+      eventsCollectedByDiscovery: 0,
+      directEventsFailed: 0,
       errors: 0,
       lastError: null as string | null
     };
@@ -241,10 +245,59 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
     }
 
     try {
+      const linksToSave: BookmakerLinkRow[] = [];
+      const oddsToSave: OddRow[] = [];
+      const fixturesById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
+      const savedLinks = await getSavedBookmakerEventLinks(bookmaker.slug, fixtures.map((fixture) => fixture.id));
+      const collectedFixtureIds = new Set<string>();
+
+      await pMap(
+        [...savedLinks.values()],
+        async (link) => {
+          const fixture = fixturesById.get(link.fixture_id);
+          const event = objectRaw(link.raw) as BetfairSearchResult;
+          const eventId = eventIdFromUrn(event.urn) ?? Number(link.external_event_id);
+          if (!fixture || !event.url || !Number.isFinite(eventId) || eventId <= 0) return;
+
+          try {
+            const matched = matchSearchResult(fixture, event);
+            if (!matched.matched) throw new Error(`saved event no longer matches fixture ${fixture.name}`);
+
+            const markets = await client.getMatchOdds(eventId, event.url);
+            const odds = buildMoneylineOdds(bookmaker, fixture.id, event, markets, matched.orientation);
+            if (!odds.length) throw new Error(`saved event has no 1X2 odds: ${eventId}`);
+
+            linksToSave.push(buildBookmakerLink(bookmaker, fixture.id, event, matched.score));
+            oddsToSave.push(...odds);
+            collectedFixtureIds.add(fixture.id);
+            summary.eventsCollected += 1;
+            summary.eventsMatched += 1;
+            summary.eventsCollectedDirect += 1;
+          } catch (error) {
+            summary.directEventsFailed += 1;
+            await log(bookmaker, "warn", "betfair saved event direct refresh failed; falling back to search", {
+              fixtureId: fixture.id,
+              eventId,
+              error: serializeError(error)
+            });
+          }
+        },
+        { concurrency: 2 }
+      );
+
+      const discoveryFixtures = fixtures.filter((fixture) => !collectedFixtureIds.has(fixture.id));
+      if (!discoveryFixtures.length) {
+        summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+          cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
+        });
+        await log(bookmaker, "info", "betfair collection finished", summary);
+        return summary;
+      }
+
       const bestByFixtureId = new Map<string, { fixture: CanonicalFixture; event: BetfairSearchResult; score: number; orientation: EventMatchResult["orientation"] }>();
 
       await pMap(
-        fixtures,
+        discoveryFixtures,
         async (fixture) => {
           try {
             const results: BetfairSearchResult[] = [];
@@ -273,10 +326,7 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
         { concurrency: 2 }
       );
 
-      summary.eventsUnmatched = fixtures.length - bestByFixtureId.size;
-
-      const linksToSave: BookmakerLinkRow[] = [];
-      const oddsToSave: OddRow[] = [];
+      summary.eventsUnmatched = discoveryFixtures.length - bestByFixtureId.size;
 
       await pMap(
         [...bestByFixtureId.values()],
@@ -290,6 +340,7 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
             oddsToSave.push(...buildMoneylineOdds(bookmaker, fixture.id, event, markets, orientation));
             summary.eventsCollected += 1;
             summary.eventsMatched += 1;
+            summary.eventsCollectedByDiscovery += 1;
           } catch (error) {
             summary.errors += 1;
             summary.lastError = errorMessage(error);

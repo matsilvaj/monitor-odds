@@ -9,6 +9,7 @@ import { normalizeName } from "../domain/text.js";
 import { BetfastClient, type BetfastEvent, type BetfastOdd } from "../providers/betfast.js";
 import { errorMessage } from "../utils/errors.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
+import { getSavedBookmakerEventLinks, objectRaw, type SavedBookmakerEventLink } from "./saved-bookmaker-events.js";
 
 type CanonicalFixture = {
   id: string;
@@ -138,6 +139,22 @@ function compactEventRaw(event: BetfastEvent) {
   };
 }
 
+function eventFromSavedLink(link: SavedBookmakerEventLink): BetfastEvent | null {
+  const raw = objectRaw(link.raw);
+  const id = Number(raw.id ?? link.external_event_id);
+  if (!Number.isFinite(id) || id <= 0) return null;
+
+  return {
+    ...(raw as BetfastEvent),
+    id,
+    homeTeam: typeof raw.homeTeam === "string" ? raw.homeTeam : null,
+    awayTeam: typeof raw.awayTeam === "string" ? raw.awayTeam : null,
+    startsAt: typeof raw.startsAt === "string" ? raw.startsAt : "",
+    leagueName: typeof raw.leagueName === "string" ? raw.leagueName : null,
+    regionName: typeof raw.regionName === "string" ? raw.regionName : null
+  };
+}
+
 function buildBookmakerLink(bookmaker: BetfastBookmakerConfig, fixtureId: string, event: BetfastEvent, confidenceScore: number): BookmakerLinkRow {
   return {
     bookmaker_slug: bookmaker.slug,
@@ -219,6 +236,9 @@ export function createBetfastCollector(bookmaker: BetfastBookmakerConfig) {
       eventsMatched: 0,
       eventsUnmatched: 0,
       oddsUpserted: 0,
+      eventsCollectedDirect: 0,
+      eventsCollectedByDiscovery: 0,
+      directEventsFailed: 0,
       errors: 0,
       lastError: null as string | null
     };
@@ -243,16 +263,64 @@ export function createBetfastCollector(bookmaker: BetfastBookmakerConfig) {
     }
 
     try {
+      const linksToSave: BookmakerLinkRow[] = [];
+      const oddsToSave: OddRow[] = [];
+      const fixturesById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
+      const savedLinks = await getSavedBookmakerEventLinks(bookmaker.slug, fixtures.map((fixture) => fixture.id));
+      const collectedFixtureIds = new Set<string>();
+
+      await pMap(
+        [...savedLinks.values()],
+        async (link) => {
+          const fixture = fixturesById.get(link.fixture_id);
+          const savedEvent = eventFromSavedLink(link);
+          if (!fixture || !savedEvent) return;
+
+          try {
+            const detailEvent = await client.getEventDetails(savedEvent);
+            const matched = findBestMatch(detailEvent, [fixture]);
+            if (!matched) throw new Error(`saved event no longer matches fixture ${fixture.name}`);
+
+            const odds = buildMoneylineOdds(bookmaker, matched.fixture.id, detailEvent, matched.orientation);
+            if (!odds.length) throw new Error(`saved event has no 1X2 odds: ${detailEvent.id}`);
+
+            linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, detailEvent, matched.score));
+            oddsToSave.push(...odds);
+            collectedFixtureIds.add(matched.fixture.id);
+            summary.eventsCollected += 1;
+            summary.eventsMatched += 1;
+            summary.eventsCollectedDirect += 1;
+          } catch (error) {
+            summary.directEventsFailed += 1;
+            await log(bookmaker, "warn", "betfast saved event direct refresh failed; falling back to discovery", {
+              fixtureId: fixture.id,
+              eventId: savedEvent.id,
+              error: serializeError(error)
+            });
+          }
+        },
+        { concurrency: 4 }
+      );
+
+      const discoveryFixtures = fixtures.filter((fixture) => !collectedFixtureIds.has(fixture.id));
+      if (!discoveryFixtures.length) {
+        summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+          cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
+        });
+        await log(bookmaker, "info", "betfast collection finished", summary);
+        return summary;
+      }
+
       const events = await client.getFootballEvents();
       summary.eventsSeen = events.length;
 
-      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, fixtures));
+      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, discoveryFixtures));
       summary.eventsInWindow = targetEvents.length;
 
       const bestMatchByFixtureId = new Map<string, { event: BetfastEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, fixtures);
+        const matched = findBestMatch(event, discoveryFixtures);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;
@@ -264,8 +332,6 @@ export function createBetfastCollector(bookmaker: BetfastBookmakerConfig) {
         }
       }
 
-      const linksToSave: BookmakerLinkRow[] = [];
-      const oddsToSave: OddRow[] = [];
       const matchedEvents = Array.from(bestMatchByFixtureId.values());
       const detailsByEventId = new Map(
         await pMap(
@@ -290,9 +356,10 @@ export function createBetfastCollector(bookmaker: BetfastBookmakerConfig) {
         oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, detailedEvent, matched.orientation));
         summary.eventsCollected += 1;
         summary.eventsMatched += 1;
+        summary.eventsCollectedByDiscovery += 1;
       }
 
-      summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
+      summary.eventsUnmatched += discoveryFixtures.length - bestMatchByFixtureId.size;
       summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
         cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
       });

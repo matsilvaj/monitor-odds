@@ -10,6 +10,7 @@ import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetanoClient, type BetanoEvent, type BetanoLeague, type BetanoMarket, type BetanoOffer, type BetanoSelection } from "../providers/betano.js";
 import { errorMessage } from "../utils/errors.js";
+import { getSavedBookmakerEventLinks, objectRaw, relativePathFromUrl, type SavedBookmakerEventLink } from "./saved-bookmaker-events.js";
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -296,6 +297,18 @@ function buildBookmakerLink(bookmaker: BetanoBookmakerConfig, fixtureId: string,
   };
 }
 
+function eventFromSavedLink(bookmaker: BetanoBookmakerConfig, link: SavedBookmakerEventLink): BetanoEvent | null {
+  const raw = objectRaw(link.raw);
+  const url = typeof raw.url === "string" ? raw.url : relativePathFromUrl(link.source_url, bookmaker.baseUrl);
+  if (!url) return null;
+
+  return {
+    ...(raw as BetanoEvent),
+    id: String(link.external_event_id),
+    url
+  };
+}
+
 function buildMoneylineOdds(
   bookmaker: BetanoBookmakerConfig,
   fixtureId: string,
@@ -348,6 +361,9 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
       eventsCollected: 0,
       eventsMatched: 0,
       eventsUnmatched: 0,
+      eventsCollectedDirect: 0,
+      eventsCollectedByDiscovery: 0,
+      directEventsFailed: 0,
       oddsUpserted: 0,
       errors: 0,
       lastError: null as string | null
@@ -373,6 +389,67 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
     }
 
     try {
+      const linksToSave: BookmakerLinkRow[] = [];
+      const oddsToSave: OddRow[] = [];
+      const fixturesById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
+      const savedLinks = await getSavedBookmakerEventLinks(
+        bookmaker.slug,
+        fixtures.map((fixture) => fixture.id)
+      );
+      const collectedFixtureIds = new Set<string>();
+
+      await pMap(
+        [...savedLinks.values()],
+        async (link) => {
+          const fixture = fixturesById.get(link.fixture_id);
+          const savedEvent = eventFromSavedLink(bookmaker, link);
+          if (!fixture || !savedEvent) return;
+
+          try {
+            const details = await client.getEventDetails(savedEvent);
+            const detailEvent = details.data?.event ?? savedEvent;
+            const matched = findBestMatch(detailEvent, [fixture]);
+            if (!matched) {
+              summary.directEventsFailed += 1;
+              await log(bookmaker, "warn", "saved event link did not match canonical fixture; falling back to discovery", {
+                fixtureId: fixture.id,
+                eventId: link.external_event_id
+              });
+              return;
+            }
+
+            const markets = [...(details.data?.markets ?? []), ...(detailEvent.markets ?? [])];
+            const marketOffers = details.data?.marketOffersData?.marketOffers ?? {};
+            const odds = buildMoneylineOdds(bookmaker, matched.fixture.id, detailEvent, markets, marketOffers, matched.orientation);
+            if (!odds.length) throw new Error(`saved event has no 1X2 odds: ${detailEvent.id}`);
+
+            linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, detailEvent, matched.score));
+            oddsToSave.push(...odds);
+            collectedFixtureIds.add(fixture.id);
+            summary.eventsCollected += 1;
+            summary.eventsMatched += 1;
+            summary.eventsCollectedDirect += 1;
+          } catch (error) {
+            summary.directEventsFailed += 1;
+            await log(bookmaker, "warn", "saved event direct collection failed; falling back to discovery", {
+              fixtureId: fixture.id,
+              eventId: link.external_event_id,
+              error: serializeError(error)
+            });
+          }
+        },
+        { concurrency: 2 }
+      );
+
+      const discoveryFixtures = fixtures.filter((fixture) => !collectedFixtureIds.has(fixture.id));
+      if (!discoveryFixtures.length) {
+        summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+          cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
+        });
+        await log(bookmaker, "info", "betano collection finished", summary);
+        return summary;
+      }
+
       const footballPage = await client.getFootballPage();
       const leagues = flattenLeagues([
         ...(footballPage.data?.topLeagues ?? []),
@@ -387,7 +464,7 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
           )
         )
       ]);
-      const selectedLeagues = selectLeagueUrls(fixtures, leagues);
+      const selectedLeagues = selectLeagueUrls(discoveryFixtures, leagues);
       summary.leaguesSeen = leagues.length;
       summary.leaguesSelected = selectedLeagues.length;
 
@@ -400,13 +477,13 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
       const events = leaguePages.flatMap((page) => page.data?.blocks?.flatMap((block) => block.events ?? []) ?? []);
       summary.eventsSeen = events.length;
 
-      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, fixtures));
+      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, discoveryFixtures));
       summary.eventsInWindow = targetEvents.length;
 
       const bestMatchByFixtureId = new Map<string, { event: BetanoEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, fixtures);
+        const matched = findBestMatch(event, discoveryFixtures);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;
@@ -417,9 +494,6 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
           bestMatchByFixtureId.set(matched.fixture.id, { event, matched });
         }
       }
-
-      const linksToSave: BookmakerLinkRow[] = [];
-      const oddsToSave: OddRow[] = [];
 
       await pMap(
         [...bestMatchByFixtureId.values()],
@@ -434,6 +508,7 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
             oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, detailEvent, markets, marketOffers, matched.orientation));
             summary.eventsCollected += 1;
             summary.eventsMatched += 1;
+            summary.eventsCollectedByDiscovery += 1;
           } catch (error) {
             summary.errors += 1;
             summary.lastError = errorMessage(error);
@@ -443,6 +518,7 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
         { concurrency: 2 }
       );
 
+      summary.eventsUnmatched += discoveryFixtures.length - bestMatchByFixtureId.size;
       summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
         cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
       });

@@ -63,6 +63,7 @@ O feed publico tambem expoe metadados visuais da liga:
 
 - `league_logo_url`: logo da competicao vindo da API-Football.
 - `league_country_flag_url`: bandeira/pais da competicao vindo da API-Football, quando disponivel.
+- `bookmaker_event_url`: link do evento na casa referente aquela odd.
 
 Nao use tabelas internas no `lz`, especialmente `collection_logs`, `bookmaker_event_snapshots`, `bookmaker_payload_cache`, `bookmaker_collection_state`, `bookmaker_event_links` e `bookmaker_league_links`.
 

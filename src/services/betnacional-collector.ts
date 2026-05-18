@@ -1,4 +1,5 @@
 import type { BookmakerCollectOptions } from "../bookmakers/types.js";
+import pMap from "p-map";
 import type { BetnacionalBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
@@ -8,6 +9,7 @@ import type { Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetnacionalClient, type BetnacionalOdd, type BetnacionalSearchEvent } from "../providers/betnacional.js";
 import { errorMessage } from "../utils/errors.js";
+import { getSavedBookmakerEventLinks, objectRaw } from "./saved-bookmaker-events.js";
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -140,6 +142,38 @@ function eventFromSearchResult(searchEvent: BetnacionalSearchEvent, odds: Betnac
       date_start: searchEvent.date_start ?? odd.date_start,
       tournament_name: searchEvent.tournament_name ?? odd.tournament_name,
       category_name: searchEvent.category_name ?? odd.category_name
+    }))
+  };
+}
+
+function eventFromSavedDetail(raw: Record<string, unknown>, eventId: number, detail: Awaited<ReturnType<BetnacionalClient["getEventMoneylineOdds"]>>): BetnacionalEvent | null {
+  const detailEvent = (detail.events ?? []).find((event) => Number(event.id ?? event.event_id) === eventId);
+  const home = typeof detailEvent?.home === "string" ? detailEvent.home : typeof raw.home === "string" ? raw.home : null;
+  const away = typeof detailEvent?.away === "string" ? detailEvent.away : typeof raw.away === "string" ? raw.away : null;
+  const startsAt =
+    typeof detailEvent?.date_start === "string"
+      ? parseSearchDateTime(detailEvent.date_start).toISOString()
+      : typeof raw.startsAt === "string"
+        ? new Date(raw.startsAt).toISOString()
+        : "";
+
+  if (!home || !away || !startsAt) return null;
+
+  return {
+    eventId,
+    home,
+    away,
+    startsAt,
+    tournamentName: typeof detailEvent?.tournament_name === "string" ? detailEvent.tournament_name : typeof raw.tournamentName === "string" ? raw.tournamentName : null,
+    categoryName: typeof detailEvent?.category_name === "string" ? detailEvent.category_name : typeof raw.categoryName === "string" ? raw.categoryName : null,
+    odds: (detail.odds ?? []).map((odd) => ({
+      ...odd,
+      event_id: eventId,
+      home: home ?? odd.home,
+      away: away ?? odd.away,
+      date_start: startsAt,
+      tournament_name: (typeof detailEvent?.tournament_name === "string" ? detailEvent.tournament_name : raw.tournamentName) as string | undefined,
+      category_name: (typeof detailEvent?.category_name === "string" ? detailEvent.category_name : raw.categoryName) as string | undefined
     }))
   };
 }
@@ -288,6 +322,9 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
       eventsMatched: 0,
       eventsUnmatched: 0,
       oddsUpserted: 0,
+      eventsCollectedDirect: 0,
+      eventsCollectedByDiscovery: 0,
+      directEventsFailed: 0,
       errors: 0,
       lastError: null as string | null
     };
@@ -312,17 +349,68 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
     }
 
     try {
+      const linksToSave: BookmakerLinkRow[] = [];
+      const oddsToSave: OddRow[] = [];
+      const fixturesById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
+      const savedLinks = await getSavedBookmakerEventLinks(bookmaker.slug, fixtures.map((fixture) => fixture.id));
+      const collectedFixtureIds = new Set<string>();
+
+      await pMap(
+        [...savedLinks.values()],
+        async (link) => {
+          const fixture = fixturesById.get(link.fixture_id);
+          const eventId = Number(link.external_event_id);
+          if (!fixture || !Number.isFinite(eventId) || eventId <= 0) return;
+
+          try {
+            const detail = await client.getEventMoneylineOdds(eventId);
+            const event = eventFromSavedDetail(objectRaw(link.raw), eventId, detail);
+            if (!event) throw new Error(`saved event detail missing for ${eventId}`);
+
+            const matched = findBestMatch(event, [fixture]);
+            if (!matched) throw new Error(`saved event no longer matches fixture ${fixture.name}`);
+
+            const odds = buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation);
+            if (!odds.length) throw new Error(`saved event has no 1X2 odds: ${eventId}`);
+
+            linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
+            oddsToSave.push(...odds);
+            collectedFixtureIds.add(matched.fixture.id);
+            summary.eventsCollected += 1;
+            summary.eventsMatched += 1;
+            summary.eventsCollectedDirect += 1;
+          } catch (error) {
+            summary.directEventsFailed += 1;
+            await log(bookmaker, "warn", "betnacional saved event direct refresh failed; falling back to discovery", {
+              fixtureId: fixture.id,
+              eventId,
+              error: serializeError(error)
+            });
+          }
+        },
+        { concurrency: 4 }
+      );
+
+      const discoveryFixtures = fixtures.filter((fixture) => !collectedFixtureIds.has(fixture.id));
+      if (!discoveryFixtures.length) {
+        summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+          cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
+        });
+        await log(bookmaker, "info", "betnacional collection finished", summary);
+        return summary;
+      }
+
       const odds = await client.getMoneylineOdds();
       const events = groupEvents(odds);
       summary.eventsSeen = events.length;
 
-      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, fixtures));
+      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, discoveryFixtures));
       summary.eventsInWindow = targetEvents.length;
 
       const bestMatchByFixtureId = new Map<string, { event: BetnacionalEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, fixtures);
+        const matched = findBestMatch(event, discoveryFixtures);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;
@@ -334,7 +422,7 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
         }
       }
 
-      const missingFixtures = fixtures.filter((fixture) => !bestMatchByFixtureId.has(fixture.id));
+      const missingFixtures = discoveryFixtures.filter((fixture) => !bestMatchByFixtureId.has(fixture.id));
       for (const fixture of missingFixtures) {
         const seenEventIds = new Set<number>();
 
@@ -405,17 +493,15 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
         }
       }
 
-      const linksToSave: BookmakerLinkRow[] = [];
-      const oddsToSave: OddRow[] = [];
-
       for (const { event, matched } of bestMatchByFixtureId.values()) {
         linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
         oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
         summary.eventsCollected += 1;
         summary.eventsMatched += 1;
+        summary.eventsCollectedByDiscovery += 1;
       }
 
-      summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
+      summary.eventsUnmatched += discoveryFixtures.length - bestMatchByFixtureId.size;
       summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
         cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
       });

@@ -9,6 +9,7 @@ import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { NovibetClient, type NovibetBetItem, type NovibetEventDetails, type NovibetMarket, type NovibetSearchDocument } from "../providers/novibet.js";
 import { errorMessage } from "../utils/errors.js";
+import { getSavedBookmakerEventLinks, objectRaw } from "./saved-bookmaker-events.js";
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -89,6 +90,25 @@ function matchDocument(fixture: CanonicalFixture, document: NovibetSearchDocumen
       homeTeam,
       awayTeam,
       leagueName: document.pathLocations?.map((item) => item.caption).join(" ") ?? null
+    }
+  );
+}
+
+function matchEventDetails(fixture: CanonicalFixture, event: NovibetEventDetails) {
+  const { homeTeam, awayTeam } = eventTeams(event);
+  return matchEvents(
+    {
+      id: fixture.id,
+      startsAt: fixture.starts_at,
+      homeTeam: fixture.home_team,
+      awayTeam: fixture.away_team
+    },
+    {
+      id: event.betContextId,
+      startsAt: event.startTimeUTC ?? "",
+      homeTeam,
+      awayTeam,
+      leagueName: event.pathLocations?.map((item) => item.caption).join(" ") ?? null
     }
   );
 }
@@ -245,6 +265,9 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
       eventsCollected: 0,
       eventsMatched: 0,
       eventsUnmatched: 0,
+      eventsCollectedDirect: 0,
+      eventsCollectedByDiscovery: 0,
+      directEventsFailed: 0,
       oddsUpserted: 0,
       errors: 0,
       lastError: null as string | null
@@ -270,10 +293,68 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
     }
 
     try {
+      const linksToSave: BookmakerLinkRow[] = [];
+      const oddsToSave: OddRow[] = [];
+      const fixturesById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
+      const savedLinks = await getSavedBookmakerEventLinks(
+        bookmaker.slug,
+        fixtures.map((fixture) => fixture.id)
+      );
+      const collectedFixtureIds = new Set<string>();
+
+      await pMap(
+        [...savedLinks.values()],
+        async (link) => {
+          const fixture = fixturesById.get(link.fixture_id);
+          if (!fixture) return;
+
+          try {
+            const raw = objectRaw(link.raw);
+            const event = await client.getEventDetails(Number(link.external_event_id), typeof raw.path === "string" ? raw.path : null);
+            const result = matchEventDetails(fixture, event);
+            if (!result.matched) {
+              summary.directEventsFailed += 1;
+              await log(bookmaker, "warn", "saved event link did not match canonical fixture; falling back to search", {
+                fixtureId: fixture.id,
+                eventId: link.external_event_id
+              });
+              return;
+            }
+
+            const odds = buildMoneylineOdds(bookmaker, fixture.id, event, result.orientation);
+            if (!odds.length) throw new Error(`saved event has no 1X2 odds: ${event.betContextId}`);
+
+            linksToSave.push(buildBookmakerLink(bookmaker, fixture.id, event, result.score));
+            oddsToSave.push(...odds);
+            collectedFixtureIds.add(fixture.id);
+            summary.eventsCollected += 1;
+            summary.eventsMatched += 1;
+            summary.eventsCollectedDirect += 1;
+          } catch (error) {
+            summary.directEventsFailed += 1;
+            await log(bookmaker, "warn", "saved event direct collection failed; falling back to search", {
+              fixtureId: fixture.id,
+              eventId: link.external_event_id,
+              error: serializeError(error)
+            });
+          }
+        },
+        { concurrency: 2 }
+      );
+
+      const discoveryFixtures = fixtures.filter((fixture) => !collectedFixtureIds.has(fixture.id));
+      if (!discoveryFixtures.length) {
+        summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+          cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
+        });
+        await log(bookmaker, "info", "novibet collection finished", summary);
+        return summary;
+      }
+
       const bestByFixtureId = new Map<string, { fixture: CanonicalFixture; document: NovibetSearchDocument; score: number; orientation: EventMatchResult["orientation"] }>();
 
       await pMap(
-        fixtures,
+        discoveryFixtures,
         async (fixture) => {
           try {
             for (const keyword of searchKeywords(fixture)) {
@@ -302,10 +383,7 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
         { concurrency: 2 }
       );
 
-      summary.eventsUnmatched = fixtures.length - bestByFixtureId.size;
-
-      const linksToSave: BookmakerLinkRow[] = [];
-      const oddsToSave: OddRow[] = [];
+      summary.eventsUnmatched = discoveryFixtures.length - bestByFixtureId.size;
 
       await pMap(
         [...bestByFixtureId.values()],
@@ -316,6 +394,7 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
             oddsToSave.push(...buildMoneylineOdds(bookmaker, fixture.id, event, orientation));
             summary.eventsCollected += 1;
             summary.eventsMatched += 1;
+            summary.eventsCollectedByDiscovery += 1;
           } catch (error) {
             summary.errors += 1;
             summary.lastError = errorMessage(error);

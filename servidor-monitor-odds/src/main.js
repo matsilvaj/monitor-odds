@@ -282,6 +282,36 @@ async function stopMonitor() {
   return { ok: true };
 }
 
+async function releaseCollection(bookmakerSlug) {
+  if (!supabase) return { ok: false, error: "Supabase nao configurado." };
+
+  const slug = String(bookmakerSlug ?? "").trim().toLowerCase();
+  if (!["bet365", "meridianbet"].includes(slug)) {
+    return { ok: false, error: "Coleta desconhecida para liberar." };
+  }
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("bookmaker_collection_state")
+    .update({
+      status: "idle",
+      lease_until: null,
+      last_error: null,
+      updated_at: now
+    })
+    .eq("bookmaker_slug", slug)
+    .select("bookmaker_slug,status,lease_until,next_run_at,last_error");
+
+  if (error) return { ok: false, error: error.message };
+
+  const name = bookmakerName(slug);
+  const message = data?.length ? `${name}: coleta liberada.` : `${name}: nenhuma coleta aberta encontrada.`;
+  appendLog(message);
+  clearBookmakerIssue(slug);
+  await sendState();
+  return { ok: true, message };
+}
+
 function normalizeRequest(row) {
   return {
     id: row.id,
@@ -423,6 +453,7 @@ ipcMain.handle("select-chrome", selectChromeExecutable);
 ipcMain.handle("start-monitor", startMonitor);
 ipcMain.handle("stop-monitor", stopMonitor);
 ipcMain.handle("get-state", sendState);
+ipcMain.handle("release-collection", (_event, bookmakerSlug) => releaseCollection(bookmakerSlug));
 ipcMain.handle("save-competition-url", (_event, payload) => saveCompetitionUrl(payload));
 ipcMain.handle("open-user-data", () => userDataDir);
 

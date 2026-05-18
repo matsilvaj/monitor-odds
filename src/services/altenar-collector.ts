@@ -10,6 +10,7 @@ import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/n
 import { normalizeName } from "../domain/text.js";
 import { AltenarClient, type AltenarEventDetails, type AltenarMarket, type AltenarOdd } from "../providers/altenar.js";
 import { errorMessage } from "../utils/errors.js";
+import { getSavedBookmakerEventLinks } from "./saved-bookmaker-events.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -196,6 +197,9 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
       eventsCollected: 0,
       eventsMatched: 0,
       eventsUnmatched: 0,
+      eventsCollectedDirect: 0,
+      eventsCollectedByDiscovery: 0,
+      directEventsFailed: 0,
       oddsUpserted: 0,
       errors: 0,
       lastError: null as string | null
@@ -224,9 +228,65 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
     }
 
     try {
+      const fixturesById = new Map(canonicalFixtures.map((fixture) => [fixture.id, fixture]));
+      const savedLinks = await getSavedBookmakerEventLinks(
+        bookmaker.slug,
+        canonicalFixtures.map((fixture) => fixture.id)
+      );
+      const collectedFixtureIds = new Set<string>();
+
+      await pMap(
+        [...savedLinks.values()],
+        async (link) => {
+          const fixture = fixturesById.get(link.fixture_id);
+          if (!fixture) return;
+
+          try {
+            await sleep(env.COLLECT_DELAY_MS + Math.floor(Math.random() * 500));
+            const details = await client.getEventDetails(Number(link.external_event_id));
+            const matched = matchFixture(details, [fixture]);
+            if (!matched) {
+              summary.directEventsFailed += 1;
+              await log(bookmaker, "warn", "saved event link did not match canonical fixture; falling back to discovery", {
+                fixtureId: fixture.id,
+                eventId: link.external_event_id
+              });
+              return;
+            }
+
+            const odds = buildMoneylineOdds(bookmaker, matched.fixture.id, details, matched.orientation);
+            if (!odds.length) throw new Error(`saved event has no 1X2 odds: ${details.id}`);
+
+            linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, details, matched.score));
+            oddsToSave.push(...odds);
+            collectedFixtureIds.add(fixture.id);
+            summary.eventsMatched += 1;
+            summary.eventsCollected += 1;
+            summary.eventsCollectedDirect += 1;
+          } catch (error) {
+            summary.directEventsFailed += 1;
+            await log(bookmaker, "warn", "saved event direct collection failed; falling back to discovery", {
+              fixtureId: fixture.id,
+              eventId: link.external_event_id,
+              error: serializeError(error)
+            });
+          }
+        },
+        { concurrency: 3 }
+      );
+
+      const discoveryFixtures = canonicalFixtures.filter((fixture) => !collectedFixtureIds.has(fixture.id));
+      if (!discoveryFixtures.length) {
+        summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+          cleanupFixtureIds: cleanupFixtureIdsForRun(canonicalFixtures, linksToSave, summary.errors)
+        });
+        await log(bookmaker, "info", `${bookmaker.slug} collection finished`, summary);
+        return summary;
+      }
+
       const events = await client.getFootballEvents();
       summary.eventsSeen = events.length;
-      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event.startDate, canonicalFixtures));
+      const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event.startDate, discoveryFixtures));
       summary.eventsInWindow = targetEvents.length;
       summary.leagues = new Set(targetEvents.map((event) => event.champId).filter(Boolean)).size;
 
@@ -237,7 +297,7 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
             await sleep(env.COLLECT_DELAY_MS + Math.floor(Math.random() * 500));
             const details = await client.getEventDetails(event.id);
 
-            const matched = matchFixture(details, canonicalFixtures);
+            const matched = matchFixture(details, discoveryFixtures);
             if (!matched) {
               summary.eventsUnmatched += 1;
               await log(bookmaker, "warn", "bookmaker event did not match canonical fixture", {
@@ -253,6 +313,7 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
 
             summary.eventsMatched += 1;
             summary.eventsCollected += 1;
+            summary.eventsCollectedByDiscovery += 1;
           } catch (error) {
             summary.errors += 1;
             summary.lastError = errorMessage(error);

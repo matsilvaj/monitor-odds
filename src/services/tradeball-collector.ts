@@ -163,7 +163,7 @@ function paForMarket(market: TradeballMarket): { category: PaCategory; confidenc
     return { category: "COM_PA", confidence: 1, reason: "tradeball-explicit-early-payout" };
   }
 
-  return { category: "SEM_PA", confidence: 1, reason: "tradeball-exchange-standard-1x2" };
+  return { category: "SEM_PA", confidence: 1, reason: "tradeball-dball-standard-1x2" };
 }
 
 function selectionFromRunner(runner: TradeballRunner, event: TradeballEvent): Selection | null {
@@ -210,7 +210,7 @@ function buildBookmakerLink(bookmaker: TradeballBookmakerConfig, fixtureId: stri
     normalized_bookmaker_away_team: normalizeName(awayTeam),
     starts_at: new Date(event.start).toISOString(),
     match_confidence_score: confidenceScore,
-    source_url: new URL(`exchange/sport/soccer/event/${event.id}/market/${marketId}`, bookmaker.baseUrl).href,
+    source_url: new URL(`dballTradingFeed#event=${event.id}&market=${marketId}`, bookmaker.dballBaseUrl).href,
     raw: compactEventRaw(event),
     updated_at: new Date().toISOString()
   };
@@ -240,7 +240,7 @@ function buildMoneylineOdds(bookmaker: TradeballBookmakerConfig, fixtureId: stri
         confidence_score: pa.confidence,
         raw_market_name: market.name ?? null,
         raw_label: runner.name ?? null,
-        raw_odd_type: "exchange-back",
+        raw_odd_type: "tradeball-dball",
         source_odd_id: runner.id,
         raw: { event: eventRaw, market, runner, classificationReason: pa.reason },
         updated_at: new Date().toISOString()

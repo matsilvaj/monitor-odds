@@ -10,6 +10,7 @@ import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { Bet7kClient, type Bet7kEvent, type Bet7kMarket, type Bet7kSelection } from "../providers/bet7k.js";
 import { errorMessage } from "../utils/errors.js";
+import { getSavedBookmakerEventLinks, objectRaw, type SavedBookmakerEventLink } from "./saved-bookmaker-events.js";
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -202,6 +203,17 @@ function buildBookmakerLink(bookmaker: Bet7kBookmakerConfig, fixtureId: string, 
   };
 }
 
+function eventFromSavedLink(link: SavedBookmakerEventLink): Bet7kEvent | null {
+  const raw = objectRaw(link.raw);
+  const eventId = raw._id ?? raw.id;
+  if (eventId == null) return null;
+
+  return {
+    ...(raw as Bet7kEvent),
+    _id: String(eventId)
+  };
+}
+
 function buildMoneylineOdds(
   bookmaker: Bet7kBookmakerConfig,
   fixtureId: string,
@@ -255,6 +267,9 @@ export function createBet7kCollector(bookmaker: Bet7kBookmakerConfig) {
       eventsUnmatched: 0,
       eventDetailsFetched: 0,
       eventDetailsFailed: 0,
+      eventsCollectedDirect: 0,
+      eventsCollectedByDiscovery: 0,
+      directEventsFailed: 0,
       oddsUpserted: 0,
       errors: 0,
       lastError: null as string | null
@@ -280,17 +295,75 @@ export function createBet7kCollector(bookmaker: Bet7kBookmakerConfig) {
     }
 
     try {
+      const linksToSave: BookmakerLinkRow[] = [];
+      const oddsToSave: OddRow[] = [];
+      const fixturesById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
+      const savedLinks = await getSavedBookmakerEventLinks(
+        bookmaker.slug,
+        fixtures.map((fixture) => fixture.id)
+      );
+      const collectedFixtureIds = new Set<string>();
+
+      await pMap(
+        [...savedLinks.values()],
+        async (link) => {
+          const fixture = fixturesById.get(link.fixture_id);
+          const savedEvent = eventFromSavedLink(link);
+          if (!fixture || !savedEvent) return;
+
+          try {
+            const matched = findBestMatch(savedEvent, [fixture]);
+            if (!matched) {
+              summary.directEventsFailed += 1;
+              await log(bookmaker, "warn", "saved event link did not match canonical fixture; falling back to discovery", {
+                fixtureId: fixture.id,
+                eventId: savedEvent._id
+              });
+              return;
+            }
+
+            const markets = await client.getEventPageMarkets(savedEvent);
+            const odds = buildMoneylineOdds(bookmaker, matched.fixture.id, savedEvent, markets, matched.orientation);
+            if (!odds.length) throw new Error(`saved event has no 1X2 odds: ${savedEvent._id}`);
+
+            linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, savedEvent, matched.score));
+            oddsToSave.push(...odds);
+            collectedFixtureIds.add(fixture.id);
+            summary.eventsCollected += 1;
+            summary.eventsMatched += 1;
+            summary.eventsCollectedDirect += 1;
+          } catch (error) {
+            summary.directEventsFailed += 1;
+            await log(bookmaker, "warn", "saved event direct collection failed; falling back to discovery", {
+              fixtureId: fixture.id,
+              eventId: savedEvent._id,
+              error: serializeError(error)
+            });
+          }
+        },
+        { concurrency: 3 }
+      );
+
+      const discoveryFixtures = fixtures.filter((fixture) => !collectedFixtureIds.has(fixture.id));
+      if (!discoveryFixtures.length) {
+        summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+          cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
+        });
+        await log(bookmaker, "info", "bet7k collection finished", summary);
+        return summary;
+      }
+
       const events = await client.getPrematchEvents();
       const footballEvents = events.filter((event) => event.SportId === "1" && event.IsLive !== true);
       summary.eventsSeen = footballEvents.length;
 
-      const targetEvents = footballEvents.filter((event) => isNearCanonicalFixtureWindow(event, fixtures));
+      const targetEvents = footballEvents.filter((event) => isNearCanonicalFixtureWindow(event, discoveryFixtures));
       summary.eventsInWindow = targetEvents.length;
 
       const bestMatchByFixtureId = new Map<string, { event: Bet7kEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, fixtures);
+        const matched = findBestMatch(event, discoveryFixtures);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;
@@ -302,8 +375,6 @@ export function createBet7kCollector(bookmaker: Bet7kBookmakerConfig) {
         }
       }
 
-      const linksToSave: BookmakerLinkRow[] = [];
-      const oddsToSave: OddRow[] = [];
       const matchedItems = Array.from(bestMatchByFixtureId.values());
       const detailEntries = await pMap(
         matchedItems,
@@ -332,9 +403,10 @@ export function createBet7kCollector(bookmaker: Bet7kBookmakerConfig) {
         oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, detailMarkets, matched.orientation));
         summary.eventsCollected += 1;
         summary.eventsMatched += 1;
+        summary.eventsCollectedByDiscovery += 1;
       }
 
-      summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
+      summary.eventsUnmatched += discoveryFixtures.length - bestMatchByFixtureId.size;
       summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
         cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
       });

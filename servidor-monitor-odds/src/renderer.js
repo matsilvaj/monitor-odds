@@ -146,6 +146,16 @@ chromeButton.addEventListener("click", () => {
   window.monitorOdds.selectChrome();
 });
 
+document.querySelectorAll("[data-release-collection]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const bookmakerSlug = button.dataset.releaseCollection;
+    button.disabled = true;
+    const result = await window.monitorOdds.releaseCollection(bookmakerSlug);
+    appendLog(result?.message ?? result?.error ?? "Nao consegui liberar a coleta.");
+    button.disabled = false;
+  });
+});
+
 window.monitorOdds.onState(applyState);
 window.monitorOdds.onLog(appendLog);
 window.monitorOdds.onPendingRequests((requests) => {

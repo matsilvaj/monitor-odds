@@ -278,11 +278,21 @@ select
   o.confidence_score,
   o.updated_at as odd_updated_at,
   l.logo_url as league_logo_url,
-  l.country_flag_url as league_country_flag_url
+  l.country_flag_url as league_country_flag_url,
+  bel.source_url as bookmaker_event_url
 from fixtures f
 join leagues l on l.id = f.league_id
 join odds o on o.fixture_id = f.id
 join bookmakers b on b.slug = o.bookmaker_slug
+left join lateral (
+  select source_url
+  from bookmaker_event_links
+  where bookmaker_event_links.fixture_id = f.id
+    and bookmaker_event_links.bookmaker_slug = o.bookmaker_slug
+    and bookmaker_event_links.source_url is not null
+  order by bookmaker_event_links.updated_at desc
+  limit 1
+) bel on true
 where f.starts_at > now()
   and l.enabled = true;
 
@@ -369,6 +379,23 @@ create policy public_read_upcoming_odds
     )
   );
 
+drop policy if exists public_read_upcoming_bookmaker_event_links on bookmaker_event_links;
+create policy public_read_upcoming_bookmaker_event_links
+  on bookmaker_event_links
+  for select
+  to anon, authenticated
+  using (
+    source_url is not null
+    and exists (
+      select 1
+      from fixtures
+      join leagues on leagues.id = fixtures.league_id
+      where fixtures.id = bookmaker_event_links.fixture_id
+        and fixtures.starts_at > now()
+        and leagues.enabled = true
+    )
+  );
+
 drop policy if exists public_read_fixture_sync_status on fixture_sync_runs;
 create policy public_read_fixture_sync_status
   on fixture_sync_runs
@@ -391,6 +418,12 @@ grant select (
   round,
   updated_at
 ) on fixtures to anon, authenticated;
+grant select (
+  fixture_id,
+  bookmaker_slug,
+  source_url,
+  updated_at
+) on bookmaker_event_links to anon, authenticated;
 grant select (
   fixture_id,
   bookmaker_slug,

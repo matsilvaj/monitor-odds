@@ -58,13 +58,6 @@ export type TradeballEvent = {
   [key: string]: unknown;
 };
 
-type TradeballEventsResponse = {
-  offset?: number;
-  total?: number;
-  events?: TradeballEvent[];
-  lastUpdated?: string;
-};
-
 type TradeballDballEvent = {
   ceId?: string;
   dg?: string;
@@ -82,17 +75,18 @@ type TradeballDballResponse = {
   init?: TradeballDballEvent[];
 };
 
-function dateKey(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
+const TRADEBALL_UTC_OFFSET_HOURS = 1;
+const TRADEBALL_UTC_OFFSET_MS = TRADEBALL_UTC_OFFSET_HOURS * 60 * 60 * 1000;
 
 function collectionDates(start: Date, end: Date) {
   const dates: string[] = [];
-  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(), 0, 0, 0, 0));
-  const limit = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate(), 0, 0, 0, 0));
+  const shiftedStart = new Date(start.getTime() + TRADEBALL_UTC_OFFSET_MS);
+  const shiftedEnd = new Date(end.getTime() + TRADEBALL_UTC_OFFSET_MS);
+  const cursor = new Date(Date.UTC(shiftedStart.getUTCFullYear(), shiftedStart.getUTCMonth(), shiftedStart.getUTCDate(), 0, 0, 0, 0));
+  const limit = new Date(Date.UTC(shiftedEnd.getUTCFullYear(), shiftedEnd.getUTCMonth(), shiftedEnd.getUTCDate(), 0, 0, 0, 0));
 
   while (cursor <= limit) {
-    dates.push(dateKey(cursor));
+    dates.push(cursor.toISOString().slice(0, 10));
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
 
@@ -104,7 +98,7 @@ function parseDballDateTime(value: string | undefined) {
   if (!match) return new Date(value ?? "").toISOString();
 
   const [, year, month, day, hour, minute, second] = match.map(Number);
-  return new Date(Date.UTC(year, month - 1, day, hour - 1, minute, second, 0)).toISOString();
+  return new Date(Date.UTC(year, month - 1, day, hour - TRADEBALL_UTC_OFFSET_HOURS, minute, second, 0)).toISOString();
 }
 
 function dballRunner(eventId: string, code: string, name: string, price: unknown): TradeballRunner {
@@ -182,42 +176,7 @@ export class TradeballClient {
   }
 
   async getSoccerMoneylineEvents(start: Date, end: Date) {
-    const events: TradeballEvent[] = [];
-
-    for (let page = 0; page < this.config.maxPages; page += 1) {
-      const offset = page * this.config.perPage;
-      const data = await this.getSoccerMoneylinePage(start, end, offset);
-      const pageEvents = data.events ?? [];
-      events.push(...pageEvents);
-
-      if (pageEvents.length < this.config.perPage) break;
-    }
-
-    const dballEvents = await this.getDballGuestEvents(start, end);
-    return [...new Map([...events, ...dballEvents].map((event) => [event.id, event])).values()];
-  }
-
-  private async getSoccerMoneylinePage(start: Date, end: Date, offset: number) {
-    const url = new URL("api/events", this.config.apiBaseUrl);
-    url.searchParams.set("offset", String(offset));
-    url.searchParams.set("per-page", String(this.config.perPage));
-    url.searchParams.set("after", String(Math.floor(start.getTime() / 1000)));
-    url.searchParams.set("before", String(Math.floor(end.getTime() / 1000)));
-    url.searchParams.set("sort-by", "volume");
-    url.searchParams.set("sort-direction", "desc");
-    url.searchParams.set("sport-ids", this.config.sportId);
-    url.searchParams.set("market-types", "one_x_two");
-    url.searchParams.set("en-market-names", "Match Odds,Moneyline,Winner");
-    url.searchParams.set("markets-limit", "30");
-
-    return httpClient<TradeballEventsResponse>({
-      url,
-      headers: this.headers,
-      referer: this.config.referer,
-      engine: this.config.engine,
-      timeoutMs: 15_000,
-      maxRetries: 1
-    });
+    return this.getDballGuestEvents(start, end);
   }
 
   private async getDballGuestEvents(start: Date, end: Date) {

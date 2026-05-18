@@ -1,16 +1,19 @@
 import { BOOKMAKERS } from "../config/bookmakers.js";
 import { supabase } from "../db/supabase.js";
 
-const [rawTarget = "bet365"] = process.argv.slice(2);
+const browserCollectorSlugs = ["bet365", "meridianbet"];
+const [rawTarget = "chrome"] = process.argv.slice(2);
 const target = rawTarget.trim().toLowerCase();
 const knownSlugs = new Set(BOOKMAKERS.map((bookmaker) => bookmaker.slug));
+const targetAliases = new Set(["chrome", "browser", "navegador"]);
 
-if (target !== "all" && !knownSlugs.has(target)) {
+if (target !== "all" && !targetAliases.has(target) && !knownSlugs.has(target)) {
   console.error(`Casa nao configurada: ${target}`);
-  console.error(`Use: npm run fechar:coleta bet365`);
+  console.error("Use: npm run fechar:coleta");
+  console.error("Ou: npm run fechar:coleta bet365 | meridianbet | all");
   process.exitCode = 1;
 } else {
-  const targets = target === "all" ? [...knownSlugs] : [target];
+  const targets = target === "all" ? [...knownSlugs] : targetAliases.has(target) ? browserCollectorSlugs : [target];
   const now = new Date().toISOString();
 
   const { data, error } = await supabase
