@@ -1,7 +1,8 @@
+import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import pMap from "p-map";
 import type { BetmgmBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
-import { cleanupFixtureIdsForRun } from "./collector-resilience.js";
+import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeForMatching, teamNameSimilarity } from "../domain/matching/text-similarity.js";
@@ -251,7 +252,7 @@ function buildMoneylineOdds(bookmaker: BetmgmBookmakerConfig, fixtureId: string,
 }
 
 export function createBetmgmCollector(bookmaker: BetmgmBookmakerConfig) {
-  return async function collectBetmgm() {
+  return async function collectBetmgm(options: BookmakerCollectOptions = {}) {
     const client = new BetmgmClient(bookmaker);
     const summary = {
       groupsSeen: 0,
@@ -267,9 +268,21 @@ export function createBetmgmCollector(bookmaker: BetmgmBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    const fixtures = await getCanonicalFixtures();
+    let fixtures = await getCanonicalFixtures();
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
+      return summary;
+    }
+
+    const refreshPlan = await filterFixturesDueForOddsRefresh(bookmaker.slug, fixtures, options);
+    applyFixtureRefreshPlan(summary, refreshPlan);
+    fixtures = refreshPlan.fixtures;
+    if (!fixtures.length) {
+      await log(bookmaker, "info", "no fixtures due for odds refresh", {
+        fixturesAvailable: refreshPlan.fixturesAvailable,
+        skippedFresh: refreshPlan.skippedFresh,
+        skippedStarted: refreshPlan.skippedStarted
+      });
       return summary;
     }
 

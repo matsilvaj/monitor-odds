@@ -13,6 +13,11 @@ import {
 import { errorMessage } from "../utils/errors.js";
 import { syncApiFootballFixtures } from "./api-football-sync.js";
 import { requestBookmakerLeagueUrl, resolveBookmakerLeagueUrlRequest } from "./bookmaker-league-url-requests.js";
+import {
+  isFixturePrematchForOddsRefresh as isPrematch,
+  refreshIntervalMsForStart,
+  shouldUseFixtureRefreshCadence
+} from "./collector-resilience.js";
 
 type CanonicalFixture = {
   id: string;
@@ -67,7 +72,6 @@ type MeridianLogger = (level: "info" | "warn" | "error", message: string, contex
 
 const MINUTE_MS = 60 * 1000;
 const MERIDIAN_LOCK_LEASE_MS = 45 * MINUTE_MS;
-const MIN_PREMATCH_MS = 10 * MINUTE_MS;
 
 const MERIDIAN_SEEDED_LEAGUE_URLS: Record<number, Array<{ label: string; sourceUrl: string }>> = {
   1: [{ label: "Copa do Mundo 2026", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327" }],
@@ -109,23 +113,6 @@ function dateKey(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function timestamp(value: string | number | Date) {
-  return value instanceof Date ? value.getTime() : new Date(value).getTime();
-}
-
-function isPrematch(startsAt: string | number | Date, now = new Date()) {
-  return timestamp(startsAt) >= now.getTime() + MIN_PREMATCH_MS;
-}
-
-function refreshIntervalMsForStart(startsAt: string | number | Date, now = new Date()) {
-  const minutes = (timestamp(startsAt) - now.getTime()) / MINUTE_MS;
-  if (minutes <= 30) return 5 * MINUTE_MS;
-  if (minutes <= 60) return 15 * MINUTE_MS;
-  if (minutes <= 6 * 60) return 60 * MINUTE_MS;
-  if (minutes <= 24 * 60) return 3 * 60 * MINUTE_MS;
-  return 6 * 60 * MINUTE_MS;
 }
 
 function formatDuration(ms: number) {
@@ -633,7 +620,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
         }
 
         const freshness = shouldSkipFreshFixture(fixture, lastOddsByFixtureId.get(fixture.id));
-        if (!summary.force && freshness.skip) {
+        if (shouldUseFixtureRefreshCadence(options) && freshness.skip) {
           processedFixtureIds.add(fixture.id);
           summary.eventsSkippedFresh += 1;
           await logger("info", "jogo pulado porque as odds da meridianbet ainda estao recentes", {

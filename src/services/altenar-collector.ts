@@ -1,8 +1,9 @@
+import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import pMap from "p-map";
 import type { AltenarBookmakerConfig } from "../config/bookmakers.js";
 import { env } from "../config/env.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
-import { cleanupFixtureIdsForRun } from "./collector-resilience.js";
+import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/normalize.js";
@@ -186,7 +187,7 @@ function buildMoneylineOdds(bookmaker: AltenarBookmakerConfig, fixtureId: string
 }
 
 export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
-  return async function collectAltenarBookmaker() {
+  return async function collectAltenarBookmaker(options: BookmakerCollectOptions = {}) {
     const client = new AltenarClient(bookmaker);
     const summary = {
       leagues: 0,
@@ -203,10 +204,22 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
     await ensureBaseRows(bookmaker);
     const linksToSave: BookmakerLinkRow[] = [];
     const oddsToSave: OddRow[] = [];
-    const canonicalFixtures = await getCanonicalFixtures();
+    let canonicalFixtures = await getCanonicalFixtures();
 
     if (!canonicalFixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
+      return summary;
+    }
+
+    const refreshPlan = await filterFixturesDueForOddsRefresh(bookmaker.slug, canonicalFixtures, options);
+    applyFixtureRefreshPlan(summary, refreshPlan);
+    canonicalFixtures = refreshPlan.fixtures;
+    if (!canonicalFixtures.length) {
+      await log(bookmaker, "info", "no fixtures due for odds refresh", {
+        fixturesAvailable: refreshPlan.fixturesAvailable,
+        skippedFresh: refreshPlan.skippedFresh,
+        skippedStarted: refreshPlan.skippedStarted
+      });
       return summary;
     }
 

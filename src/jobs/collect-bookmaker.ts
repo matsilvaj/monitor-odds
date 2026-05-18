@@ -4,7 +4,6 @@ import { cleanupStartedFixtures, formatStartedFixtureCleanupSummary } from "../s
 import { formatBookmakerResultLines, formatBookmakerStartLine, getBookmakerOddsReport, getFixtureReport } from "../services/sync-report.js";
 
 const [slug, ...args] = process.argv.slice(2);
-const manualForceBookmakers = new Set(["bet365", "meridianbet"]);
 
 function parseOptions(rawArgs: string[]): BookmakerCollectOptions {
   const options: BookmakerCollectOptions = { logToConsole: true };
@@ -62,10 +61,10 @@ if (!slug) {
   } else {
     try {
       const options = parseOptions(args);
-      if (manualForceBookmakers.has(bookmaker.slug) && options.trigger !== "watch") {
+      if (options.trigger !== "watch") {
         options.force = true;
         options.trigger ??= "manual";
-        console.log(`[${bookmaker.slug}] Coleta manual: ignorando janela e odds recentes.`);
+        console.log(`[${bookmaker.slug}] Coleta manual: ignorando cadencia de odds recentes.`);
       }
       const cleanup = await cleanupStartedFixtures();
       console.log(formatStartedFixtureCleanupSummary(cleanup));

@@ -1,6 +1,7 @@
+import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import type { SuperbetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
-import { cleanupFixtureIdsForRun } from "./collector-resilience.js";
+import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { Selection } from "../domain/normalize.js";
@@ -173,7 +174,7 @@ function buildMoneylineOdds(bookmaker: SuperbetBookmakerConfig, fixtureId: strin
 }
 
 export function createSuperbetCollector(bookmaker: SuperbetBookmakerConfig) {
-  return async function collectSuperbet() {
+  return async function collectSuperbet(options: BookmakerCollectOptions = {}) {
     const client = new SuperbetClient(bookmaker);
     const summary = {
       eventsSeen: 0,
@@ -187,9 +188,21 @@ export function createSuperbetCollector(bookmaker: SuperbetBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    const fixtures = await getCanonicalFixtures();
+    let fixtures = await getCanonicalFixtures();
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
+      return summary;
+    }
+
+    const refreshPlan = await filterFixturesDueForOddsRefresh(bookmaker.slug, fixtures, options);
+    applyFixtureRefreshPlan(summary, refreshPlan);
+    fixtures = refreshPlan.fixtures;
+    if (!fixtures.length) {
+      await log(bookmaker, "info", "no fixtures due for odds refresh", {
+        fixturesAvailable: refreshPlan.fixturesAvailable,
+        skippedFresh: refreshPlan.skippedFresh,
+        skippedStarted: refreshPlan.skippedStarted
+      });
       return summary;
     }
 

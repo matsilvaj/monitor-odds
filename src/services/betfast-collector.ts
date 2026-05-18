@@ -1,3 +1,4 @@
+import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import pMap from "p-map";
 import type { BetfastBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
@@ -7,7 +8,7 @@ import type { Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetfastClient, type BetfastEvent, type BetfastOdd } from "../providers/betfast.js";
 import { errorMessage } from "../utils/errors.js";
-import { cleanupFixtureIdsForRun } from "./collector-resilience.js";
+import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 
 type CanonicalFixture = {
   id: string;
@@ -209,7 +210,7 @@ function buildMoneylineOdds(bookmaker: BetfastBookmakerConfig, fixtureId: string
 }
 
 export function createBetfastCollector(bookmaker: BetfastBookmakerConfig) {
-  return async function collectBetfast() {
+  return async function collectBetfast(options: BookmakerCollectOptions = {}) {
     const client = new BetfastClient(bookmaker);
     const summary = {
       eventsSeen: 0,
@@ -223,9 +224,21 @@ export function createBetfastCollector(bookmaker: BetfastBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    const fixtures = await getCanonicalFixtures();
+    let fixtures = await getCanonicalFixtures();
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
+      return summary;
+    }
+
+    const refreshPlan = await filterFixturesDueForOddsRefresh(bookmaker.slug, fixtures, options);
+    applyFixtureRefreshPlan(summary, refreshPlan);
+    fixtures = refreshPlan.fixtures;
+    if (!fixtures.length) {
+      await log(bookmaker, "info", "no fixtures due for odds refresh", {
+        fixturesAvailable: refreshPlan.fixturesAvailable,
+        skippedFresh: refreshPlan.skippedFresh,
+        skippedStarted: refreshPlan.skippedStarted
+      });
       return summary;
     }
 

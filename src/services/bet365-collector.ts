@@ -14,6 +14,11 @@ import {
 import { errorMessage } from "../utils/errors.js";
 import { syncApiFootballFixtures } from "./api-football-sync.js";
 import { requestBookmakerLeagueUrl, resolveBookmakerLeagueUrlRequest } from "./bookmaker-league-url-requests.js";
+import {
+  isFixturePrematchForOddsRefresh as isPrematch,
+  refreshIntervalMsForStart,
+  shouldUseFixtureRefreshCadence
+} from "./collector-resilience.js";
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -100,7 +105,6 @@ type Bet365Logger = (level: "info" | "warn" | "error", message: string, context?
 
 const MINUTE_MS = 60 * 1000;
 const BET365_LOCK_LEASE_MS = 45 * MINUTE_MS;
-const MIN_PREMATCH_MS = 10 * MINUTE_MS;
 
 const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   1: [{ label: "Copa do Mundo", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E131901075/G40/" }],
@@ -148,30 +152,9 @@ function dateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function timestamp(value: string | number | Date) {
-  return value instanceof Date ? value.getTime() : new Date(value).getTime();
-}
-
-function minutesUntil(value: string | number | Date, now = new Date()) {
-  return (timestamp(value) - now.getTime()) / MINUTE_MS;
-}
-
 function formatDuration(ms: number) {
   const minutes = Math.max(1, Math.round(ms / MINUTE_MS));
   return `${minutes}m`;
-}
-
-function refreshIntervalMsForStart(startsAt: string | number | Date, now = new Date()) {
-  const minutes = minutesUntil(startsAt, now);
-  if (minutes <= 30) return 5 * MINUTE_MS;
-  if (minutes <= 60) return 15 * MINUTE_MS;
-  if (minutes <= 6 * 60) return 60 * MINUTE_MS;
-  if (minutes <= 24 * 60) return 3 * 60 * MINUTE_MS;
-  return 6 * 60 * MINUTE_MS;
-}
-
-function isPrematch(startsAt: string | number | Date, now = new Date()) {
-  return timestamp(startsAt) >= now.getTime() + MIN_PREMATCH_MS;
 }
 
 function targetDateKeys(date: BookmakerCollectOptions["date"]) {
@@ -1084,7 +1067,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
         }
 
         const freshness = shouldSkipFreshFixture(fixture, lastOddsByFixtureId.get(fixture.id));
-        if (!force && freshness.skip) {
+        if (shouldUseFixtureRefreshCadence({ trigger, force }) && freshness.skip) {
           processedFixtureIds.add(fixture.id);
           summary.eventsSkippedFresh += 1;
           await logger("info", "jogo pulado porque as odds da bet365 ainda estao recentes", {
@@ -1325,7 +1308,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
               }
 
               const freshness = shouldSkipFreshFixture(previewMatch.fixture, lastOddsByFixtureId.get(previewMatch.fixture.id));
-              if (!force && freshness.skip) {
+              if (shouldUseFixtureRefreshCadence({ trigger, force }) && freshness.skip) {
                 processedFixtureIds.add(previewMatch.fixture.id);
                 summary.eventsSkippedFresh += 1;
                 await logger("info", "jogo pulado porque as odds da bet365 ainda estao recentes", {
