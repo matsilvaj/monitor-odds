@@ -1,0 +1,61 @@
+{
+  "name": "servidor-monitor-odds",
+  "version": "1.0.0",
+  "description": "Launcher simples do servidor local do Monitor Odds.",
+  "main": "src/main.js",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "electron .",
+    "package": "npm --prefix .. run build && node scripts/write-env-resource.js && electron-builder --win portable"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.105.3",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "br.monitorodds.servidor",
+    "productName": "Servidor Monitor Odds",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist",
+        "to": "monitor/dist"
+      },
+      {
+        "from": "../node_modules",
+        "to": "monitor/node_modules"
+      },
+      {
+        "from": "../package.json",
+        "to": "monitor/package.json"
+      },
+      {
+        "from": "build/monitor-env.json",
+        "to": "monitor-env.json"
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Servidor Monitor Odds.exe"
+    }
+  }
+}

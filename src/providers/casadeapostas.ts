@@ -1,7 +1,6 @@
-import { gotScraping } from "got-scraping";
 import pMap from "p-map";
-import { CookieJar } from "tough-cookie";
 import type { CasaDeApostasBookmakerConfig } from "../config/bookmakers.js";
+import { httpClient } from "../utils/http-client.js";
 
 export type CasaDeApostasOdd = {
   id: number;
@@ -52,7 +51,6 @@ type GamesResponse = {
 };
 
 export class CasaDeApostasClient {
-  private readonly jar = new CookieJar();
   private warmed = false;
   private readonly headers: Record<string, string>;
 
@@ -73,16 +71,18 @@ export class CasaDeApostasClient {
   private async warmSession() {
     if (this.warmed) return;
 
-    await gotScraping({
+    await httpClient<string>({
       url: this.config.referer,
-      cookieJar: this.jar,
       headers: {
         accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "accept-language": this.headers["accept-language"],
         "user-agent": this.headers["user-agent"]
       },
-      timeout: { request: 20_000 },
-      retry: { limit: 0 }
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 20_000,
+      maxRetries: 1,
+      responseType: "text"
     });
 
     this.warmed = true;
@@ -91,16 +91,14 @@ export class CasaDeApostasClient {
   private async getJson<T>(url: URL): Promise<T> {
     await this.warmSession();
 
-    const response = await gotScraping({
-      url: url.href,
-      cookieJar: this.jar,
+    return httpClient<T>({
+      url,
       headers: { ...this.headers, referer: this.config.referer },
-      timeout: { request: 20_000 },
-      retry: { limit: 0 },
-      responseType: "json"
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 20_000,
+      maxRetries: 1
     });
-
-    return response.body as T;
   }
 
   async getGames(startDate: Date, endDate: Date) {

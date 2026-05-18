@@ -12,6 +12,7 @@ import {
 } from "../providers/meridianbet.js";
 import { errorMessage } from "../utils/errors.js";
 import { syncApiFootballFixtures } from "./api-football-sync.js";
+import { requestBookmakerLeagueUrl, resolveBookmakerLeagueUrlRequest } from "./bookmaker-league-url-requests.js";
 
 type CanonicalFixture = {
   id: string;
@@ -170,6 +171,9 @@ function formatMeridianConsoleLine(level: "info" | "warn" | "error", message: st
   if (message === "jogo da meridianbet nao abriu") return `[meridianbet] Jogo nao aberto: ${fixtureName(context)}.`;
   if (message === "jogo bruto coletado, mas nenhum mercado 1X2 foi identificado na meridianbet") return `[meridianbet] Jogo sem mercado 1X2: ${fixtureName(context)}.`;
   if (message === "liga da meridianbet sem link e sem jogos visiveis") return `[meridianbet] Liga sem link/jogos visiveis: ${contextValue(context, "leagueName")}.`;
+  if (message === "URL de liga da meridianbet sem jogos alvo") return `[meridianbet] URL da liga sem jogos alvo: ${contextValue(context, "leagueName")}.`;
+  if (message === "pendencia de URL de liga criada") return `[meridianbet] URL da liga precisa de ajuste: ${contextValue(context, "leagueName")}.`;
+  if (message === "pendencias de URL de liga indisponiveis; rode db:setup para habilitar") return "[meridianbet] Pendencias de URL indisponiveis; rode npm run db:setup para habilitar.";
   if (message === "meridianbet pulada porque outra coleta ainda esta rodando") return "[meridianbet] Coleta pulada: outra execucao ainda esta em andamento.";
   if (message === "coleta da meridianbet finalizada") return `[meridianbet] Coleta finalizada: ${contextValue(context, "eventsCollected")} jogos coletados | ${contextValue(context, "oddsUpserted")} odds salvas | ${contextValue(context, "errors")} erros.`;
 
@@ -444,6 +448,7 @@ async function saveLeagueLink(bookmaker: MeridianbetBookmakerConfig, league: Act
     { onConflict: "bookmaker_slug,api_football_league_id" }
   );
   if (error) throw error;
+  await resolveBookmakerLeagueUrlRequest(bookmaker.slug, league, sourceUrl);
 }
 
 function buildBookmakerLink(bookmaker: MeridianbetBookmakerConfig, fixture: CanonicalFixture, event: MeridianCollectedEvent): BookmakerLinkRow {
@@ -687,18 +692,25 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           await client.selectAllPeriod();
 
           const hasFixture = await client.pageHasFixturePair(leagueFixtures.map((fixture) => fixtureTargetFromCanonical(fixture)));
-          if (!hasFixture && candidate.source === "fallback") {
-            summary.leaguesSkipped += 1;
-            await logger("warn", "liga da meridianbet sem link e sem jogos visiveis", {
+          if (!hasFixture) {
+            await logger("warn", "URL de liga da meridianbet sem jogos alvo", {
               leagueName: league.name,
-              fixtures: leagueFixtures.length
+              apiFootballLeagueId: league.api_football_league_id,
+              label: candidate.label,
+              source: candidate.source,
+              sourceUrl: candidate.sourceUrl,
+              futureFixturesInLeague: leagueFixtures.length
             });
             continue;
           }
 
           leagueOpened = true;
           summary.leaguesOpened += 1;
-          await saveLeagueLink(bookmaker, league, client.currentUrl(), candidate.label, candidate.source);
+          if (candidate.source === "fallback") {
+            await resolveBookmakerLeagueUrlRequest(bookmaker.slug, league, client.currentUrl());
+          } else {
+            await saveLeagueLink(bookmaker, league, client.currentUrl(), candidate.label, candidate.source);
+          }
 
           for (const fixture of leagueFixtures) {
             try {
@@ -744,7 +756,26 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           break;
         }
 
-        if (!leagueOpened) summary.leaguesSkipped += 1;
+        if (!leagueOpened) {
+          summary.leaguesSkipped += 1;
+          const savedLeagueLink = cachedLeagueLinkByApiId.get(league.api_football_league_id);
+          await requestBookmakerLeagueUrl(
+            {
+              bookmakerSlug: bookmaker.slug,
+              league,
+              reason: savedLeagueLink?.source_url ? "saved-url-failed" : "league-not-found",
+              previousUrl: savedLeagueLink?.source_url ?? null,
+              raw: {
+                futureFixturesInLeague: leagueFixtures.length
+              }
+            },
+            logger
+          );
+          await logger("warn", "liga da meridianbet sem link e sem jogos visiveis", {
+            leagueName: league.name,
+            fixtures: leagueFixtures.length
+          });
+        }
       }
     } catch (error) {
       summary.errors += 1;

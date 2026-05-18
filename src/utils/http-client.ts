@@ -12,7 +12,7 @@ export interface RequestOptions {
   timeoutMs?: number;
   maxRetries?: number;
   engine?: "fetch" | "got-scraping";
-  responseType?: "json" | "text";
+  responseType?: "json" | "text" | "buffer";
 }
 
 function sleep(ms: number) {
@@ -39,6 +39,45 @@ function isTimeoutError(error: unknown) {
   );
 }
 
+function errorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
+
+  const directCode = "code" in error ? error.code : undefined;
+  if (typeof directCode === "string") return directCode;
+
+  const cause = "cause" in error ? error.cause : undefined;
+  if (cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string") {
+    return cause.code;
+  }
+
+  return null;
+}
+
+function isTransientNetworkError(error: unknown) {
+  const code = errorCode(error);
+  if (
+    code &&
+    [
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "ECONNABORTED",
+      "ETIMEDOUT",
+      "EAI_AGAIN",
+      "ENOTFOUND",
+      "EPIPE",
+      "UND_ERR_SOCKET",
+      "UND_ERR_CONNECT_TIMEOUT",
+      "UND_ERR_HEADERS_TIMEOUT",
+      "UND_ERR_BODY_TIMEOUT"
+    ].includes(code)
+  ) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return message.includes("econnreset") || message.includes("socket hang up") || message.includes("other side closed");
+}
+
 function permanentStatusMessage(status: number, url: string) {
   return `HTTP ${status} - Bloqueio permanente. Abortando retry para ${url}`;
 }
@@ -60,7 +99,7 @@ export async function httpClient<T>(options: RequestOptions): Promise<T> {
   const origin = new URL(referer).origin;
 
   let attempt = 0;
-  while (attempt <= maxRetries) {
+  while (true) {
     try {
       if (engine === "fetch") {
         const controller = new AbortController();
@@ -78,7 +117,9 @@ export async function httpClient<T>(options: RequestOptions): Promise<T> {
           });
 
           if (!res.ok) throw { response: { statusCode: res.status } };
-          return (responseType === "text" ? await res.text() : await res.json()) as T;
+          if (responseType === "text") return (await res.text()) as T;
+          if (responseType === "buffer") return Buffer.from(await res.arrayBuffer()) as T;
+          return (await res.json()) as T;
         } finally {
           clearTimeout(timeoutId);
         }
@@ -105,14 +146,16 @@ export async function httpClient<T>(options: RequestOptions): Promise<T> {
     } catch (error) {
       const status = statusFromError(error);
       const isTimeout = isTimeoutError(error);
+      const isNetworkError = isTransientNetworkError(error);
+      const retryLimit = isNetworkError ? Math.max(maxRetries, 3) : maxRetries;
 
       if (status === 403 || status === 404 || status === 400 || status === 401) {
         throw new Error(permanentStatusMessage(status, requestUrl));
       }
 
-      if (attempt < maxRetries && (isTimeout || status === 429 || (status != null && status >= 500))) {
+      if (attempt < retryLimit && (isTimeout || isNetworkError || status === 429 || (status != null && status >= 500))) {
         attempt += 1;
-        await sleep(500 * attempt);
+        await sleep(500 * attempt + Math.floor(Math.random() * 500));
         continue;
       }
 

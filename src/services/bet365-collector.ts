@@ -13,6 +13,7 @@ import {
 } from "../providers/bet365.js";
 import { errorMessage } from "../utils/errors.js";
 import { syncApiFootballFixtures } from "./api-football-sync.js";
+import { requestBookmakerLeagueUrl, resolveBookmakerLeagueUrlRequest } from "./bookmaker-league-url-requests.js";
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -269,6 +270,12 @@ function formatBet365ConsoleLine(level: "info" | "warn" | "error", message: stri
   }
   if (message === "link de liga salvo para a bet365") {
     return `[bet365] Link da liga salvo: ${contextValue(context, "leagueName")} -> ${contextValue(context, "label")}.`;
+  }
+  if (message === "pendencia de URL de liga criada") {
+    return `[bet365] URL da liga precisa de ajuste: ${contextValue(context, "leagueName")}.`;
+  }
+  if (message === "pendencias de URL de liga indisponiveis; rode db:setup para habilitar") {
+    return "[bet365] Pendencias de URL indisponiveis; rode npm run db:setup para habilitar.";
   }
   if (message === "jogo aberto por URL cacheada da bet365") {
     return `[bet365] URL salva abriu: ${fixtureName(context)}.`;
@@ -721,6 +728,7 @@ async function saveLeagueLink(
     source,
     sourceUrl
   });
+  await resolveBookmakerLeagueUrlRequest(bookmaker.slug, league, sourceUrl, logger);
   return true;
 }
 
@@ -1289,6 +1297,20 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
 
           if (!openedLeague) {
             summary.leaguesSkipped += 1;
+            const savedLeagueLink = cachedLeagueLinkByApiId.get(league.api_football_league_id);
+            await requestBookmakerLeagueUrl(
+              {
+                bookmakerSlug: bookmaker.slug,
+                league,
+                reason: savedLeagueLink?.source_url ? "saved-url-failed" : "league-not-found",
+                previousUrl: savedLeagueLink?.source_url ?? null,
+                raw: {
+                  expectedTeamNames,
+                  futureFixturesInLeague: leagueFixtures.length
+                }
+              },
+              logger
+            );
             await logger("warn", "liga ignorada porque nao foi aberta", {
               leagueName: league.name,
               country: league.country,

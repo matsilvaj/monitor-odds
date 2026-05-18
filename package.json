@@ -22,6 +22,8 @@
     "fechar:coleta": "tsx src/jobs/close-collection.ts",
     "sync:all": "tsx src/jobs/sync-all.ts",
     "sync:watch": "tsx src/jobs/sync-watch.ts",
+    "client:dev": "npm --prefix servidor-monitor-odds run dev",
+    "client:package": "npm --prefix servidor-monitor-odds run package",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],

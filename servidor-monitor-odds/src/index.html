@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Servidor Monitor Odds</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>Servidor Monitor Odds</h1>
+          <p id="chrome-path">Chrome: não configurado</p>
+        </div>
+        <span id="status-pill" class="status-pill stopped">Parado</span>
+      </header>
+
+      <section class="controls">
+        <button id="start-button" class="primary">Iniciar</button>
+        <button id="stop-button">Parar</button>
+        <button id="chrome-button">Selecionar arquivo chrome.exe</button>
+      </section>
+
+      <section class="attention">
+        <h2>Casas precisam de atenção</h2>
+        <div id="pending-list" class="pending-list">
+          <p class="empty">Nenhuma pendência no momento.</p>
+        </div>
+      </section>
+
+      <section class="logs">
+        <h2>Logs</h2>
+        <pre id="log-output"></pre>
+      </section>
+    </main>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

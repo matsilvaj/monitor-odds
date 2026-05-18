@@ -87,6 +87,24 @@ create table if not exists bookmaker_league_links (
   unique (bookmaker_slug, api_football_league_id)
 );
 
+create table if not exists bookmaker_league_url_requests (
+  id uuid primary key default gen_random_uuid(),
+  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
+  api_football_league_id bigint not null,
+  league_name text not null,
+  league_country text,
+  mode text not null check (mode in ('add', 'update')),
+  reason text not null check (reason in ('league-not-found', 'saved-url-failed')),
+  previous_url text,
+  status text not null default 'pending' check (status in ('pending', 'resolved')),
+  resolved_url text,
+  resolved_at timestamptz,
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (bookmaker_slug, api_football_league_id)
+);
+
 create table if not exists bookmaker_payload_cache (
   bookmaker_slug text not null references bookmakers(slug) on delete cascade,
   endpoint text not null,
@@ -219,6 +237,8 @@ create index if not exists odds_bookmaker_market_fixture_idx on odds (bookmaker_
 create index if not exists bookmaker_event_links_fixture_id_idx on bookmaker_event_links (fixture_id);
 create index if not exists bookmaker_event_links_bookmaker_fixture_idx on bookmaker_event_links (bookmaker_slug, fixture_id);
 create index if not exists bookmaker_league_links_slug_league_idx on bookmaker_league_links (bookmaker_slug, api_football_league_id);
+create index if not exists bookmaker_league_url_requests_status_idx on bookmaker_league_url_requests (status, updated_at);
+create index if not exists bookmaker_league_url_requests_slug_league_idx on bookmaker_league_url_requests (bookmaker_slug, api_football_league_id);
 create index if not exists bookmaker_payload_cache_expires_at_idx on bookmaker_payload_cache (expires_at);
 create index if not exists bookmaker_payload_cache_bookmaker_endpoint_idx on bookmaker_payload_cache (bookmaker_slug, endpoint);
 create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on bookmaker_event_snapshots (bookmaker_slug, date_key);
@@ -281,6 +301,7 @@ revoke all on
   fixtures,
   bookmaker_event_links,
   bookmaker_league_links,
+  bookmaker_league_url_requests,
   bookmaker_payload_cache,
   odds,
   fixture_sync_runs,
@@ -296,6 +317,7 @@ alter table teams enable row level security;
 alter table fixtures enable row level security;
 alter table bookmaker_event_links enable row level security;
 alter table bookmaker_league_links enable row level security;
+alter table bookmaker_league_url_requests enable row level security;
 alter table bookmaker_payload_cache enable row level security;
 alter table odds enable row level security;
 alter table fixture_sync_runs enable row level security;
