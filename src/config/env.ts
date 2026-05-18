@@ -38,6 +38,11 @@ const envSchema = z.object({
   BET365_MANUAL_FALLBACK: booleanFromEnv(true),
   BET365_KEEP_BROWSER_OPEN: booleanFromEnv(false),
   BET365_NAVIGATION_TIMEOUT_MS: z.coerce.number().int().min(5000).default(45_000),
+  MERIDIANBET_BASE_URL: z.string().url().default("https://meridianbet.bet.br/"),
+  MERIDIANBET_CHROME_PROFILE_DIR: z.string().default(".browser/meridianbet-cdp-profile"),
+  MERIDIANBET_CHROME_EXECUTABLE: optionalNonEmptyString(),
+  MERIDIANBET_KEEP_BROWSER_OPEN: booleanFromEnv(false),
+  MERIDIANBET_NAVIGATION_TIMEOUT_MS: z.coerce.number().int().min(5000).default(45_000),
 });
 
 export const env = envSchema.parse({

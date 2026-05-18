@@ -1111,7 +1111,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
         if (!league) continue;
 
         const freshness = shouldSkipFreshFixture(fixture, lastOddsByFixtureId.get(fixture.id));
-        if (freshness.skip) {
+        if (!force && freshness.skip) {
           processedFixtureIds.add(fixture.id);
           summary.eventsSkippedFresh += 1;
           await logger("info", "jogo pulado porque as odds da bet365 ainda estao recentes", {
@@ -1338,7 +1338,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
               }
 
               const freshness = shouldSkipFreshFixture(previewMatch.fixture, lastOddsByFixtureId.get(previewMatch.fixture.id));
-              if (freshness.skip) {
+              if (!force && freshness.skip) {
                 processedFixtureIds.add(previewMatch.fixture.id);
                 summary.eventsSkippedFresh += 1;
                 await logger("info", "jogo pulado porque as odds da bet365 ainda estao recentes", {

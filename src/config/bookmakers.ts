@@ -145,6 +145,18 @@ export type Bet365BookmakerConfig = {
   navigationTimeoutMs: number;
 };
 
+export type MeridianbetBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "meridianbet";
+  baseUrl: string;
+  chromeProfileDir: string;
+  chromeExecutablePath?: string;
+  keepBrowserOpen: boolean;
+  navigationTimeoutMs: number;
+};
+
 export type BetfairBookmakerConfig = {
   slug: string;
   name: string;
@@ -265,6 +277,7 @@ export type BookmakerConfig =
   | BetfastBookmakerConfig
   | KtoBookmakerConfig
   | Bet365BookmakerConfig
+  | MeridianbetBookmakerConfig
   | BetfairBookmakerConfig
   | BetesporteBookmakerConfig
   | BetnacionalBookmakerConfig
@@ -483,6 +496,17 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     manualFallback: env.BET365_MANUAL_FALLBACK,
     keepBrowserOpen: env.BET365_KEEP_BROWSER_OPEN,
     navigationTimeoutMs: env.BET365_NAVIGATION_TIMEOUT_MS
+  },
+  {
+    slug: "meridianbet",
+    name: "MeridianBet",
+    enabled: true,
+    provider: "meridianbet",
+    baseUrl: env.MERIDIANBET_BASE_URL,
+    chromeProfileDir: env.MERIDIANBET_CHROME_PROFILE_DIR,
+    chromeExecutablePath: env.MERIDIANBET_CHROME_EXECUTABLE,
+    keepBrowserOpen: env.MERIDIANBET_KEEP_BROWSER_OPEN,
+    navigationTimeoutMs: env.MERIDIANBET_NAVIGATION_TIMEOUT_MS
   },
   {
     slug: "betfair",

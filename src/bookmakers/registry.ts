@@ -13,6 +13,7 @@ import { createBetmgmCollector } from "../services/betmgm-collector.js";
 import { createBetnacionalCollector } from "../services/betnacional-collector.js";
 import { createCasaDeApostasCollector } from "../services/casadeapostas-collector.js";
 import { createKtoCollector } from "../services/kto-collector.js";
+import { createMeridianbetCollector } from "../services/meridianbet-collector.js";
 import { createNovibetCollector } from "../services/novibet-collector.js";
 import { createSegurobetCollector } from "../services/segurobet-collector.js";
 import { createSportingbetCollector } from "../services/sportingbet-collector.js";
@@ -145,6 +146,14 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
     };
   }
 
+  if (bookmaker.provider === "meridianbet") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createMeridianbetCollector(bookmaker)
+    };
+  }
+
   if (bookmaker.provider === "betfair") {
     return {
       slug: bookmaker.slug,
@@ -253,11 +262,12 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
     }
   };
 
-  const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => bookmaker.slug !== "bet365");
-  const slowCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => bookmaker.slug === "bet365");
+  const browserCollectorSlugs = new Set(["bet365", "meridianbet"]);
+  const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => !browserCollectorSlugs.has(bookmaker.slug));
+  const slowCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => browserCollectorSlugs.has(bookmaker.slug));
 
   if (logProgress && slowCollectors.length) {
-    console.log("[sync] bet365 iniciada em uma raia própria; as outras casas continuam em paralelo.");
+    console.log("[sync] Casas com Chrome real iniciadas em uma raia propria; as outras casas continuam em paralelo.");
   }
 
   const fastResultsPromise = pMap(fastCollectors, collectOne, { concurrency });
@@ -266,3 +276,4 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
 
   return [...fastResults, ...slowResults];
 }
+

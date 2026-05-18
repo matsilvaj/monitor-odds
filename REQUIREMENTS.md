@@ -81,5 +81,7 @@ npm run sync:fixtures
 npm run sync:odds
 npm run sync
 npm run collect:bookmaker bet365
+npm run collect:bookmaker meridianbet
 npm run fechar:coleta bet365
+npm run fechar:coleta meridianbet
 ```
