@@ -200,10 +200,14 @@ function leagueCompetitionTerms(leagueName: string, country: string | null) {
   const normalized = normalizeVisibleText(`${country ?? ""} ${leagueName}`);
   const aliases: Record<string, string[]> = {
     "spain la liga": ["Spain La Liga", "La Liga"],
+    "spain la liga 2": ["Spain LaLiga 2", "Spain La Liga 2", "LaLiga 2", "La Liga 2", "Segunda Division"],
+    "la liga 2": ["Spain LaLiga 2", "LaLiga 2", "La Liga 2", "Segunda Division"],
     "england premier league": ["England Premier League", "Premier League"],
     "england fa cup": ["England FA Cup", "FA Cup"],
     "france ligue 1": ["France Ligue 1", "Ligue 1"],
+    "france ligue 2": ["France Ligue 2", "Ligue 2"],
     "italy serie a": ["Italy Serie A", "Serie A"],
+    "italy serie b": ["Italy Serie B", "Serie B"],
     "germany bundesliga": ["Germany Bundesliga I", "Germany Bundesliga", "Bundesliga I", "Bundesliga"],
     "germany 2 bundesliga": ["Germany Bundesliga II", "Germany 2. Bundesliga", "2. Bundesliga"],
     "2 bundesliga": ["Germany Bundesliga II", "Germany 2. Bundesliga", "2. Bundesliga"],
@@ -228,6 +232,11 @@ function leagueCompetitionTerms(leagueName: string, country: string | null) {
     if (normalized.includes(key)) {
       for (const value of values) terms.add(value);
     }
+  }
+
+  if (normalized.includes("la liga 2")) {
+    terms.delete("Spain La Liga");
+    terms.delete("La Liga");
   }
 
   const leagueOnly = leagueName.replace(

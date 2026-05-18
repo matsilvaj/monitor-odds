@@ -127,6 +127,7 @@ const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   128: [{ label: "Argentina Liga Profesional", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E98752003/G40/" }],
   135: [{ label: "Serie A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E92269709/G40/H%5E1/" }],
   140: [{ label: "La Liga", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E120757998/G40/" }],
+  141: [{ label: "La Liga 2", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E120794896/G40/" }],
   144: [{ label: "Belgium First Division A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E131845194/G40/" }],
   179: [
     { label: "Scottish Premiership", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E120060777/G40/H%5E1/" },

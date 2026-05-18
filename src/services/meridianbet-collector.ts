@@ -87,6 +87,8 @@ const MERIDIAN_SEEDED_LEAGUE_URLS: Record<number, Array<{ label: string; sourceU
   94: [{ label: "Portugal", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/portugu%C3%AAs/" }],
   119: [{ label: "Superliga", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/dinamarca/superliga?leagueIds=133" }],
   128: [{ label: "Liga Profissional", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/argentina/liga-profissional?leagueIds=174077" }],
+  136: [{ label: "Serie B", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/it%C3%A1lia/serie-b?leagueIds=96" }],
+  141: [{ label: "La Liga 2", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93" }],
   179: [{ label: "Premiership", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/esc%C3%B3cia/premiership?leagueIds=145" }],
   181: [{ label: "Cup", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/esc%C3%B3cia/cup?leagueIds=244" }],
   253: [{ label: "Major League Soccer", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/estados-unidos/major-league-soccer?leagueIds=284" }],
