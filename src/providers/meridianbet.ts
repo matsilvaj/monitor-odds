@@ -235,6 +235,7 @@ export class MeridianbetBrowserClient {
     this.page = await this.context.newPage();
     this.page.setDefaultTimeout(this.config.navigationTimeoutMs);
     this.page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
+    await this.page.setViewportSize({ width: 1600, height: 950 }).catch(() => undefined);
     await this.blockHeavyAssets();
   }
 
@@ -268,15 +269,15 @@ export class MeridianbetBrowserClient {
 
   async selectAllPeriod() {
     const page = this.requirePage();
-    const clicked = await this.clickTopPeriodFilter("TUDO");
-    if (clicked) {
-      await page.waitForTimeout(800);
-      await this.waitForUi();
-      const selected = await this.isTopPeriodFilterSelected("TUDO");
-      if (!selected) {
-        await this.logger("warn", "cliquei em TUDO na meridianbet, mas o filtro nao confirmou selecao");
+    if (await this.isTopPeriodFilterSelected("TUDO")) return;
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const clicked = await this.clickTopPeriodFilter("TUDO");
+      if (clicked) {
+        await page.waitForTimeout(1200);
+        await this.waitForUi();
+        if (await this.isTopPeriodFilterSelected("TUDO")) return;
       }
-      return;
     }
 
     await this.logger("warn", "filtro TUDO da meridianbet nao encontrado na barra de tempo");
@@ -284,8 +285,25 @@ export class MeridianbetBrowserClient {
 
   async pageHasFixturePair(fixtures: MeridianFixtureTarget[]) {
     if (!fixtures.length) return false;
-    const text = normalizeVisibleText(await this.visibleText());
-    return fixtures.some((fixture) => hasImportantToken(text, tokensFromName(fixture.homeTeam)) && hasImportantToken(text, tokensFromName(fixture.awayTeam)));
+    const page = this.requirePage();
+    await page.keyboard.press("Home").catch(() => undefined);
+    await page.waitForTimeout(600);
+
+    for (let attempt = 0; attempt < 18; attempt += 1) {
+      const text = normalizeVisibleText(await this.visibleText());
+      const found = fixtures.some(
+        (fixture) => hasImportantToken(text, tokensFromName(fixture.homeTeam)) && hasImportantToken(text, tokensFromName(fixture.awayTeam))
+      );
+      if (found) return true;
+
+      await page.keyboard.press("PageDown").catch(() => undefined);
+      await this.scrollMainContent(800);
+      await page.waitForTimeout(350);
+    }
+
+    await page.keyboard.press("Home").catch(() => undefined);
+    await page.waitForTimeout(300);
+    return false;
   }
 
   async openFixture(fixture: MeridianFixtureTarget) {
@@ -455,21 +473,8 @@ export class MeridianbetBrowserClient {
             .replace(/\s+/g, " ")
             .trim();
         const expected = normalize(expectedText);
-        const nodes = [...document.querySelectorAll("button,[role='button'],div,span")];
-        const isPeriodBar = (element: HTMLElement) => {
-          let current: HTMLElement | null = element;
-          for (let depth = 0; current && depth < 8; depth += 1) {
-            const rect = current.getBoundingClientRect();
-            const text = normalize(current.innerText || current.textContent);
-            const hasPeriodLabels = text.includes("uma hora") && text.includes("tres horas") && text.includes("3 dias") && text.includes("tudo");
-            const isMainArea = rect.top >= 180 && rect.top <= 360 && rect.left >= 500 && rect.right <= window.innerWidth - 260;
-            if (hasPeriodLabels && isMainArea) return true;
-            current = current.parentElement;
-          }
-
-          return false;
-        };
-        const candidates: Array<{ x: number; y: number; area: number }> = [];
+        const nodes = [...document.querySelectorAll("button,[role='button'],div,span,a")];
+        const candidates: Array<{ x: number; y: number; score: number }> = [];
 
         for (const node of nodes) {
           const element = node as HTMLElement;
@@ -477,19 +482,37 @@ export class MeridianbetBrowserClient {
           const text = normalize(element.innerText || element.textContent);
           if (text !== expected) continue;
           if (rect.width < 30 || rect.height < 20) continue;
-          if (rect.top < 180 || rect.top > 360) continue;
-          if (rect.left < 550 || rect.left > window.innerWidth - 280) continue;
+          if (rect.bottom < 150 || rect.top > 380) continue;
 
-          if (!isPeriodBar(element)) continue;
+          let current: HTMLElement | null = element.parentElement;
+          let matchedPeriodBar = false;
+          for (let depth = 0; current && depth < 8; depth += 1) {
+            const currentRect = current.getBoundingClientRect();
+            const currentText = normalize(current.innerText || current.textContent);
+            const hasPeriodLabels =
+              currentText.includes("uma hora") &&
+              currentText.includes("tres horas") &&
+              currentText.includes("dia") &&
+              currentText.includes("3 dias") &&
+              currentText.includes("tudo");
+            const looksLikeMainToolbar = currentRect.bottom >= 190 && currentRect.top <= 360 && currentRect.width >= 300;
+            if (hasPeriodLabels && looksLikeMainToolbar) {
+              matchedPeriodBar = true;
+              break;
+            }
+            current = current.parentElement;
+          }
+
+          if (!matchedPeriodBar) continue;
 
           candidates.push({
             x: rect.left + rect.width / 2,
             y: rect.top + rect.height / 2,
-            area: rect.width * rect.height
+            score: rect.top * 10 + rect.left
           });
         }
 
-        candidates.sort((left, right) => left.area - right.area);
+        candidates.sort((left, right) => left.score - right.score);
         return candidates[0] ?? null;
       }, text)
       .catch(() => null);
@@ -511,7 +534,7 @@ export class MeridianbetBrowserClient {
             .replace(/\s+/g, " ")
             .trim();
         const expected = normalize(expectedText);
-        const nodes = [...document.querySelectorAll("button,[role='button'],div,span")];
+        const nodes = [...document.querySelectorAll("button,[role='button'],div,span,a")];
 
         for (const node of nodes) {
           const element = node as HTMLElement;
@@ -519,8 +542,28 @@ export class MeridianbetBrowserClient {
           const textValue = normalize(element.innerText || element.textContent);
           if (textValue !== expected) continue;
           if (rect.width < 30 || rect.height < 20) continue;
-          if (rect.top < 180 || rect.top > 360) continue;
-          if (rect.left < 550 || rect.left > window.innerWidth - 280) continue;
+          if (rect.bottom < 150 || rect.top > 380) continue;
+
+          let current: HTMLElement | null = element.parentElement;
+          let matchedPeriodBar = false;
+          for (let depth = 0; current && depth < 8; depth += 1) {
+            const currentRect = current.getBoundingClientRect();
+            const currentText = normalize(current.innerText || current.textContent);
+            const hasPeriodLabels =
+              currentText.includes("uma hora") &&
+              currentText.includes("tres horas") &&
+              currentText.includes("dia") &&
+              currentText.includes("3 dias") &&
+              currentText.includes("tudo");
+            const looksLikeMainToolbar = currentRect.bottom >= 190 && currentRect.top <= 360 && currentRect.width >= 300;
+            if (hasPeriodLabels && looksLikeMainToolbar) {
+              matchedPeriodBar = true;
+              break;
+            }
+            current = current.parentElement;
+          }
+
+          if (!matchedPeriodBar) continue;
 
           const style = window.getComputedStyle(element);
           const background = style.backgroundColor.match(/\d+/g)?.map(Number) ?? [];

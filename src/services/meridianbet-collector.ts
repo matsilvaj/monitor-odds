@@ -77,6 +77,8 @@ const MERIDIAN_SEEDED_LEAGUE_URLS: Record<number, Array<{ label: string; sourceU
   1: [{ label: "Copa do Mundo 2026", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327" }],
   2: [{ label: "Liga dos Campeoes", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/europa/liga-dos-campe%C3%B5es?leagueIds=84" }],
   3: [{ label: "Liga Europa", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/europa/liga-europa?leagueIds=86" }],
+  11: [{ label: "Copa Sudamericana", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/am%C3%A9rica-do-sul/sudamericana?leagueIds=417" }],
+  13: [{ label: "Copa Libertadores", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/am%C3%A9rica-do-sul/copa-libertadores?leagueIds=231" }],
   39: [{ label: "Premier League", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/inglaterra/premier-league?leagueIds=80" }],
   40: [{ label: "Campeonato", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/inglaterra/campeonato?leagueIds=122" }],
   61: [{ label: "Ligue 1", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/fran%C3%A7a/ligue-1?leagueIds=87" }],
@@ -161,6 +163,7 @@ function formatMeridianConsoleLine(level: "info" | "warn" | "error", message: st
   if (message === "jogo da meridianbet nao abriu") return `[meridianbet] Jogo nao aberto: ${fixtureName(context)}.`;
   if (message === "jogo bruto coletado, mas nenhum mercado 1X2 foi identificado na meridianbet") return `[meridianbet] Jogo sem mercado 1X2: ${fixtureName(context)}.`;
   if (message === "liga da meridianbet sem link e sem jogos visiveis") return `[meridianbet] Liga sem link/jogos visiveis: ${contextValue(context, "leagueName")}.`;
+  if (message === "liga da meridianbet com link cadastrado, mas sem jogos restantes visiveis") return `[meridianbet] Liga com link cadastrado sem jogos restantes visiveis: ${contextValue(context, "leagueName")}.`;
   if (message === "URL de liga da meridianbet sem jogos alvo") return `[meridianbet] URL da liga sem jogos alvo: ${contextValue(context, "leagueName")}.`;
   if (message === "pendencia de URL de liga criada") return `[meridianbet] URL da liga precisa de ajuste: ${contextValue(context, "leagueName")}.`;
   if (message === "pendencias de URL de liga indisponiveis; rode db:setup para habilitar") return "[meridianbet] Pendencias de URL indisponiveis; rode npm run db:setup para habilitar.";
@@ -343,15 +346,16 @@ async function getCachedEventUrls(bookmakerSlug: string, fixtureIds: string[]) {
 
   const { data, error } = await supabase
     .from("bookmaker_event_links")
-    .select("fixture_id,source_url,updated_at")
+    .select("fixture_id,source_url,raw,updated_at")
     .eq("bookmaker_slug", bookmakerSlug)
     .in("fixture_id", fixtureIds)
-    .not("source_url", "is", null)
     .order("updated_at", { ascending: false });
 
   if (error) throw error;
-  for (const row of (data ?? []) as Array<{ fixture_id: string; source_url: string | null }>) {
-    if (row.source_url && !urlByFixtureId.has(row.fixture_id)) urlByFixtureId.set(row.fixture_id, row.source_url);
+  for (const row of (data ?? []) as Array<{ fixture_id: string; source_url: string | null; raw: unknown }>) {
+    const raw = row.raw && typeof row.raw === "object" && !Array.isArray(row.raw) ? (row.raw as Record<string, unknown>) : {};
+    const collectionUrl = typeof raw.collectionUrl === "string" ? raw.collectionUrl : row.source_url;
+    if (collectionUrl && !urlByFixtureId.has(row.fixture_id)) urlByFixtureId.set(row.fixture_id, collectionUrl);
   }
   return urlByFixtureId;
 }
@@ -442,6 +446,8 @@ async function saveLeagueLink(bookmaker: MeridianbetBookmakerConfig, league: Act
 }
 
 function buildBookmakerLink(bookmaker: MeridianbetBookmakerConfig, fixture: CanonicalFixture, event: MeridianCollectedEvent): BookmakerLinkRow {
+  const publicUrl = isMeridianEventUrl(event.sourceUrl) ? event.sourceUrl : null;
+
   return {
     bookmaker_slug: bookmaker.slug,
     external_event_id: event.externalEventId,
@@ -453,10 +459,19 @@ function buildBookmakerLink(bookmaker: MeridianbetBookmakerConfig, fixture: Cano
     normalized_bookmaker_away_team: normalizeName(fixture.away_team),
     starts_at: fixture.starts_at,
     match_confidence_score: 1,
-    source_url: event.sourceUrl,
-    raw: { sourceUrl: event.sourceUrl, rawText: event.rawText, markets: event.markets },
+    source_url: publicUrl,
+    raw: { sourceUrl: event.sourceUrl, collectionUrl: event.sourceUrl, publicUrl, rawText: event.rawText, markets: event.markets },
     updated_at: new Date().toISOString()
   };
+}
+
+function isMeridianEventUrl(sourceUrl: string | null | undefined) {
+  if (!sourceUrl) return false;
+  try {
+    return /\/\d+\/?$/.test(new URL(sourceUrl).pathname);
+  } catch {
+    return false;
+  }
 }
 
 function buildMoneylineOdds(bookmaker: MeridianbetBookmakerConfig, fixture: CanonicalFixture, event: MeridianCollectedEvent): OddRow[] {
@@ -749,6 +764,17 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
         if (!leagueOpened) {
           summary.leaguesSkipped += 1;
           const savedLeagueLink = cachedLeagueLinkByApiId.get(league.api_football_league_id);
+          const hasKnownLeagueUrl = Boolean(savedLeagueLink?.source_url || MERIDIAN_SEEDED_LEAGUE_URLS[league.api_football_league_id]?.length);
+          if (hasKnownLeagueUrl) {
+            await logger("warn", "liga da meridianbet com link cadastrado, mas sem jogos restantes visiveis", {
+              leagueName: league.name,
+              apiFootballLeagueId: league.api_football_league_id,
+              fixtures: leagueFixtures.length,
+              savedUrl: savedLeagueLink?.source_url ?? null
+            });
+            continue;
+          }
+
           await requestBookmakerLeagueUrl(
             {
               bookmakerSlug: bookmaker.slug,

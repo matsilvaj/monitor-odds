@@ -186,8 +186,8 @@ function buildBookmakerLink(bookmaker: SportybetBookmakerConfig, fixtureId: stri
     normalized_bookmaker_away_team: normalizeName(event.awayTeamName),
     starts_at: new Date(event.estimateStartTime).toISOString(),
     match_confidence_score: confidenceScore,
-    source_url: bookmaker.referer,
-    raw: event,
+    source_url: null,
+    raw: { ...event, collectionUrl: bookmaker.referer },
     updated_at: new Date().toISOString()
   };
 }

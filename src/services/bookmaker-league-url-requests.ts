@@ -84,12 +84,7 @@ export async function resolveBookmakerLeagueUrlRequest(
   const now = new Date().toISOString();
   const { error } = await supabase
     .from("bookmaker_league_url_requests")
-    .update({
-      status: "resolved",
-      resolved_url: resolvedUrl,
-      resolved_at: now,
-      updated_at: now
-    })
+    .delete()
     .eq("bookmaker_slug", bookmakerSlug)
     .eq("api_football_league_id", league.api_football_league_id);
 
@@ -102,7 +97,8 @@ export async function resolveBookmakerLeagueUrlRequest(
     bookmakerSlug,
     leagueName: league.name,
     apiFootballLeagueId: league.api_football_league_id,
-    resolvedUrl
+    resolvedUrl,
+    resolvedAt: now
   });
   return true;
 }

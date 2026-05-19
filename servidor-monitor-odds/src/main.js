@@ -17,6 +17,8 @@ const bookmakerNames = {
   bet365: "Bet365",
   meridianbet: "MeridianBet"
 };
+const browserCollectorSlugs = ["bet365", "meridianbet"];
+const collectionReleaseAliases = new Set(["chrome", "browser", "navegador"]);
 
 let mainWindow = null;
 let monitorProcess = null;
@@ -27,6 +29,8 @@ let pendingRequests = [];
 let bookmakerIssues = [];
 let pollTimer = null;
 let logParseBuffer = "";
+let isShuttingDown = false;
+let allowWindowClose = false;
 
 async function readJson(filePath, fallback) {
   try {
@@ -282,34 +286,93 @@ async function stopMonitor() {
   return { ok: true };
 }
 
-async function releaseCollection(bookmakerSlug) {
+async function releaseCollectionTargets(targets, { notify = true } = {}) {
   if (!supabase) return { ok: false, error: "Supabase nao configurado." };
-
-  const slug = String(bookmakerSlug ?? "").trim().toLowerCase();
-  if (!["bet365", "meridianbet"].includes(slug)) {
-    return { ok: false, error: "Coleta desconhecida para liberar." };
-  }
-
   const now = new Date().toISOString();
+  const { error: bookmakerError } = await supabase.from("bookmakers").upsert(
+    targets.map((target) => ({ slug: target, name: bookmakerName(target) })),
+    { onConflict: "slug" }
+  );
+  if (bookmakerError) return { ok: false, error: bookmakerError.message };
+
   const { data, error } = await supabase
     .from("bookmaker_collection_state")
-    .update({
-      status: "idle",
-      lease_until: null,
-      last_error: null,
-      updated_at: now
-    })
-    .eq("bookmaker_slug", slug)
+    .upsert(
+      targets.map((target) => ({
+        bookmaker_slug: target,
+        status: "idle",
+        lease_until: null,
+        last_error: null,
+        updated_at: now
+      })),
+      { onConflict: "bookmaker_slug" }
+    )
     .select("bookmaker_slug,status,lease_until,next_run_at,last_error");
 
   if (error) return { ok: false, error: error.message };
 
-  const name = bookmakerName(slug);
-  const message = data?.length ? `${name}: coleta liberada.` : `${name}: nenhuma coleta aberta encontrada.`;
-  appendLog(message);
-  clearBookmakerIssue(slug);
-  await sendState();
+  const names = (data?.length ? data.map((row) => bookmakerName(row.bookmaker_slug)) : targets.map(bookmakerName)).join(" e ");
+  const message = `${names}: coleta liberada.`;
+  if (notify) {
+    appendLog(message);
+    for (const target of targets) clearBookmakerIssue(target);
+    await sendState();
+  }
   return { ok: true, message };
+}
+
+async function releaseCollection(bookmakerSlug) {
+  const slug = String(bookmakerSlug ?? "").trim().toLowerCase();
+  const targets = collectionReleaseAliases.has(slug) ? browserCollectorSlugs : [slug];
+  if (!targets.every((target) => browserCollectorSlugs.includes(target))) {
+    return { ok: false, error: "Coleta desconhecida para liberar." };
+  }
+
+  return releaseCollectionTargets(targets);
+}
+
+async function killProcessTree(processToKill) {
+  if (!processToKill?.pid) return;
+
+  if (process.platform !== "win32") {
+    processToKill.kill();
+    return;
+  }
+
+  await new Promise((resolve) => {
+    const killer = spawn("taskkill", ["/pid", String(processToKill.pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore"
+    });
+    killer.on("error", resolve);
+    killer.on("exit", resolve);
+  });
+}
+
+async function stopMonitorForShutdown() {
+  if (!monitorProcess) {
+    status = "parado";
+    return;
+  }
+
+  const processToStop = monitorProcess;
+  monitorProcess = null;
+  processToStop.stdout?.removeAllListeners("data");
+  processToStop.stderr?.removeAllListeners("data");
+  processToStop.removeAllListeners("exit");
+  processToStop.removeAllListeners("error");
+  await killProcessTree(processToStop);
+  status = "parado";
+}
+
+async function shutdownBeforeClose() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  await stopMonitorForShutdown().catch(() => undefined);
+  await releaseCollectionTargets(browserCollectorSlugs, { notify: false }).catch(() => undefined);
 }
 
 function normalizeRequest(row) {
@@ -404,12 +467,7 @@ async function saveCompetitionUrl({ requestId, url }) {
 
   const { error: resolveError } = await supabase
     .from("bookmaker_league_url_requests")
-    .update({
-      status: "resolved",
-      resolved_url: sourceUrl,
-      resolved_at: updatedAt,
-      updated_at: updatedAt
-    })
+    .delete()
     .eq("id", request.id);
 
   if (resolveError) return { ok: false, error: resolveError.message };
@@ -434,6 +492,20 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(currentDir, "index.html"));
+  mainWindow.on("close", (event) => {
+    if (allowWindowClose) return;
+    event.preventDefault();
+    if (isShuttingDown) return;
+
+    isShuttingDown = true;
+    void shutdownBeforeClose().finally(() => {
+      allowWindowClose = true;
+      mainWindow?.close();
+    });
+  });
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
 }
 
 app.whenReady().then(async () => {
@@ -446,7 +518,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   if (pollTimer) clearInterval(pollTimer);
-  if (monitorProcess) monitorProcess.kill();
+  if (monitorProcess) void killProcessTree(monitorProcess);
 });
 
 ipcMain.handle("select-chrome", selectChromeExecutable);

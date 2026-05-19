@@ -185,6 +185,7 @@ function compactEventRaw(event: Bet7kEvent) {
 
 function buildBookmakerLink(bookmaker: Bet7kBookmakerConfig, fixtureId: string, event: Bet7kEvent, confidenceScore: number): BookmakerLinkRow {
   const { homeTeam, awayTeam } = eventTeams(event);
+  const collectionUrl = new URL(`esportes/evento/${event.UrlEventName ?? event._id}`, bookmaker.baseUrl).href;
 
   return {
     bookmaker_slug: bookmaker.slug,
@@ -197,8 +198,8 @@ function buildBookmakerLink(bookmaker: Bet7kBookmakerConfig, fixtureId: string, 
     normalized_bookmaker_away_team: normalizeName(awayTeam),
     starts_at: new Date(event.StartEventDate ?? "").toISOString(),
     match_confidence_score: confidenceScore,
-    source_url: new URL(`esportes/evento/${event.UrlEventName ?? event._id}`, bookmaker.baseUrl).href,
-    raw: compactEventRaw(event),
+    source_url: null,
+    raw: { ...compactEventRaw(event), collectionUrl, publicUrl: null },
     updated_at: new Date().toISOString()
   };
 }

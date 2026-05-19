@@ -183,6 +183,13 @@ function compactEventRaw(event: BetesporteEvent) {
   };
 }
 
+function betesporteEventDetailUrl(bookmaker: BetesporteBookmakerConfig, event: BetesporteEvent) {
+  return new URL(
+    `api/PreMatch/GetEventDetail?eventId=${event.id}&sportId=1&tournamentId=${event.tournamentId ?? ""}&countryId=${event.countryId ?? ""}`,
+    bookmaker.baseUrl
+  ).href;
+}
+
 function eventFromSavedLink(link: SavedBookmakerEventLink): BetesporteEvent | null {
   const raw = objectRaw(link.raw);
   const id = Number(raw.id ?? link.external_event_id);
@@ -191,6 +198,8 @@ function eventFromSavedLink(link: SavedBookmakerEventLink): BetesporteEvent | nu
 }
 
 function buildBookmakerLink(bookmaker: BetesporteBookmakerConfig, fixtureId: string, event: BetesporteEvent, confidenceScore: number): BookmakerLinkRow {
+  const collectionUrl = betesporteEventDetailUrl(bookmaker, event);
+
   return {
     bookmaker_slug: bookmaker.slug,
     external_event_id: event.id,
@@ -202,8 +211,8 @@ function buildBookmakerLink(bookmaker: BetesporteBookmakerConfig, fixtureId: str
     normalized_bookmaker_away_team: normalizeName(event.awayTeamName),
     starts_at: new Date(event.date ?? "").toISOString(),
     match_confidence_score: confidenceScore,
-    source_url: new URL(`api/PreMatch/GetEventDetail?eventId=${event.id}&sportId=1&tournamentId=${event.tournamentId ?? ""}&countryId=${event.countryId ?? ""}`, bookmaker.baseUrl).href,
-    raw: compactEventRaw(event),
+    source_url: null,
+    raw: { ...compactEventRaw(event), collectionUrl },
     updated_at: new Date().toISOString()
   };
 }

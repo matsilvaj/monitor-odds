@@ -15,25 +15,34 @@ if (target !== "all" && !targetAliases.has(target) && !knownSlugs.has(target)) {
 } else {
   const targets = target === "all" ? [...knownSlugs] : targetAliases.has(target) ? browserCollectorSlugs : [target];
   const now = new Date().toISOString();
+  const bookmakersBySlug = new Map(BOOKMAKERS.map((bookmaker) => [bookmaker.slug, bookmaker.name]));
 
-  const { data, error } = await supabase
+  const { error: bookmakerError } = await supabase.from("bookmakers").upsert(
+    targets.map((bookmakerSlug) => ({ slug: bookmakerSlug, name: bookmakersBySlug.get(bookmakerSlug) ?? bookmakerSlug })),
+    { onConflict: "slug" }
+  );
+
+  const { data, error } = bookmakerError
+    ? { data: null, error: bookmakerError }
+    : await supabase
     .from("bookmaker_collection_state")
-    .update({
-      status: "idle",
-      lease_until: null,
-      last_error: null,
-      updated_at: now
-    })
-    .in("bookmaker_slug", targets)
+    .upsert(
+      targets.map((bookmakerSlug) => ({
+        bookmaker_slug: bookmakerSlug,
+        status: "idle",
+        lease_until: null,
+        last_error: null,
+        updated_at: now
+      })),
+      { onConflict: "bookmaker_slug" }
+    )
     .select("bookmaker_slug,status,lease_until,next_run_at,last_error");
 
   if (error) {
     console.error(error.message);
     process.exitCode = 1;
-  } else if (!data?.length) {
-    console.log(`Nenhuma coleta aberta encontrada para: ${target}.`);
   } else {
-    for (const row of data) {
+    for (const row of data ?? []) {
       console.log(`[${row.bookmaker_slug}] coleta liberada.`);
       console.log(`status: ${row.status}`);
       console.log(`lease_until: ${row.lease_until ?? "null"}`);

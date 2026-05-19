@@ -14,7 +14,7 @@ export type BookmakerLinkRow = {
   normalized_bookmaker_away_team: string | null;
   starts_at: string;
   match_confidence_score: number;
-  source_url: string;
+  source_url: string | null;
   raw: unknown;
   updated_at: string;
 };
