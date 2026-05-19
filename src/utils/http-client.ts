@@ -65,6 +65,7 @@ function isTransientNetworkError(error: unknown) {
       "EAI_AGAIN",
       "ENOTFOUND",
       "EPIPE",
+      "ERR_CRYPTO_OPERATION_FAILED",
       "UND_ERR_SOCKET",
       "UND_ERR_CONNECT_TIMEOUT",
       "UND_ERR_HEADERS_TIMEOUT",
@@ -75,7 +76,13 @@ function isTransientNetworkError(error: unknown) {
   }
 
   const message = error instanceof Error ? error.message.toLowerCase() : "";
-  return message.includes("econnreset") || message.includes("socket hang up") || message.includes("other side closed");
+  return (
+    message.includes("econnreset") ||
+    message.includes("socket hang up") ||
+    message.includes("other side closed") ||
+    message.includes("failed to set ecdh curve") ||
+    message.includes("err_crypto_operation_failed")
+  );
 }
 
 function permanentStatusMessage(status: number, url: string) {

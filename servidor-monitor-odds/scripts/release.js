@@ -9,9 +9,14 @@ const launcherRoot = path.resolve(currentDir, "..");
 const projectRoot = path.resolve(launcherRoot, "..");
 const envPath = path.join(projectRoot, ".env");
 
+function commandLine(command, args) {
+  if (process.platform === "win32") return [command, ...args].join(" ");
+  if (process.platform !== "win32") return [command, ...args].map((part) => `'${String(part).replace(/'/g, "'\\''")}'`).join(" ");
+}
+
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(process.platform === "win32" ? "cmd.exe" : "/bin/sh", [process.platform === "win32" ? "/c" : "-c", commandLine(command, args)], {
       cwd: launcherRoot,
       stdio: "inherit",
       env: process.env,
@@ -38,9 +43,10 @@ if (!process.env.GH_TOKEN) {
   throw new Error("GH_TOKEN nao encontrado. Configure GH_TOKEN no .env ou no ambiente do terminal antes de publicar.");
 }
 
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const electronBuilderCommand = path.join(launcherRoot, "node_modules", ".bin", process.platform === "win32" ? "electron-builder.cmd" : "electron-builder");
+const npmCommand = "npm";
+const nodeCommand = "node";
+const electronBuilderCommand = process.platform === "win32" ? "node_modules\\.bin\\electron-builder.cmd" : path.join(launcherRoot, "node_modules", ".bin", "electron-builder");
 
 await run(npmCommand, ["--prefix", "..", "run", "build"]);
-await run(process.execPath, ["scripts/write-env-resource.js"]);
+await run(nodeCommand, ["scripts/write-env-resource.js"]);
 await run(electronBuilderCommand, ["--win", "nsis", "--publish", "always"]);

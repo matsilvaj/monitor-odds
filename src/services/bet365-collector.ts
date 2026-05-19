@@ -110,6 +110,7 @@ const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
     { label: "Ligue 1", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E120498572/G40/" },
     { label: "Ligue 1 Play-Offs", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E133565227/G40/" }
   ],
+  62: [{ label: "Ligue 2 Play-Offs", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E133529647/G40/" }],
   66: [{ label: "Coupe de France", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E130578596/G40/" }],
   71: [{ label: "Brasileirao Serie A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E88369731/G40/" }],
   72: [{ label: "Brasileirao Serie B", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E102584281/G40/" }],
@@ -117,7 +118,10 @@ const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   79: [{ label: "2. Bundesliga", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E120439701/G40/" }],
   81: [{ label: "DFB Pokal", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E132422263/G40/" }],
   88: [{ label: "Eredivisie", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E92212336/G40/" }],
-  94: [{ label: "Portugal Primeira Liga", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E121080183/G40/" }],
+  94: [
+    { label: "Portugal Primeira Liga", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E121080183/G40/" },
+    { label: "Portugal Primeira Liga Play-Offs", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E133822795/G40/" }
+  ],
   119: [{ label: "Danish Superliga", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E130985935/G40/" }],
   128: [{ label: "Argentina Liga Profesional", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E98752003/G40/" }],
   135: [{ label: "Serie A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E92269709/G40/H%5E1/" }],

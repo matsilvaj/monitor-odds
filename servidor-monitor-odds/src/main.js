@@ -29,6 +29,9 @@ let monitorEnv = {};
 let supabase = null;
 let pendingRequests = [];
 let bookmakerIssues = [];
+const bookmakerFailureCounts = new Map();
+const bookmakerLastErrorMessages = new Map();
+const bookmakerFailedRuns = new Set();
 let pollTimer = null;
 let logParseBuffer = "";
 let isShuttingDown = false;
@@ -149,11 +152,47 @@ function upsertBookmakerIssue(slug, message) {
 }
 
 function clearBookmakerIssue(slug) {
+  bookmakerFailureCounts.delete(slug);
+  bookmakerLastErrorMessages.delete(slug);
+  bookmakerFailedRuns.delete(slug);
   const nextIssues = bookmakerIssues.filter((item) => item.bookmakerSlug !== slug);
   if (nextIssues.length === bookmakerIssues.length) return;
 
   bookmakerIssues = nextIssues;
   sendBookmakerIssues();
+}
+
+function recordBookmakerRun(slug, errors) {
+  if (!slug || slug === "sync") return;
+
+  if (errors <= 0) {
+    clearBookmakerIssue(slug);
+    return;
+  }
+
+  const failures = (bookmakerFailureCounts.get(slug) ?? 0) + 1;
+  bookmakerFailureCounts.set(slug, failures);
+
+  if (failures < 2) {
+    const nextIssues = bookmakerIssues.filter((item) => item.bookmakerSlug !== slug);
+    if (nextIssues.length !== bookmakerIssues.length) {
+      bookmakerIssues = nextIssues;
+      sendBookmakerIssues();
+    }
+    return;
+  }
+
+  upsertBookmakerIssue(
+    slug,
+    bookmakerLastErrorMessages.get(slug) ?? `A ultima coleta terminou com ${errors} erro${errors === 1 ? "" : "s"}. Confira os logs.`
+  );
+}
+
+function recordBookmakerErrorMessage(slug, message) {
+  if (!slug || slug === "sync" || !message) return;
+
+  bookmakerLastErrorMessages.set(slug, message);
+  if ((bookmakerFailureCounts.get(slug) ?? 0) >= 2) upsertBookmakerIssue(slug, message);
 }
 
 function inspectMonitorLine(rawLine) {
@@ -166,9 +205,14 @@ function inspectMonitorLine(rawLine) {
   const slug = bracketed[1];
   const messagePart = bracketed[2];
   const lowerMessage = messagePart.toLowerCase();
+  if (/^coleta falhou\b/i.test(messagePart)) {
+    bookmakerFailedRuns.add(slug);
+    return;
+  }
+
   const errorSeparator = messagePart.indexOf(":");
   if (errorSeparator > -1 && (lowerMessage.startsWith("erro:") || lowerMessage.includes("ltimo erro:"))) {
-    upsertBookmakerIssue(slug, messagePart.slice(errorSeparator + 1).trim());
+    recordBookmakerErrorMessage(slug, messagePart.slice(errorSeparator + 1).trim());
     return;
   }
 
@@ -176,12 +220,9 @@ function inspectMonitorLine(rawLine) {
   if (!runSummary) return;
 
   const summarySlug = runSummary[1];
-  const errors = Number(runSummary[2]);
-  if (errors > 0) {
-    upsertBookmakerIssue(summarySlug, `A ultima coleta terminou com ${errors} erro${errors === 1 ? "" : "s"}. Confira os logs.`);
-  } else {
-    clearBookmakerIssue(summarySlug);
-  }
+  const errors = bookmakerFailedRuns.has(summarySlug) ? Math.max(1, Number(runSummary[2])) : Number(runSummary[2]);
+  bookmakerFailedRuns.delete(summarySlug);
+  recordBookmakerRun(summarySlug, errors);
 }
 
 function inspectMonitorOutput(rawText) {
