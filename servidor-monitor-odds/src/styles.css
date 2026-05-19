@@ -99,14 +99,27 @@ h2 {
   gap: 10px;
 }
 
-.maintenance {
+.update-status {
   flex-basis: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
+  border: 1px solid #b7c8ff;
+  border-radius: 6px;
+  background: #eef4ff;
+  color: #1d3f8f;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 11px;
+}
+
+.update-status.active {
+  border-color: #9bc3ad;
+  background: #edf9f2;
+  color: var(--ok);
+}
+
+.update-status.error {
+  border-color: #f4a7a0;
+  background: #fff4f2;
+  color: var(--danger);
 }
 
 button {
@@ -132,18 +145,6 @@ button.primary {
 
 button.primary:hover {
   background: var(--primary-hover);
-}
-
-button.subtle {
-  padding: 6px 9px;
-  border-color: #e3e8f2;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-button.subtle:hover {
-  color: var(--text);
 }
 
 button:disabled {

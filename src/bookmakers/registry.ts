@@ -214,10 +214,64 @@ export type CollectAllBookmakersOptions = {
   logProgress?: boolean;
   trigger?: "manual" | "sync" | "watch";
   force?: boolean;
+  cleanupStarted?: boolean;
 };
 
+const BROWSER_COLLECTOR_SLUGS = new Set(["bet365", "meridianbet"]);
+
+async function collectBookmakers(bookmakers: BookmakerCollector[], options: CollectAllBookmakersOptions = {}) {
+  const concurrency = options.concurrency ?? 3;
+  const logProgress = options.logProgress ?? true;
+  const trigger = options.trigger ?? "sync";
+  if (options.cleanupStarted ?? true) {
+    const cleanup = await cleanupStartedFixtures();
+    if (logProgress) {
+      console.log(formatStartedFixtureCleanupSummary(cleanup));
+    }
+  }
+
+  const fixtureReport = await getFixtureReport();
+
+  if (logProgress) {
+    for (const line of formatFixtureReportLines(fixtureReport)) console.log(line);
+  }
+
+  const printBookmakerResult = async (result: BookmakerCollectorResult) => {
+    if (!logProgress) return;
+
+    try {
+      const report = await getBookmakerOddsReport(result.bookmaker, fixtureReport);
+      for (const line of formatBookmakerResultLines(result, report)) console.log(line);
+    } catch (error) {
+      console.warn(`[${result.bookmaker}] Coleta finalizada, mas nÃ£o consegui montar o resumo do banco: ${errorMessage(error)}`);
+    }
+  };
+
+  const collectOne = async (bookmaker: BookmakerCollector) => {
+    const start = performance.now();
+    if (logProgress) {
+      console.log(formatBookmakerStartLine(bookmaker.slug, fixtureReport));
+    }
+
+    try {
+      const summary = await bookmaker.collect({ logToConsole: logProgress, manualFallback: false, force: options.force, trigger });
+      const durationMs = Math.round(performance.now() - start);
+      const result = { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
+      await printBookmakerResult(result);
+      return result;
+    } catch (error) {
+      const durationMs = Math.round(performance.now() - start);
+      const result = { bookmaker: bookmaker.slug, summary: null, error: errorMessage(error), durationMs } satisfies BookmakerCollectorResult;
+      await printBookmakerResult(result);
+      return result;
+    }
+  };
+
+  return pMap(bookmakers, collectOne, { concurrency });
+}
+
 export async function collectAllBookmakers(options: CollectAllBookmakersOptions = {}) {
-  const concurrency = options.concurrency ?? 2;
+  const concurrency = options.concurrency ?? 3;
   const logProgress = options.logProgress ?? true;
   const trigger = options.trigger ?? "sync";
   const cleanup = await cleanupStartedFixtures();
@@ -262,7 +316,7 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
     }
   };
 
-  const browserCollectorSlugs = new Set(["bet365", "meridianbet"]);
+  const browserCollectorSlugs = BROWSER_COLLECTOR_SLUGS;
   const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => !browserCollectorSlugs.has(bookmaker.slug));
   const slowCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => browserCollectorSlugs.has(bookmaker.slug));
 
@@ -275,5 +329,19 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
   const [fastResults, slowResults] = await Promise.all([fastResultsPromise, slowResultsPromise]);
 
   return [...fastResults, ...slowResults];
+}
+
+export async function collectFastBookmakers(options: CollectAllBookmakersOptions = {}) {
+  const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => !BROWSER_COLLECTOR_SLUGS.has(bookmaker.slug));
+  return collectBookmakers(fastCollectors, options);
+}
+
+export async function collectBrowserBookmakers(options: CollectAllBookmakersOptions = {}) {
+  const browserCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => BROWSER_COLLECTOR_SLUGS.has(bookmaker.slug));
+  if ((options.logProgress ?? true) && browserCollectors.length) {
+    console.log("[sync] Casas com Chrome real iniciadas em uma raia propria.");
+  }
+
+  return collectBookmakers(browserCollectors, { ...options, concurrency: browserCollectors.length || 1 });
 }
 

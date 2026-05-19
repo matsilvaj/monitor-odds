@@ -3,6 +3,7 @@ const stopButton = document.querySelector("#stop-button");
 const chromeButton = document.querySelector("#chrome-button");
 const chromePath = document.querySelector("#chrome-path");
 const statusPill = document.querySelector("#status-pill");
+const updateStatus = document.querySelector("#update-status");
 const pendingList = document.querySelector("#pending-list");
 const logOutput = document.querySelector("#log-output");
 
@@ -32,7 +33,21 @@ function applyState(state) {
   chromePath.textContent = state.chromeExecutablePath ? `Chrome: ${state.chromeExecutablePath}` : "Chrome: nao configurado";
   if (Array.isArray(state.pendingRequests)) pendingRequests = state.pendingRequests;
   if (Array.isArray(state.bookmakerIssues)) bookmakerIssues = state.bookmakerIssues;
+  applyUpdateState(state.updateState);
   renderAttention();
+}
+
+function applyUpdateState(state) {
+  if (!updateStatus) return;
+
+  const shouldShow = state?.message && !["idle", "disabled"].includes(state.status);
+  updateStatus.hidden = !shouldShow;
+  if (!shouldShow) return;
+
+  updateStatus.textContent = state.message;
+  updateStatus.className = "update-status";
+  if (state.status === "error") updateStatus.classList.add("error");
+  if (["downloading", "installing"].includes(state.status)) updateStatus.classList.add("active");
 }
 
 function appendLog(text) {
@@ -146,18 +161,9 @@ chromeButton.addEventListener("click", () => {
   window.monitorOdds.selectChrome();
 });
 
-document.querySelectorAll("[data-release-collection]").forEach((button) => {
-  button.addEventListener("click", async () => {
-    const bookmakerSlug = button.dataset.releaseCollection;
-    button.disabled = true;
-    const result = await window.monitorOdds.releaseCollection(bookmakerSlug);
-    appendLog(result?.message ?? result?.error ?? "Nao consegui liberar a coleta.");
-    button.disabled = false;
-  });
-});
-
 window.monitorOdds.onState(applyState);
 window.monitorOdds.onLog(appendLog);
+window.monitorOdds.onUpdateState(applyUpdateState);
 window.monitorOdds.onPendingRequests((requests) => {
   pendingRequests = Array.isArray(requests) ? requests : [];
   renderAttention();

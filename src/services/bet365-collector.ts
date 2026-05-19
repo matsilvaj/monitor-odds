@@ -75,14 +75,6 @@ type Bet365RawEvent = {
   event: Bet365CollectedEvent;
 };
 
-type CollectionState = {
-  status: string;
-  next_run_at: string | null;
-  lease_until: string | null;
-  last_finished_at: string | null;
-  summary: unknown;
-};
-
 type Bet365LeagueLinkRow = {
   api_football_league_id: number;
   source_url: string;
@@ -104,7 +96,6 @@ type Bet365LeagueUrlCandidate = Bet365LeagueUrlSeed & {
 type Bet365Logger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
 
 const MINUTE_MS = 60 * 1000;
-const BET365_LOCK_LEASE_MS = 45 * MINUTE_MS;
 
 const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   1: [{ label: "Copa do Mundo", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E131901075/G40/" }],
@@ -208,7 +199,6 @@ function formatBet365ConsoleLine(level: "info" | "warn" | "error", message: stri
   if (message === "fixtures locais incompletos para a bet365; sincronizando API-Football antes de abrir o navegador") {
     return "[bet365] Sincronizando jogos da API-Football antes de abrir o Chrome.";
   }
-  if (message === "bet365 pulada porque outra coleta ainda esta rodando") return "[bet365] Coleta pulada: outra execução ainda está em andamento.";
   if (message === "ligas selecionadas para navegacao na bet365") {
     return `[bet365] Jogos alvo: ${contextValue(context, "fixturesTargeted")} | Ligas alvo: ${contextValue(context, "targetLeagues")}.`;
   }
@@ -311,49 +301,12 @@ async function ensureBaseRows(bookmaker: Bet365BookmakerConfig) {
   if (stateError) throw stateError;
 }
 
-async function getCollectionState(bookmaker: Bet365BookmakerConfig) {
-  const { data, error } = await supabase
-    .from("bookmaker_collection_state")
-    .select("status,next_run_at,lease_until,last_finished_at,summary")
-    .eq("bookmaker_slug", bookmaker.slug)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data as CollectionState | null;
-}
-
-async function acquireCollectionLock(bookmaker: Bet365BookmakerConfig) {
-  const leaseUntil = new Date(Date.now() + BET365_LOCK_LEASE_MS).toISOString();
-  const { data, error } = await supabase.rpc("try_acquire_bookmaker_collection_lock", {
-    p_bookmaker_slug: bookmaker.slug,
-    p_lease_until: leaseUntil
-  });
-
-  if (error) throw error;
-  return Boolean(data);
-}
-
-async function releaseCollectionLock(bookmaker: Bet365BookmakerConfig, summary: unknown, nextRunAt: string | null, status: "idle" | "error", lastError: string | null) {
-  const { error } = await supabase
-    .from("bookmaker_collection_state")
-    .update({
-      status,
-      last_finished_at: new Date().toISOString(),
-      next_run_at: nextRunAt,
-      lease_until: null,
-      last_error: lastError,
-      summary,
-      updated_at: new Date().toISOString()
-    })
-    .eq("bookmaker_slug", bookmaker.slug);
-
-  if (error) throw error;
-}
-
 async function updateCollectionState(bookmaker: Bet365BookmakerConfig, values: Record<string, unknown>) {
   const { error } = await supabase
     .from("bookmaker_collection_state")
     .update({
+      status: "idle",
+      lease_until: null,
       ...values,
       updated_at: new Date().toISOString()
     })
@@ -1014,19 +967,6 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
 
     summary.collectionInterval = "por jogo";
 
-    const state = await getCollectionState(bookmaker);
-
-    const lockAcquired = await acquireCollectionLock(bookmaker);
-    if (!lockAcquired) {
-      summary.skipped = true;
-      summary.skipReason = "already-running";
-      await logger("warn", "bet365 pulada porque outra coleta ainda esta rodando", {
-        leaseUntil: state?.lease_until ?? null,
-        status: state?.status ?? null
-      });
-      return summary;
-    }
-
     const fixtureIds = fixtures.map((fixture) => fixture.id);
     const targetLeagueIds = targetLeagues.map((league) => league.api_football_league_id);
     const [lastOddsByFixtureId, cachedUrlByFixtureId, cachedLeagueLinkByApiId] = await Promise.all([
@@ -1520,7 +1460,13 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
         await logger("error", "falha ao fechar Chrome da bet365", { error: serializeError(error) });
       });
       summary.nextRunAt = null;
-      await releaseCollectionLock(bookmaker, summary, summary.nextRunAt, summary.errors ? "error" : "idle", summary.lastError).catch(async (error) => {
+      await updateCollectionState(bookmaker, {
+        status: summary.errors ? "error" : "idle",
+        last_finished_at: new Date().toISOString(),
+        next_run_at: summary.nextRunAt,
+        last_error: summary.lastError,
+        summary
+      }).catch(async (error) => {
         summary.errors += 1;
         summary.lastError = errorMessage(error);
         await logger("error", "falha ao atualizar estado da coleta da bet365", { error: serializeError(error) });

@@ -14,7 +14,7 @@ type LinkLike = {
 };
 
 const MINUTE_MS = 60 * 1000;
-const MIN_PREMATCH_MS = 10 * MINUTE_MS;
+const MIN_PREMATCH_MS = 2 * MINUTE_MS;
 
 function timestamp(value: string | number | Date) {
   return value instanceof Date ? value.getTime() : new Date(value).getTime();

@@ -1,17 +1,19 @@
 {
   "name": "servidor-monitor-odds",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Launcher simples do servidor local do Monitor Odds.",
   "main": "src/main.js",
   "type": "module",
   "private": true,
   "scripts": {
     "dev": "electron .",
-    "package": "npm --prefix .. run build && node scripts/write-env-resource.js && electron-builder --win portable"
+    "package": "npm --prefix .. run build && node scripts/write-env-resource.js && electron-builder --win nsis",
+    "release": "node scripts/release.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "electron-updater": "^6.8.3"
   },
   "devDependencies": {
     "electron": "^39.2.7",
@@ -45,17 +47,32 @@
         "to": "monitor-env.json"
       }
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "matsilvaj",
+        "repo": "monitor-odds"
+      }
+    ],
     "win": {
       "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false,
       "target": [
         {
-          "target": "portable",
+          "target": "nsis",
           "arch": [
             "x64"
           ]
         }
       ],
-      "artifactName": "Servidor Monitor Odds.exe"
+      "artifactName": "Servidor-Monitor-Odds-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": false
     }
   }
 }

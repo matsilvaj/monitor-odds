@@ -7,6 +7,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { parse as parseEnv } from "dotenv";
+import electronUpdater from "electron-updater";
+
+const { autoUpdater } = electronUpdater;
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const launcherRoot = path.resolve(currentDir, "..");
@@ -18,7 +21,6 @@ const bookmakerNames = {
   meridianbet: "MeridianBet"
 };
 const browserCollectorSlugs = ["bet365", "meridianbet"];
-const collectionReleaseAliases = new Set(["chrome", "browser", "navegador"]);
 
 let mainWindow = null;
 let monitorProcess = null;
@@ -31,6 +33,11 @@ let pollTimer = null;
 let logParseBuffer = "";
 let isShuttingDown = false;
 let allowWindowClose = false;
+let updateInstallStarted = false;
+let updateState = {
+  status: "idle",
+  message: ""
+};
 
 async function readJson(filePath, fallback) {
   try {
@@ -86,10 +93,25 @@ async function sendState() {
     status,
     chromeExecutablePath: config.chromeExecutablePath ?? null,
     pendingRequests,
-    bookmakerIssues
+    bookmakerIssues,
+    updateState
   };
   send("state", state);
   return state;
+}
+
+function setUpdateState(nextState) {
+  updateState = {
+    ...updateState,
+    ...nextState
+  };
+  send("update-state", updateState);
+  void sendState();
+}
+
+function appendUpdateLog(message) {
+  setUpdateState({ message });
+  appendLog(message);
 }
 
 function bookmakerName(slug) {
@@ -221,11 +243,29 @@ function monitorRunConfig() {
   };
 }
 
+async function resetBrowserCollectionState() {
+  if (!supabase) return;
+
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("bookmaker_collection_state").upsert(
+    browserCollectorSlugs.map((bookmakerSlug) => ({
+      bookmaker_slug: bookmakerSlug,
+      status: "idle",
+      lease_until: null,
+      updated_at: now
+    })),
+    { onConflict: "bookmaker_slug" }
+  );
+
+  if (error) appendLog(`Nao consegui limpar o estado das coletas de navegador: ${error.message}`);
+}
+
 async function startMonitor() {
   if (monitorProcess) return { ok: true };
 
   const chromeExecutablePath = await ensureChromeExecutable();
   if (!chromeExecutablePath) return { ok: false, error: "Selecione o arquivo chrome.exe para iniciar." };
+  await resetBrowserCollectionState();
 
   const run = monitorRunConfig();
   const env = {
@@ -263,6 +303,7 @@ async function startMonitor() {
     status = code === 0 || code === null ? "parado" : "erro";
     appendLog(`Monitor encerrado${code === null ? "." : ` com codigo ${code}.`}`);
     monitorProcess = null;
+    await resetBrowserCollectionState();
     await sendState();
   });
 
@@ -282,53 +323,9 @@ async function stopMonitor() {
   monitorProcess.kill();
   monitorProcess = null;
   status = "parado";
+  await resetBrowserCollectionState();
   await sendState();
   return { ok: true };
-}
-
-async function releaseCollectionTargets(targets, { notify = true } = {}) {
-  if (!supabase) return { ok: false, error: "Supabase nao configurado." };
-  const now = new Date().toISOString();
-  const { error: bookmakerError } = await supabase.from("bookmakers").upsert(
-    targets.map((target) => ({ slug: target, name: bookmakerName(target) })),
-    { onConflict: "slug" }
-  );
-  if (bookmakerError) return { ok: false, error: bookmakerError.message };
-
-  const { data, error } = await supabase
-    .from("bookmaker_collection_state")
-    .upsert(
-      targets.map((target) => ({
-        bookmaker_slug: target,
-        status: "idle",
-        lease_until: null,
-        last_error: null,
-        updated_at: now
-      })),
-      { onConflict: "bookmaker_slug" }
-    )
-    .select("bookmaker_slug,status,lease_until,next_run_at,last_error");
-
-  if (error) return { ok: false, error: error.message };
-
-  const names = (data?.length ? data.map((row) => bookmakerName(row.bookmaker_slug)) : targets.map(bookmakerName)).join(" e ");
-  const message = `${names}: coleta liberada.`;
-  if (notify) {
-    appendLog(message);
-    for (const target of targets) clearBookmakerIssue(target);
-    await sendState();
-  }
-  return { ok: true, message };
-}
-
-async function releaseCollection(bookmakerSlug) {
-  const slug = String(bookmakerSlug ?? "").trim().toLowerCase();
-  const targets = collectionReleaseAliases.has(slug) ? browserCollectorSlugs : [slug];
-  if (!targets.every((target) => browserCollectorSlugs.includes(target))) {
-    return { ok: false, error: "Coleta desconhecida para liberar." };
-  }
-
-  return releaseCollectionTargets(targets);
 }
 
 async function killProcessTree(processToKill) {
@@ -365,6 +362,85 @@ async function stopMonitorForShutdown() {
   status = "parado";
 }
 
+async function rememberUpdateRestartPreference() {
+  const config = await loadConfig();
+  const shouldStartAfterUpdate = Boolean(monitorProcess) || status === "rodando" || status === "iniciando";
+  await saveConfig({ ...config, startAfterUpdate: shouldStartAfterUpdate });
+}
+
+async function startMonitorAfterUpdateIfNeeded() {
+  const config = await loadConfig();
+  if (!config.startAfterUpdate) return;
+
+  await saveConfig({ ...config, startAfterUpdate: false });
+  appendLog("Atualizacao aplicada. Reiniciando monitor automaticamente...");
+  const result = await startMonitor();
+  if (!result?.ok) appendLog(result?.error ?? "Nao consegui reiniciar o monitor apos a atualizacao.");
+}
+
+async function installDownloadedUpdate() {
+  if (updateInstallStarted) return;
+
+  updateInstallStarted = true;
+  setUpdateState({ status: "installing", message: "Atualizacao baixada. Reiniciando para instalar..." });
+
+  await rememberUpdateRestartPreference().catch((error) => {
+    appendLog(`Nao consegui salvar a retomada automatica apos update: ${error.message}`);
+  });
+
+  await stopMonitorForShutdown().catch((error) => {
+    appendLog(`Nao consegui parar o monitor antes do update: ${error.message}`);
+  });
+  await resetBrowserCollectionState().catch(() => undefined);
+
+  allowWindowClose = true;
+  autoUpdater.quitAndInstall(false, true);
+}
+
+function setupAutoUpdater() {
+  if (!app.isPackaged) {
+    setUpdateState({ status: "disabled", message: "Atualizacao automatica desativada no modo desenvolvimento." });
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = false;
+
+  autoUpdater.on("checking-for-update", () => {
+    setUpdateState({ status: "checking", message: "Verificando atualizacoes..." });
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    appendUpdateLog(`Atualizacao ${info.version ?? ""} encontrada. Baixando...`.trim());
+    setUpdateState({ status: "downloading" });
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    setUpdateState({ status: "idle", message: "" });
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    const percent = Math.max(0, Math.min(100, Math.round(progress.percent ?? 0)));
+    setUpdateState({ status: "downloading", message: `Baixando atualizacao: ${percent}%` });
+  });
+
+  autoUpdater.on("update-downloaded", () => {
+    void installDownloadedUpdate();
+  });
+
+  autoUpdater.on("error", (error) => {
+    setUpdateState({ status: "error", message: `Falha ao atualizar: ${error.message}` });
+    appendLog(`Falha ao verificar/baixar atualizacao: ${error.message}`);
+  });
+
+  setTimeout(() => {
+    void autoUpdater.checkForUpdates().catch((error) => {
+      setUpdateState({ status: "error", message: `Falha ao verificar atualizacao: ${error.message}` });
+      appendLog(`Falha ao verificar atualizacao: ${error.message}`);
+    });
+  }, 4000);
+}
+
 async function shutdownBeforeClose() {
   if (pollTimer) {
     clearInterval(pollTimer);
@@ -372,7 +448,7 @@ async function shutdownBeforeClose() {
   }
 
   await stopMonitorForShutdown().catch(() => undefined);
-  await releaseCollectionTargets(browserCollectorSlugs, { notify: false }).catch(() => undefined);
+  await resetBrowserCollectionState().catch(() => undefined);
 }
 
 function normalizeRequest(row) {
@@ -512,8 +588,10 @@ app.whenReady().then(async () => {
   monitorEnv = await loadMonitorEnv();
   supabase = createSupabaseClient(monitorEnv);
   createWindow();
+  setupAutoUpdater();
   await refreshPendingRequests();
   pollTimer = setInterval(refreshPendingRequests, 5000);
+  await startMonitorAfterUpdateIfNeeded();
 });
 
 app.on("before-quit", () => {
@@ -525,7 +603,6 @@ ipcMain.handle("select-chrome", selectChromeExecutable);
 ipcMain.handle("start-monitor", startMonitor);
 ipcMain.handle("stop-monitor", stopMonitor);
 ipcMain.handle("get-state", sendState);
-ipcMain.handle("release-collection", (_event, bookmakerSlug) => releaseCollection(bookmakerSlug));
 ipcMain.handle("save-competition-url", (_event, payload) => saveCompetitionUrl(payload));
 ipcMain.handle("open-user-data", () => userDataDir);
 

@@ -10,6 +10,13 @@ const TARGET_LEAGUE_ID_LIST = [...TARGET_LEAGUE_IDS].sort((a, b) => a - b);
 const LEAGUE_IDS_HASH = TARGET_LEAGUE_ID_LIST.join(",");
 const LEAGUE_CATALOG_SYNC_SOURCE = "api-football-leagues";
 
+export type SyncApiFootballFixturesOptions = {
+  dates?: Date[];
+  cleanupStarted?: boolean;
+  force?: boolean;
+  syncLeagueCatalog?: boolean;
+};
+
 function dateKey(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -17,9 +24,18 @@ function dateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function targetDates() {
+function targetDates(dates?: Date[]) {
+  if (dates?.length) {
+    const uniqueDates = new Map(dates.map((date) => [dateKey(date), new Date(date.getFullYear(), date.getMonth(), date.getDate())]));
+    return [...uniqueDates.values()];
+  }
+
   const now = new Date();
   return [0, 1].map((offset) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset));
+}
+
+function isForceSync(force?: boolean) {
+  return force ?? (process.env.FORCE_SYNC === "true" || process.env.FORCE_SYNC === "1");
 }
 
 function shouldDeleteFixture(row: ApiFootballFixtureRow) {
@@ -84,8 +100,7 @@ async function deactivateRemovedLeagues() {
   return data?.length ?? 0;
 }
 
-async function shouldSyncConfiguredLeaguesCatalog(key: string) {
-  const forceSync = process.env.FORCE_SYNC === "true" || process.env.FORCE_SYNC === "1";
+async function shouldSyncConfiguredLeaguesCatalog(key: string, forceSync: boolean) {
   if (forceSync) return true;
 
   const { data, error } = await supabase
@@ -100,9 +115,9 @@ async function shouldSyncConfiguredLeaguesCatalog(key: string) {
   return !(data?.status === "SUCCESS" && data.league_ids_hash === LEAGUE_IDS_HASH);
 }
 
-async function syncConfiguredLeaguesCatalog(client: ApiFootballClient) {
+async function syncConfiguredLeaguesCatalog(client: ApiFootballClient, forceSync: boolean) {
   const key = dateKey(new Date());
-  if (!(await shouldSyncConfiguredLeaguesCatalog(key))) {
+  if (!(await shouldSyncConfiguredLeaguesCatalog(key, forceSync))) {
     return {
       apiCalls: 0,
       leaguesSynced: 0,
@@ -250,8 +265,11 @@ async function upsertFixture(row: ApiFootballFixtureRow, leagueId: string, homeT
   return data.id as string;
 }
 
-export async function syncApiFootballFixtures() {
+export async function syncApiFootballFixtures(options: SyncApiFootballFixturesOptions = {}) {
   const client = new ApiFootballClient();
+  const forceSync = isForceSync(options.force);
+  const shouldCleanupStarted = options.cleanupStarted ?? true;
+  const shouldSyncLeagueCatalog = options.syncLeagueCatalog ?? true;
   const summary = {
     apiCalls: 0,
     leaguesSynced: 0,
@@ -267,31 +285,35 @@ export async function syncApiFootballFixtures() {
     errors: 0
   };
 
-  try {
-    const leagueCatalog = await syncConfiguredLeaguesCatalog(client);
-    summary.apiCalls += leagueCatalog.apiCalls;
-    summary.leaguesSynced = leagueCatalog.leaguesSynced;
-    summary.leaguesMissing = leagueCatalog.leaguesMissing;
-    summary.leaguesDisabled = leagueCatalog.leaguesDisabled;
-  } catch (error) {
-    summary.errors += 1;
-    await log("error", "api-football league catalog sync failed", {
-      error: error instanceof Error ? error.message : String(error)
-    });
+  if (shouldSyncLeagueCatalog) {
+    try {
+      const leagueCatalog = await syncConfiguredLeaguesCatalog(client, forceSync);
+      summary.apiCalls += leagueCatalog.apiCalls;
+      summary.leaguesSynced = leagueCatalog.leaguesSynced;
+      summary.leaguesMissing = leagueCatalog.leaguesMissing;
+      summary.leaguesDisabled = leagueCatalog.leaguesDisabled;
+    } catch (error) {
+      summary.errors += 1;
+      await log("error", "api-football league catalog sync failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
-  try {
-    const cleanup = await cleanupStartedFixtures();
-    summary.startedFixturesDeleted = cleanup.startedFixturesDeleted;
-    summary.startedSnapshotsDeleted = cleanup.startedSnapshotsDeleted;
-  } catch (error) {
-    summary.errors += 1;
-    await log("error", "started fixtures cleanup failed", {
-      error: error instanceof Error ? error.message : String(error)
-    });
+  if (shouldCleanupStarted) {
+    try {
+      const cleanup = await cleanupStartedFixtures();
+      summary.startedFixturesDeleted = cleanup.startedFixturesDeleted;
+      summary.startedSnapshotsDeleted = cleanup.startedSnapshotsDeleted;
+    } catch (error) {
+      summary.errors += 1;
+      await log("error", "started fixtures cleanup failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
-  for (const date of targetDates()) {
+  for (const date of targetDates(options.dates)) {
     const key = dateKey(date);
 
     try {
@@ -306,7 +328,6 @@ export async function syncApiFootballFixtures() {
 
       const lastSyncAt = syncRun?.status === "SUCCESS" && syncRun.synced_at ? new Date(syncRun.synced_at).getTime() : 0;
       const ttlMs = env.API_FOOTBALL_FIXTURE_TTL_MINUTES * 60 * 1000;
-      const forceSync = process.env.FORCE_SYNC === "true" || process.env.FORCE_SYNC === "1";
       const sameLeagueSet = syncRun?.league_ids_hash === LEAGUE_IDS_HASH;
       if (!forceSync && sameLeagueSet && lastSyncAt && Date.now() - lastSyncAt < ttlMs) {
         summary.skippedByCache += 1;

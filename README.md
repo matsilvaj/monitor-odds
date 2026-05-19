@@ -47,8 +47,16 @@ npm run sync
 npm run sync:fixtures
 npm run sync:odds
 npm run collect:bookmaker bet365
-npm run fechar:coleta bet365
+npm run client:package
 ```
+
+Para gerar uma versao com auto-update publicada no GitHub Releases, use:
+
+```bash
+npm run client:release
+```
+
+O comando le `GH_TOKEN` do `.env` local para publicar a release, mas esse token nao e incluido no instalador.
 
 ## Integracao com o lz
 

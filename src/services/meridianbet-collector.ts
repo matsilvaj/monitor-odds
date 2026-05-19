@@ -56,11 +56,6 @@ type DbLeagueRow = ActiveLeague & {
   enabled: boolean;
 };
 
-type CollectionState = {
-  status: string;
-  lease_until: string | null;
-};
-
 type MeridianLeagueLinkRow = {
   api_football_league_id: number;
   source_url: string;
@@ -71,7 +66,6 @@ type MeridianLeagueLinkRow = {
 type MeridianLogger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
 
 const MINUTE_MS = 60 * 1000;
-const MERIDIAN_LOCK_LEASE_MS = 45 * MINUTE_MS;
 
 const MERIDIAN_SEEDED_LEAGUE_URLS: Record<number, Array<{ label: string; sourceUrl: string }>> = {
   1: [{ label: "Copa do Mundo 2026", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327" }],
@@ -161,13 +155,13 @@ function formatMeridianConsoleLine(level: "info" | "warn" | "error", message: st
   if (message === "jogo pulado porque as odds da meridianbet ainda estao recentes") return `[meridianbet] Pulando ${fixtureName(context)}: odds recentes.`;
   if (message === "jogo da meridianbet salvo no banco") return `[meridianbet] Odds salvas: ${fixtureName(context)} | ${contextValue(context, "oddsUpserted")} odds.`;
   if (message === "jogo da meridianbet nao abriu") return `[meridianbet] Jogo nao aberto: ${fixtureName(context)}.`;
+  if (message === "pagina atual da meridianbet nao e um evento; odds ignoradas") return `[meridianbet] Pagina de evento nao confirmada: ${fixtureName(context)}.`;
   if (message === "jogo bruto coletado, mas nenhum mercado 1X2 foi identificado na meridianbet") return `[meridianbet] Jogo sem mercado 1X2: ${fixtureName(context)}.`;
   if (message === "liga da meridianbet sem link e sem jogos visiveis") return `[meridianbet] Liga sem link/jogos visiveis: ${contextValue(context, "leagueName")}.`;
   if (message === "liga da meridianbet com link cadastrado, mas sem jogos restantes visiveis") return `[meridianbet] Liga com link cadastrado sem jogos restantes visiveis: ${contextValue(context, "leagueName")}.`;
   if (message === "URL de liga da meridianbet sem jogos alvo") return `[meridianbet] URL da liga sem jogos alvo: ${contextValue(context, "leagueName")}.`;
   if (message === "pendencia de URL de liga criada") return `[meridianbet] URL da liga precisa de ajuste: ${contextValue(context, "leagueName")}.`;
   if (message === "pendencias de URL de liga indisponiveis; rode db:setup para habilitar") return "[meridianbet] Pendencias de URL indisponiveis; rode npm run db:setup para habilitar.";
-  if (message === "meridianbet pulada porque outra coleta ainda esta rodando") return "[meridianbet] Coleta pulada: outra execucao ainda esta em andamento.";
   if (message === "coleta da meridianbet finalizada") return `[meridianbet] Coleta finalizada: ${contextValue(context, "eventsCollected")} jogos coletados | ${contextValue(context, "oddsUpserted")} odds salvas | ${contextValue(context, "errors")} erros.`;
 
   if (level === "error") return `[meridianbet] Erro: ${message}.`;
@@ -208,37 +202,13 @@ async function ensureBaseRows(bookmaker: MeridianbetBookmakerConfig) {
   if (stateError) throw stateError;
 }
 
-async function getCollectionState(bookmaker: MeridianbetBookmakerConfig) {
-  const { data, error } = await supabase
-    .from("bookmaker_collection_state")
-    .select("status,lease_until")
-    .eq("bookmaker_slug", bookmaker.slug)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data as CollectionState | null;
-}
-
-async function acquireCollectionLock(bookmaker: MeridianbetBookmakerConfig) {
-  const leaseUntil = new Date(Date.now() + MERIDIAN_LOCK_LEASE_MS).toISOString();
-  const { data, error } = await supabase.rpc("try_acquire_bookmaker_collection_lock", {
-    p_bookmaker_slug: bookmaker.slug,
-    p_lease_until: leaseUntil
-  });
-
-  if (error) throw error;
-  return Boolean(data);
-}
-
-async function releaseCollectionLock(bookmaker: MeridianbetBookmakerConfig, summary: unknown, status: "idle" | "error", lastError: string | null) {
+async function updateCollectionState(bookmaker: MeridianbetBookmakerConfig, values: Record<string, unknown>) {
   const { error } = await supabase
     .from("bookmaker_collection_state")
     .update({
-      status,
-      last_finished_at: new Date().toISOString(),
+      status: "idle",
       lease_until: null,
-      last_error: lastError,
-      summary,
+      ...values,
       updated_at: new Date().toISOString()
     })
     .eq("bookmaker_slug", bookmaker.slug);
@@ -355,7 +325,7 @@ async function getCachedEventUrls(bookmakerSlug: string, fixtureIds: string[]) {
   for (const row of (data ?? []) as Array<{ fixture_id: string; source_url: string | null; raw: unknown }>) {
     const raw = row.raw && typeof row.raw === "object" && !Array.isArray(row.raw) ? (row.raw as Record<string, unknown>) : {};
     const collectionUrl = typeof raw.collectionUrl === "string" ? raw.collectionUrl : row.source_url;
-    if (collectionUrl && !urlByFixtureId.has(row.fixture_id)) urlByFixtureId.set(row.fixture_id, collectionUrl);
+    if (collectionUrl && isMeridianEventUrl(collectionUrl) && !urlByFixtureId.has(row.fixture_id)) urlByFixtureId.set(row.fixture_id, collectionUrl);
   }
   return urlByFixtureId;
 }
@@ -460,7 +430,7 @@ function buildBookmakerLink(bookmaker: MeridianbetBookmakerConfig, fixture: Cano
     starts_at: fixture.starts_at,
     match_confidence_score: 1,
     source_url: publicUrl,
-    raw: { sourceUrl: event.sourceUrl, collectionUrl: event.sourceUrl, publicUrl, rawText: event.rawText, markets: event.markets },
+    raw: { sourceUrl: event.sourceUrl, collectionUrl: publicUrl, publicUrl, rawText: event.rawText, markets: event.markets },
     updated_at: new Date().toISOString()
   };
 }
@@ -571,6 +541,11 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
     if (!fixtures.length) {
       summary.skipped = true;
       summary.skipReason = "no-future-fixtures";
+      await updateCollectionState(bookmaker, {
+        last_finished_at: new Date().toISOString(),
+        last_error: null,
+        summary
+      });
       await logger("info", "coleta da meridianbet finalizada", summary);
       return summary;
     }
@@ -589,19 +564,12 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
     if (!targetLeagues.length) {
       summary.skipped = true;
       summary.skipReason = "no-target-leagues-with-fixtures";
-      await logger("info", "coleta da meridianbet finalizada", summary);
-      return summary;
-    }
-
-    const state = await getCollectionState(bookmaker);
-    const lockAcquired = await acquireCollectionLock(bookmaker);
-    if (!lockAcquired) {
-      summary.skipped = true;
-      summary.skipReason = "already-running";
-      await logger("warn", "meridianbet pulada porque outra coleta ainda esta rodando", {
-        leaseUntil: state?.lease_until ?? null,
-        status: state?.status ?? null
+      await updateCollectionState(bookmaker, {
+        last_finished_at: new Date().toISOString(),
+        last_error: null,
+        summary
       });
+      await logger("info", "coleta da meridianbet finalizada", summary);
       return summary;
     }
 
@@ -803,7 +771,12 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
         summary.lastError = errorMessage(error);
         await logger("error", "falha ao fechar Chrome da meridianbet", { error: serializeError(error) });
       });
-      await releaseCollectionLock(bookmaker, summary, summary.errors ? "error" : "idle", summary.lastError).catch(async (error) => {
+      await updateCollectionState(bookmaker, {
+        status: summary.errors ? "error" : "idle",
+        last_finished_at: new Date().toISOString(),
+        last_error: summary.lastError,
+        summary
+      }).catch(async (error) => {
         summary.errors += 1;
         summary.lastError = errorMessage(error);
         await logger("error", "falha ao atualizar estado da coleta da meridianbet", { error: serializeError(error) });
