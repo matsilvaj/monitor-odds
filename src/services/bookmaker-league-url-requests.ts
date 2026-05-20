@@ -51,7 +51,7 @@ export async function requestBookmakerLeagueUrl(input: RequestLeagueUrlInput, lo
 
   if (error) {
     if (isMissingRequestsTable(error)) {
-      await logger?.("warn", "pendencias de URL de liga indisponiveis; rode db:setup para habilitar", {
+      await logger?.("warn", "pendências de URL de liga indisponíveis; rode db:setup para habilitar", {
         bookmakerSlug: input.bookmakerSlug,
         leagueName: input.league.name,
         apiFootballLeagueId: input.league.api_football_league_id,
@@ -63,7 +63,7 @@ export async function requestBookmakerLeagueUrl(input: RequestLeagueUrlInput, lo
     throw error;
   }
 
-  await logger?.("warn", "pendencia de URL de liga criada", {
+  await logger?.("warn", "pendência de URL de liga criada", {
     bookmakerSlug: input.bookmakerSlug,
     leagueName: input.league.name,
     country: input.league.country,
@@ -93,7 +93,7 @@ export async function resolveBookmakerLeagueUrlRequest(
     throw error;
   }
 
-  await logger?.("info", "pendencia de URL de liga resolvida", {
+  await logger?.("info", "pendência de URL de liga resolvida", {
     bookmakerSlug,
     leagueName: league.name,
     apiFootballLeagueId: league.api_football_league_id,

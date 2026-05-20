@@ -114,7 +114,7 @@ function targetDateKeys(date: BookmakerCollectOptions["date"]) {
   if (date === "today") return [dateKey(today)];
   if (date === "tomorrow") return [dateKey(tomorrow)];
   if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return [date];
-  throw new Error(`Data invalida para coleta: ${date}. Use today, tomorrow ou YYYY-MM-DD.`);
+  throw new Error(`Data inválida para coleta: ${date}. Use today, tomorrow ou YYYY-MM-DD.`);
 }
 
 function contextValue(context: Record<string, unknown>, key: string) {
@@ -136,20 +136,20 @@ function formatMeridianConsoleLine(level: "info" | "warn" | "error", message: st
   }
 
   if (message === "iniciando Chrome real via CDP para meridianbet") return "[meridianbet] Abrindo Chrome real...";
-  if (message === "perfil principal da meridianbet nao abriu CDP; tentando perfil temporario") return "[meridianbet] Perfil principal indisponível; usando perfil temporário.";
+  if (message === "perfil principal da meridianbet não abriu CDP; tentando perfil temporário") return "[meridianbet] Perfil principal indisponível; usando perfil temporário.";
   if (message === "fechando Chrome da meridianbet") return "[meridianbet] Fechando Chrome.";
   if (message === "links de ligas da meridianbet carregados") return `[meridianbet] Atalhos de liga: ${contextValue(context, "savedLinks")} salvos | ${contextValue(context, "seedLinks")} conhecidos.`;
   if (message === "abrindo liga da meridianbet por URL") return `[meridianbet] Abrindo liga por URL: ${contextValue(context, "label") || contextValue(context, "leagueName")}.`;
   if (message === "jogo aberto por URL cacheada da meridianbet") return `[meridianbet] URL salva abriu: ${fixtureName(context)}.`;
   if (message === "jogo da meridianbet salvo no banco") return `[meridianbet] Odds salvas: ${fixtureName(context)} | ${contextValue(context, "oddsUpserted")} odds.`;
-  if (message === "jogo da meridianbet nao abriu") return `[meridianbet] Jogo não aberto: ${fixtureName(context)}.`;
-  if (message === "pagina atual da meridianbet nao e um evento; odds ignoradas") return `[meridianbet] Página de evento não confirmada: ${fixtureName(context)}.`;
+  if (message === "jogo da meridianbet não abriu") return `[meridianbet] Jogo não aberto: ${fixtureName(context)}.`;
+  if (message === "página atual da meridianbet não é um evento; odds ignoradas") return `[meridianbet] Página de evento não confirmada: ${fixtureName(context)}.`;
   if (message === "jogo bruto coletado, mas nenhum mercado 1X2 foi identificado na meridianbet") return `[meridianbet] Jogo sem mercado 1X2: ${fixtureName(context)}.`;
   if (message === "liga da meridianbet sem link e sem jogos visiveis") return `[meridianbet] Liga sem link/jogos visiveis: ${contextValue(context, "leagueName")}.`;
   if (message === "liga da meridianbet com link cadastrado, mas sem jogos restantes visiveis") return `[meridianbet] Liga com link cadastrado sem jogos restantes visiveis: ${contextValue(context, "leagueName")}.`;
   if (message === "URL de liga da meridianbet sem jogos alvo") return `[meridianbet] URL da liga sem jogos alvo: ${contextValue(context, "leagueName")}.`;
-  if (message === "pendencia de URL de liga criada") return `[meridianbet] URL da liga precisa de ajuste: ${contextValue(context, "leagueName")}.`;
-  if (message === "pendencias de URL de liga indisponiveis; rode db:setup para habilitar") return "[meridianbet] Pendências de URL indisponíveis; rode npm run db:setup para habilitar.";
+  if (message === "pendência de URL de liga criada") return `[meridianbet] URL da liga precisa de ajuste: ${contextValue(context, "leagueName")}.`;
+  if (message === "pendências de URL de liga indisponíveis; rode db:setup para habilitar") return "[meridianbet] Pendências de URL indisponíveis; rode npm run db:setup para habilitar.";
   if (message === "coleta da meridianbet finalizada") return `[meridianbet] Coleta finalizada: ${contextValue(context, "eventsCollected")} jogos coletados | ${contextValue(context, "oddsUpserted")} odds salvas | ${contextValue(context, "errors")} erros.`;
 
   if (level === "error") return `[meridianbet] Erro: ${message}.`;
@@ -629,12 +629,12 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
               const opened = await client.openFixture(target);
               if (!opened) {
                 summary.eventsUnmatched += 1;
-                await logger("warn", "jogo da meridianbet nao abriu", {
+                await logger("warn", "jogo da meridianbet não abriu", {
                   fixtureId: fixture.id,
                   homeTeam: fixture.home_team,
                   awayTeam: fixture.away_team
                 });
-                await client.goToUrl(client.currentUrl(), "voltando para a liga da meridianbet apos falha").catch(() => undefined);
+                await client.goToUrl(client.currentUrl(), "voltando para a liga da meridianbet após falha").catch(() => undefined);
                 continue;
               }
 
@@ -648,7 +648,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
               processedFixtureIds.add(fixture.id);
               if (event.sourceUrl) cachedUrlByFixtureId.set(fixture.id, event.sourceUrl);
 
-              await client.goToUrl(candidate.sourceUrl, "voltando para a liga da meridianbet apos coletar jogo");
+              await client.goToUrl(candidate.sourceUrl, "voltando para a liga da meridianbet após coletar jogo");
               await client.selectAllPeriod();
             } catch (error) {
               summary.errors += 1;
@@ -660,7 +660,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
                 awayTeam: fixture.away_team,
                 error: serializeError(error)
               });
-              await client.goToUrl(candidate.sourceUrl, "voltando para a liga da meridianbet apos erro").catch(() => undefined);
+              await client.goToUrl(candidate.sourceUrl, "voltando para a liga da meridianbet após erro").catch(() => undefined);
             }
           }
           break;

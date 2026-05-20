@@ -93,7 +93,7 @@ async function waitForCdp(port: number, timeoutMs: number) {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
-  throw new Error(`Chrome CDP nao respondeu na porta ${port}`);
+  throw new Error(`Chrome CDP não respondeu na porta ${port}`);
 }
 
 function escapeRegExp(value: string) {
@@ -384,7 +384,7 @@ export class Bet365BrowserClient {
   }
 
   async stop() {
-    if (!this.browser || this.config.keepBrowserOpen) return;
+    if (!this.browser && !this.chromeProcess) return;
 
     if (process.env.NODE_ENV === "production") {
       await this.stopAdsPowerBrowser();
@@ -412,7 +412,7 @@ export class Bet365BrowserClient {
       this.browser = await chromium.connectOverCDP(wsEndpoint);
       this.context = this.browser.contexts()[0] ?? null;
 
-      if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegacao");
+      if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegação");
 
       this.page = await this.context.newPage();
       await this.configurePage(this.page);
@@ -425,6 +425,7 @@ export class Bet365BrowserClient {
   private async stopAdsPowerBrowser() {
     await this.logger("info", "Desconectando");
 
+    await this.closePages();
     await this.browser?.close().catch(() => {});
     await fetch("http://127.0.0.1:50325/api/v1/browser/stop?user_id=k1cl0m4a").catch(() => {});
 
@@ -438,7 +439,7 @@ export class Bet365BrowserClient {
     const profileDir = path.resolve(this.config.chromeProfileDir);
     await mkdir(profileDir, { recursive: true });
     const chromePath = findChromeExecutable(this.config.chromeExecutablePath);
-    if (!chromePath) throw new Error("chrome.exe nao encontrado. Configure BET365_CHROME_EXECUTABLE no .env.");
+    if (!chromePath) throw new Error("chrome.exe não encontrado. Configure BET365_CHROME_EXECUTABLE no .env.");
 
     const launch = async (targetProfileDir: string) => {
       const port = 9300 + Math.floor(Math.random() * 500);
@@ -461,7 +462,7 @@ export class Bet365BrowserClient {
       await waitForCdp(port, this.config.navigationTimeoutMs);
       this.browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
       this.context = this.browser.contexts()[0] ?? null;
-      if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegacao");
+      if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegação");
       await this.rememberCdpPort(targetProfileDir, port);
     };
 
@@ -472,7 +473,7 @@ export class Bet365BrowserClient {
       this.chromeProcess = null;
 
       if (await this.connectToExistingProfileBrowser(profileDir, error)) {
-        if (!this.context) throw new Error("Chrome CDP existente iniciou sem contexto de navegacao");
+        if (!this.context) throw new Error("Chrome CDP existente iniciou sem contexto de navegação");
         this.page = await this.context.newPage();
         await this.configurePage(this.page);
         return;
@@ -480,7 +481,7 @@ export class Bet365BrowserClient {
 
       const fallbackProfileDir = path.resolve(`${this.config.chromeProfileDir}-run-${Date.now()}`);
       await mkdir(fallbackProfileDir, { recursive: true });
-      await this.logger("warn", "perfil principal da bet365 nao abriu CDP; tentando perfil temporario", {
+      await this.logger("warn", "perfil principal da bet365 não abriu CDP; tentando perfil temporário", {
         profileDir,
         fallbackProfileDir,
         error: error instanceof Error ? error.message : String(error)
@@ -488,7 +489,7 @@ export class Bet365BrowserClient {
       await launch(fallbackProfileDir);
     }
 
-    if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegacao");
+    if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegação");
     this.page = await this.context.newPage();
     await this.configurePage(this.page);
   }
@@ -530,7 +531,7 @@ export class Bet365BrowserClient {
     const port = await this.findExistingCdpPortForProfile(profileDir);
     if (!port) return false;
 
-    await this.logger("warn", "perfil principal da bet365 ja esta aberto; conectando ao Chrome existente", {
+    await this.logger("warn", "perfil principal da bet365 já está aberto; conectando ao Chrome existente", {
       profileDir,
       port,
       originalError: originalError instanceof Error ? originalError.message : String(originalError)
@@ -542,7 +543,7 @@ export class Bet365BrowserClient {
       this.context = this.browser.contexts()[0] ?? null;
       return Boolean(this.context);
     } catch (error) {
-      await this.logger("warn", "nao consegui conectar ao Chrome existente da bet365", {
+      await this.logger("warn", "não consegui conectar ao Chrome existente da bet365", {
         profileDir,
         port,
         error: error instanceof Error ? error.message : String(error)
@@ -568,9 +569,15 @@ export class Bet365BrowserClient {
     });
   }
 
+  private async closePages() {
+    const pages = this.context?.pages() ?? (this.page ? [this.page] : []);
+    await Promise.allSettled(pages.map((page) => page.close({ runBeforeUnload: false })));
+  }
+
   private async stopLocalChromeBrowser() {
     await this.logger("info", "fechando Chrome da bet365");
-    await this.browser?.close();
+    await this.closePages();
+    await this.browser?.close().catch(() => undefined);
     this.chromeProcess?.kill();
     this.browser = null;
     this.context = null;
@@ -613,11 +620,11 @@ export class Bet365BrowserClient {
   }
 
   async openCompetitions() {
-    await this.logger("info", "abrindo lista de competicoes de futebol");
+    await this.logger("info", "abrindo lista de competições de futebol");
     const clicked = await this.clickText(/competitions|competições/i);
 
     if (!clicked) {
-      await this.goToUrl(this.hashUrl("/AS/B1/K%5E5/"), "abrindo lista de competicoes de futebol por URL");
+      await this.goToUrl(this.hashUrl("/AS/B1/K%5E5/"), "abrindo lista de competições de futebol por URL");
     } else {
       await this.waitForUi();
     }
@@ -647,7 +654,7 @@ export class Bet365BrowserClient {
   async openLeague(leagueName: string, country: string | null, expectedTeamNames: string[] = []) {
     const page = this.requirePage();
     const terms = leagueCompetitionTerms(leagueName, country);
-    await this.logger("info", "procurando liga nas competicoes da bet365", {
+    await this.logger("info", "procurando liga nas competições da bet365", {
       leagueName,
       country,
       terms: terms.slice(0, 8),
@@ -671,7 +678,7 @@ export class Bet365BrowserClient {
       const selected = ranked[0]?.target;
       if (selected) {
         const beforeUrl = page.url();
-        await this.logger("info", "clicando liga nas competicoes da bet365", {
+        await this.logger("info", "clicando liga nas competições da bet365", {
           leagueName,
           country,
           selectedLabel: selected.label,
@@ -696,7 +703,7 @@ export class Bet365BrowserClient {
       await page.waitForTimeout(450);
     }
 
-    await this.logger("warn", "nao consegui abrir a liga nas competicoes da bet365", { leagueName, country, terms: terms.slice(0, 8) });
+    await this.logger("warn", "não consegui abrir a liga nas competições da bet365", { leagueName, country, terms: terms.slice(0, 8) });
     return false;
   }
 
@@ -721,7 +728,7 @@ export class Bet365BrowserClient {
       if (await this.verifyCurrentEvent(fixture)) return true;
 
       if (this.isEventUrl(page.url())) {
-        await this.logger("warn", "pagina do evento abriu, mas os mercados ainda nao apareceram na validacao inicial", {
+        await this.logger("warn", "página do evento abriu, mas os mercados ainda não apareceram na validação inicial", {
           fixtureId: fixture.id,
           homeTeam: fixture.homeTeam,
           awayTeam: fixture.awayTeam,
@@ -732,7 +739,7 @@ export class Bet365BrowserClient {
         return true;
       }
 
-      await this.logger("warn", "pagina do evento abriu, mas nao confirmou os times na bet365", {
+      await this.logger("warn", "página do evento abriu, mas não confirmou os times na bet365", {
         fixtureId: fixture.id,
         homeTeam: fixture.homeTeam,
         awayTeam: fixture.awayTeam,
@@ -798,7 +805,7 @@ export class Bet365BrowserClient {
         }
 
         if (!hasFixturePair) {
-          await this.logger("warn", "busca da bet365 nao mostrou o jogo esperado", {
+          await this.logger("warn", "busca da bet365 não mostrou o jogo esperado", {
             fixtureId: fixture.id,
             homeTeam: fixture.homeTeam,
             awayTeam: fixture.awayTeam,
@@ -812,7 +819,7 @@ export class Bet365BrowserClient {
 
         if (opened && (await this.verifyCurrentEvent(fixture))) return true;
         if (this.isEventUrl(page.url())) {
-          await this.logger("warn", "pagina do evento abriu pela busca, mas a validacao inicial nao confirmou os times", {
+          await this.logger("warn", "página do evento abriu pela busca, mas a validação inicial não confirmou os times", {
             fixtureId: fixture.id,
             homeTeam: fixture.homeTeam,
             awayTeam: fixture.awayTeam,
@@ -823,7 +830,7 @@ export class Bet365BrowserClient {
       }
     }
 
-    await this.logger("warn", "nao consegui abrir o jogo pela busca da bet365", {
+    await this.logger("warn", "não consegui abrir o jogo pela busca da bet365", {
       fixtureId: fixture.id,
       homeTeam: fixture.homeTeam,
       awayTeam: fixture.awayTeam
@@ -908,7 +915,7 @@ export class Bet365BrowserClient {
       const beforeDomUrl = page.url();
       const domTarget = await this.clickFixtureDomTarget(homeTokens, awayTokens);
       if (domTarget.clicked) {
-        await this.logger("info", "jogo encontrado no container clicavel; abrindo pagina do evento", {
+        await this.logger("info", "jogo encontrado no container clicável; abrindo página do evento", {
           fixtureId: fixture.id,
           attempt: attempt + 1,
           targetText: domTarget.text.slice(0, 180)
@@ -917,7 +924,7 @@ export class Bet365BrowserClient {
         await this.waitForUi();
         if (await this.verifyCurrentEvent(fixture)) return true;
         if (page.url() !== beforeDomUrl && this.isEventUrl(page.url())) {
-          await this.logger("warn", "pagina do evento abriu, mas os mercados ainda nao apareceram na validacao inicial", {
+          await this.logger("warn", "página do evento abriu, mas os mercados ainda não apareceram na validação inicial", {
             fixtureId: fixture.id,
             url: page.url()
           });
@@ -928,7 +935,7 @@ export class Bet365BrowserClient {
       const target = await this.findFixtureClickTarget(homeTokens, awayTokens);
       if (target) {
         const beforeUrl = page.url();
-        await this.logger("info", "jogo encontrado na tela; abrindo pagina do evento", {
+        await this.logger("info", "jogo encontrado na tela; abrindo página do evento", {
           fixtureId: fixture.id,
           attempt: attempt + 1,
           targetText: target.text.slice(0, 180)
@@ -942,7 +949,7 @@ export class Bet365BrowserClient {
         }
 
         if (page.url() !== beforeUrl && this.isEventUrl(page.url())) {
-          await this.logger("warn", "pagina do evento abriu, mas os mercados ainda nao apareceram na validacao inicial", {
+          await this.logger("warn", "página do evento abriu, mas os mercados ainda não apareceram na validação inicial", {
             fixtureId: fixture.id,
             url: page.url()
           });
@@ -961,7 +968,7 @@ export class Bet365BrowserClient {
       await page.waitForTimeout(500);
     }
 
-    await this.logger("warn", "nao consegui abrir o jogo automaticamente", {
+    await this.logger("warn", "não consegui abrir o jogo automaticamente", {
       fixtureId: fixture.id,
       homeTeam: fixture.homeTeam,
       awayTeam: fixture.awayTeam
@@ -991,7 +998,7 @@ export class Bet365BrowserClient {
     if (this.isEventUrl(sourceUrl) && !/\/G40(?:\/|$)/i.test(sourceUrl)) {
       const moneylineUrl = sourceUrl.replace(/\/G\d+(?=\/|$)/i, "/G40");
       if (moneylineUrl !== sourceUrl) {
-        await this.logger("info", "ajustando pagina do evento da bet365 para mercado principal", {
+        await this.logger("info", "ajustando página do evento da bet365 para mercado principal", {
           fixtureId: fixture.id,
           sourceUrl,
           moneylineUrl
@@ -1028,7 +1035,7 @@ export class Bet365BrowserClient {
       .map((text, index) => parseMoneylineMarket(text, fixture, index))
       .filter((market): market is Bet365CollectedMarket => Boolean(market));
 
-    await this.logger("info", "odds lidas na pagina do jogo", {
+    await this.logger("info", "odds lidas na página do jogo", {
       fixtureId: fixture.id,
       sourceUrl,
       markets: markets.length,

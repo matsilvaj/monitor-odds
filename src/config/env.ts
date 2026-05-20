@@ -22,7 +22,7 @@ const envSchema = z.object({
   SUPABASE_URL: z
     .string()
     .url()
-    .refine((value) => !value.startsWith("sb_"), "Use o Project URL do Supabase, nao uma API key."),
+    .refine((value) => !value.startsWith("sb_"), "Use o Project URL do Supabase, não uma API key."),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   SUPABASE_DB_URL: optionalNonEmptyString(),
   API_FOOTBALL_BASE_URL: z.string().url().default("https://v3.football.api-sports.io"),
@@ -35,12 +35,10 @@ const envSchema = z.object({
   BET365_CHROME_PROFILE_DIR: z.string().default(".browser/bet365-cdp-profile"),
   BET365_CHROME_EXECUTABLE: optionalNonEmptyString(),
   BET365_MANUAL_FALLBACK: booleanFromEnv(true),
-  BET365_KEEP_BROWSER_OPEN: booleanFromEnv(false),
   BET365_NAVIGATION_TIMEOUT_MS: z.coerce.number().int().min(5000).default(45_000),
   MERIDIANBET_BASE_URL: z.string().url().default("https://meridianbet.bet.br/"),
   MERIDIANBET_CHROME_PROFILE_DIR: z.string().default(".browser/meridianbet-cdp-profile"),
   MERIDIANBET_CHROME_EXECUTABLE: optionalNonEmptyString(),
-  MERIDIANBET_KEEP_BROWSER_OPEN: booleanFromEnv(false),
   MERIDIANBET_NAVIGATION_TIMEOUT_MS: z.coerce.number().int().min(5000).default(45_000),
 });
 

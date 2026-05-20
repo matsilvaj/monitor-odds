@@ -320,7 +320,7 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
   const slowCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => browserCollectorSlugs.has(bookmaker.slug));
 
   if (logProgress && slowCollectors.length) {
-    console.log("[sync] Casas com Chrome real iniciadas em uma raia propria; as outras casas continuam em paralelo.");
+    console.log("[sync] Casas com Chrome real iniciadas em uma raia própria; as outras casas continuam em paralelo.");
   }
 
   const fastResultsPromise = pMap(fastCollectors, collectOne, { concurrency });
@@ -337,7 +337,7 @@ export async function collectFastBookmakers(options: CollectAllBookmakersOptions
 
 export async function collectBookmakerBySlug(slug: string, options: CollectAllBookmakersOptions = {}) {
   const bookmaker = BOOKMAKER_COLLECTORS.find((collector) => collector.slug === slug);
-  if (!bookmaker) throw new Error(`Bookmaker "${slug}" nao encontrada ou desabilitada.`);
+  if (!bookmaker) throw new Error(`Bookmaker "${slug}" não encontrada ou desabilitada.`);
 
   return collectBookmakers([bookmaker], { ...options, concurrency: 1 });
 }
@@ -345,7 +345,7 @@ export async function collectBookmakerBySlug(slug: string, options: CollectAllBo
 export async function collectBrowserBookmakers(options: CollectAllBookmakersOptions = {}) {
   const browserCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => BROWSER_COLLECTOR_SLUGS.has(bookmaker.slug));
   if ((options.logProgress ?? true) && browserCollectors.length) {
-    console.log("[sync] Casas com Chrome real iniciadas em uma raia propria.");
+    console.log("[sync] Casas com Chrome real iniciadas em uma raia própria.");
   }
 
   return collectBookmakers(browserCollectors, { ...options, concurrency: browserCollectors.length || 1 });

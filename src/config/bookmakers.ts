@@ -141,7 +141,6 @@ export type Bet365BookmakerConfig = {
   chromeProfileDir: string;
   chromeExecutablePath?: string;
   manualFallback: boolean;
-  keepBrowserOpen: boolean;
   navigationTimeoutMs: number;
 };
 
@@ -153,7 +152,6 @@ export type MeridianbetBookmakerConfig = {
   baseUrl: string;
   chromeProfileDir: string;
   chromeExecutablePath?: string;
-  keepBrowserOpen: boolean;
   navigationTimeoutMs: number;
 };
 
@@ -493,7 +491,6 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     chromeProfileDir: env.BET365_CHROME_PROFILE_DIR,
     chromeExecutablePath: env.BET365_CHROME_EXECUTABLE,
     manualFallback: env.BET365_MANUAL_FALLBACK,
-    keepBrowserOpen: env.BET365_KEEP_BROWSER_OPEN,
     navigationTimeoutMs: env.BET365_NAVIGATION_TIMEOUT_MS
   },
   {
@@ -504,7 +501,6 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.MERIDIANBET_BASE_URL,
     chromeProfileDir: env.MERIDIANBET_CHROME_PROFILE_DIR,
     chromeExecutablePath: env.MERIDIANBET_CHROME_EXECUTABLE,
-    keepBrowserOpen: env.MERIDIANBET_KEEP_BROWSER_OPEN,
     navigationTimeoutMs: env.MERIDIANBET_NAVIGATION_TIMEOUT_MS
   },
   {

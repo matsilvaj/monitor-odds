@@ -23,6 +23,11 @@ const bookmakerNames = {
 const browserCollectorSlugs = ["bet365", "meridianbet"];
 const pendingRequestPollIntervalMs = 30_000;
 const updateCheckIntervalMs = 30 * 60 * 1000;
+const monitorShutdownTimeoutMs = 12_000;
+const browserProfileDefaults = {
+  bet365: ".browser/bet365-cdp-profile",
+  meridianbet: ".browser/meridianbet-cdp-profile"
+};
 
 let mainWindow = null;
 let monitorProcess = null;
@@ -124,8 +129,8 @@ function appendUpdateLog(message) {
 
 async function checkForUpdates(reason = "manual") {
   if (!app.isPackaged) {
-    setUpdateState({ status: "disabled", message: "Atualizacoes disponiveis apenas no app instalado." });
-    return { ok: false, error: "Atualizacoes disponiveis apenas no app instalado." };
+    setUpdateState({ status: "disabled", message: "Atualizações disponíveis apenas no app instalado." });
+    return { ok: false, error: "Atualizações disponíveis apenas no app instalado." };
   }
 
   if (updateCheckInFlight) {
@@ -138,7 +143,7 @@ async function checkForUpdates(reason = "manual") {
 
   updateCheckInFlight = true;
   if (reason === "manual") {
-    setUpdateState({ status: "checking", message: "Verificando atualizacoes..." });
+    setUpdateState({ status: "checking", message: "Verificando atualizações..." });
   }
 
   try {
@@ -146,8 +151,8 @@ async function checkForUpdates(reason = "manual") {
     return { ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    setUpdateState({ status: "error", message: `Falha ao verificar atualizacao: ${message}` });
-    appendLog(`Falha ao verificar atualizacao: ${message}`);
+    setUpdateState({ status: "error", message: `Falha ao verificar atualização: ${message}` });
+    appendLog(`Falha ao verificar atualização: ${message}`);
     return { ok: false, error: message };
   } finally {
     updateCheckInFlight = false;
@@ -338,6 +343,46 @@ async function resetBrowserCollectionState() {
   if (error) appendLog(`Não consegui limpar o estado das coletas de navegador: ${error.message}`);
 }
 
+function resolveMonitorPath(value, fallbackValue) {
+  const run = monitorRunConfig();
+  const rawPath = String(value ?? fallbackValue);
+  return path.resolve(run.cwd, rawPath);
+}
+
+function browserProfileMarkers() {
+  return [
+    resolveMonitorPath(monitorEnv.BET365_CHROME_PROFILE_DIR, browserProfileDefaults.bet365),
+    `${resolveMonitorPath(monitorEnv.BET365_CHROME_PROFILE_DIR, browserProfileDefaults.bet365)}-run-`,
+    resolveMonitorPath(monitorEnv.MERIDIANBET_CHROME_PROFILE_DIR, browserProfileDefaults.meridianbet),
+    `${resolveMonitorPath(monitorEnv.MERIDIANBET_CHROME_PROFILE_DIR, browserProfileDefaults.meridianbet)}-run-`
+  ];
+}
+
+async function closeBrowserCollectorProcesses() {
+  if (process.platform !== "win32") return;
+
+  const markers = browserProfileMarkers();
+  const markerList = markers.map((marker) => `'${marker.replace(/'/g, "''")}'`).join(",");
+  const command =
+    `$markers = @(${markerList}); ` +
+    "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" | " +
+    "Where-Object { " +
+    "$cmd = $_.CommandLine; " +
+    "$matched = $false; " +
+    "foreach ($marker in $markers) { if ($cmd -and $cmd.IndexOf($marker, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $matched = $true; break } } " +
+    "$matched " +
+    "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
+
+  await new Promise((resolve) => {
+    const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
+      windowsHide: true,
+      stdio: "ignore"
+    });
+    child.on("error", resolve);
+    child.on("exit", resolve);
+  });
+}
+
 async function startMonitor() {
   if (monitorProcess) return { ok: true };
 
@@ -361,7 +406,8 @@ async function startMonitor() {
   monitorProcess = spawn(run.command, run.args, {
     cwd: run.cwd,
     env,
-    windowsHide: false
+    windowsHide: false,
+    stdio: app.isPackaged ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"]
   });
 
   monitorProcess.stdout?.on("data", (chunk) => appendLog(chunk.toString("utf8")));
@@ -379,9 +425,10 @@ async function startMonitor() {
     }
 
     status = code === 0 || code === null ? "parado" : "erro";
-    appendLog(`Monitor encerrado${code === null ? "." : ` com codigo ${code}.`}`);
+    appendLog(`Monitor encerrado${code === null ? "." : ` com código ${code}.`}`);
     monitorProcess = null;
     await resetBrowserCollectionState();
+    await closeBrowserCollectorProcesses();
     await sendState();
   });
 
@@ -391,18 +438,8 @@ async function startMonitor() {
 }
 
 async function stopMonitor() {
-  if (!monitorProcess) {
-    status = "parado";
-    await sendState();
-    return { ok: true };
-  }
-
-  appendLog("Parando monitor...");
-  monitorProcess.kill();
-  monitorProcess = null;
-  status = "parado";
-  await resetBrowserCollectionState();
-  await sendState();
+  appendLog("Parando monitor e fechando abas de coleta...");
+  await stopMonitorProcess();
   return { ok: true };
 }
 
@@ -425,8 +462,56 @@ async function killProcessTree(processToKill) {
 }
 
 async function stopMonitorForShutdown() {
+  await stopMonitorProcess({ updateStateAfterStop: false });
+}
+
+function requestGracefulMonitorStop(processToStop) {
+  if (typeof processToStop.send === "function" && processToStop.connected) {
+    try {
+      processToStop.send({ type: "shutdown" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  if (process.platform !== "win32") {
+    processToStop.kill("SIGTERM");
+    return true;
+  }
+
+  return false;
+}
+
+function canRequestGracefulMonitorStop(processToStop) {
+  return (typeof processToStop.send === "function" && processToStop.connected) || process.platform !== "win32";
+}
+
+function waitForProcessExit(processToStop, timeoutMs) {
+  if (processToStop.exitCode !== null || processToStop.signalCode !== null) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => cleanup(false), timeoutMs);
+    const cleanup = (exited) => {
+      clearTimeout(timer);
+      processToStop.removeListener("exit", onExit);
+      processToStop.removeListener("error", onError);
+      resolve(exited);
+    };
+    const onExit = () => cleanup(true);
+    const onError = () => cleanup(true);
+
+    processToStop.once("exit", onExit);
+    processToStop.once("error", onError);
+  });
+}
+
+async function stopMonitorProcess({ updateStateAfterStop = true } = {}) {
   if (!monitorProcess) {
     status = "parado";
+    await closeBrowserCollectorProcesses();
+    await resetBrowserCollectionState();
+    if (updateStateAfterStop) await sendState();
     return;
   }
 
@@ -436,8 +521,16 @@ async function stopMonitorForShutdown() {
   processToStop.stderr?.removeAllListeners("data");
   processToStop.removeAllListeners("exit");
   processToStop.removeAllListeners("error");
-  await killProcessTree(processToStop);
+
+  const canStopGracefully = canRequestGracefulMonitorStop(processToStop);
+  const gracefulRequested = canStopGracefully ? requestGracefulMonitorStop(processToStop) : false;
+  const exited = gracefulRequested ? await waitForProcessExit(processToStop, monitorShutdownTimeoutMs) : false;
+  if (!exited) await killProcessTree(processToStop);
+
+  await closeBrowserCollectorProcesses();
+  await resetBrowserCollectionState();
   status = "parado";
+  if (updateStateAfterStop) await sendState();
 }
 
 async function rememberUpdateRestartPreference() {
@@ -469,7 +562,6 @@ async function installDownloadedUpdate() {
   await stopMonitorForShutdown().catch((error) => {
     appendLog(`Não consegui parar o monitor antes do update: ${error.message}`);
   });
-  await resetBrowserCollectionState().catch(() => undefined);
 
   allowWindowClose = true;
   autoUpdater.quitAndInstall(false, true);
@@ -477,7 +569,7 @@ async function installDownloadedUpdate() {
 
 function setupAutoUpdater() {
   if (!app.isPackaged) {
-    setUpdateState({ status: "disabled", message: "Atualizacoes disponiveis apenas no app instalado." });
+    setUpdateState({ status: "disabled", message: "Atualizações disponíveis apenas no app instalado." });
     return;
   }
 
@@ -485,11 +577,11 @@ function setupAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = false;
 
   autoUpdater.on("checking-for-update", () => {
-    setUpdateState({ status: "checking", message: "Verificando atualizacoes..." });
+    setUpdateState({ status: "checking", message: "Verificando atualizações..." });
   });
 
   autoUpdater.on("update-available", (info) => {
-    appendUpdateLog(`Atualizacao ${info.version ?? ""} encontrada. Baixando...`.trim());
+    appendUpdateLog(`Atualização ${info.version ?? ""} encontrada. Baixando...`.trim());
     setUpdateState({ status: "downloading" });
   });
 
@@ -499,7 +591,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on("download-progress", (progress) => {
     const percent = Math.max(0, Math.min(100, Math.round(progress.percent ?? 0)));
-    setUpdateState({ status: "downloading", message: `Baixando atualizacao: ${percent}%` });
+    setUpdateState({ status: "downloading", message: `Baixando atualização: ${percent}%` });
   });
 
   autoUpdater.on("update-downloaded", () => {
@@ -508,7 +600,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on("error", (error) => {
     setUpdateState({ status: "error", message: `Falha ao atualizar: ${error.message}` });
-    appendLog(`Falha ao verificar/baixar atualizacao: ${error.message}`);
+    appendLog(`Falha ao verificar/baixar atualização: ${error.message}`);
   });
 
   setTimeout(() => {
@@ -685,6 +777,7 @@ app.on("before-quit", () => {
   if (pollTimer) clearInterval(pollTimer);
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (monitorProcess) void killProcessTree(monitorProcess);
+  void closeBrowserCollectorProcesses();
 });
 
 ipcMain.handle("select-chrome", selectChromeExecutable);

@@ -159,7 +159,7 @@ function targetDateKeys(date: BookmakerCollectOptions["date"]) {
   if (date === "tomorrow") return [dateKey(tomorrow)];
   if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return [date];
 
-  throw new Error(`Data invalida para coleta: ${date}. Use today, tomorrow ou YYYY-MM-DD.`);
+  throw new Error(`Data inválida para coleta: ${date}. Use today, tomorrow ou YYYY-MM-DD.`);
 }
 
 function contextValue(context: Record<string, unknown>, key: string) {
@@ -184,13 +184,13 @@ function formatBet365ConsoleLine(level: "info" | "warn" | "error", message: stri
   }
 
   if (message === "iniciando Chrome real via CDP para bet365") return "[bet365] Abrindo Chrome real...";
-  if (message === "perfil principal da bet365 nao abriu CDP; tentando perfil temporario") return "[bet365] Perfil principal indisponível; usando perfil temporário.";
+  if (message === "perfil principal da bet365 não abriu CDP; tentando perfil temporário") return "[bet365] Perfil principal indisponível; usando perfil temporário.";
   if (message === "fechando Chrome da bet365") return "[bet365] Fechando Chrome.";
   if (message === "banner de cookies aceito") return "[bet365] Cookies aceitos.";
   if (message === "fixtures locais incompletos para a bet365; sincronizando API-Football antes de abrir o navegador") {
     return "[bet365] Sincronizando jogos da API-Football antes de abrir o Chrome.";
   }
-  if (message === "ligas selecionadas para navegacao na bet365") {
+  if (message === "ligas selecionadas para navegação na bet365") {
     return `[bet365] Jogos alvo: ${contextValue(context, "fixturesTargeted")} | Ligas alvo: ${contextValue(context, "targetLeagues")}.`;
   }
   if (message === "checando URLs cacheadas da bet365") {
@@ -214,25 +214,25 @@ function formatBet365ConsoleLine(level: "info" | "warn" | "error", message: stri
   if (message === "link fixo de liga confirmado para a bet365") {
     return `[bet365] Link fixo confirmado: ${contextValue(context, "leagueName")} -> ${contextValue(context, "label")}.`;
   }
-  if (message === "pendencia de URL de liga criada") {
+  if (message === "pendência de URL de liga criada") {
     return `[bet365] URL da liga precisa de ajuste: ${contextValue(context, "leagueName")}.`;
   }
-  if (message === "pendencias de URL de liga indisponiveis; rode db:setup para habilitar") {
+  if (message === "pendências de URL de liga indisponíveis; rode db:setup para habilitar") {
     return "[bet365] Pendências de URL indisponíveis; rode npm run db:setup para habilitar.";
   }
   if (message === "jogo aberto por URL cacheada da bet365") {
     return `[bet365] URL salva abriu: ${fixtureName(context)}.`;
   }
-  if (message === "procurando liga nas competicoes da bet365") return `[bet365] Procurando liga em competições: ${contextValue(context, "leagueName")}.`;
-  if (message === "clicando liga nas competicoes da bet365") return `[bet365] Abrindo liga em competições: ${contextValue(context, "selectedLabel")}.`;
-  if (message === "nao consegui abrir a liga nas competicoes da bet365") return `[bet365] Liga não aberta em competições: ${contextValue(context, "leagueName")}.`;
-  if (message === "tentando abrir jogos restantes pela pagina da liga") {
+  if (message === "procurando liga nas competições da bet365") return `[bet365] Procurando liga em competições: ${contextValue(context, "leagueName")}.`;
+  if (message === "clicando liga nas competições da bet365") return `[bet365] Abrindo liga em competições: ${contextValue(context, "selectedLabel")}.`;
+  if (message === "não consegui abrir a liga nas competições da bet365") return `[bet365] Liga não aberta em competições: ${contextValue(context, "leagueName")}.`;
+  if (message === "tentando abrir jogos restantes pela página da liga") {
     return `[bet365] Tentando abrir jogos restantes pela liga ${contextValue(context, "leagueName")}: ${contextValue(context, "fixtures")} jogos.`;
   }
   if (message === "reabrindo jogo pela liga da bet365") {
     return `[bet365] Reabrindo jogo pela liga (${contextValue(context, "attempt")}/${contextValue(context, "attempts")}): ${fixtureName(context)}.`;
   }
-  if (message === "pagina do evento abriu, mas nao confirmou os times na bet365") return `[bet365] Evento abriu sem confirmar times: ${fixtureName(context)}.`;
+  if (message === "página do evento abriu, mas não confirmou os times na bet365") return `[bet365] Evento abriu sem confirmar times: ${fixtureName(context)}.`;
   if (message === "jogo sem mercado 1X2; reabrindo pela liga") {
     return `[bet365] Sem mercado 1X2; reabrindo pela liga (${contextValue(context, "attempt")}/${contextValue(context, "attempts")}): ${fixtureName(context)}.`;
   }
@@ -243,11 +243,11 @@ function formatBet365ConsoleLine(level: "info" | "warn" | "error", message: stri
   if (message === "jogo da bet365 salvo no banco") {
     return `[bet365] Odds salvas: ${fixtureName(context)} | ${contextValue(context, "oddsUpserted")} odds.`;
   }
-  if (message === "jogo ignorado porque ja comecou ou esta perto demais do inicio") {
-    return `[bet365] Pulando ${fixtureName(context)}: jogo ja iniciado ou muito perto do inicio.`;
+  if (message === "jogo ignorado porque já começou ou está perto demais do início") {
+    return `[bet365] Pulando ${fixtureName(context)}: jogo já iniciado ou muito perto do início.`;
   }
-  if (message === "liga ignorada porque nao foi aberta") return `[bet365] Liga nao aberta: ${contextValue(context, "leagueName")}.`;
-  if (message === "evento bruto encontrado, mas nao consegui abrir a pagina do jogo") return `[bet365] Jogo nao aberto: ${fixtureName(context)}.`;
+  if (message === "liga ignorada porque não foi aberta") return `[bet365] Liga não aberta: ${contextValue(context, "leagueName")}.`;
+  if (message === "evento bruto encontrado, mas não consegui abrir a página do jogo") return `[bet365] Jogo não aberto: ${fixtureName(context)}.`;
   if (message === "jogo bruto coletado, mas nenhum mercado 1X2 foi identificado") return `[bet365] Jogo sem mercado 1X2: ${fixtureName(context)}.`;
   if (message === "snapshot bruto salvo sem match canonico") return `[bet365] Snapshot salvo sem matching: ${fixtureName(context)}.`;
   if (message === "snapshot bruto salvo e matcheado, mas sem odds finais") return `[bet365] Snapshot salvo sem odds finais: ${fixtureName(context)}.`;
@@ -962,7 +962,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
         if (!isPrematch(fixture.starts_at)) {
           processedFixtureIds.add(fixture.id);
           summary.eventsSkippedStarted += 1;
-          await logger("info", "jogo ignorado porque ja comecou ou esta perto demais do inicio", {
+          await logger("info", "jogo ignorado porque já começou ou está perto demais do início", {
             fixtureId: fixture.id,
             homeTeam: fixture.home_team,
             awayTeam: fixture.away_team,
@@ -979,7 +979,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
           await client.goToUrl(cachedUrl, "abrindo jogo da bet365 por URL em cache");
           const openedEvent = await client.verifyCurrentEvent(target);
           if (!openedEvent) {
-            await logger("warn", "URL em cache da bet365 nao abriu o jogo esperado", {
+            await logger("warn", "URL em cache da bet365 não abriu o jogo esperado", {
               fixtureId: fixture.id,
               cachedUrl,
               homeTeam: fixture.home_team,
@@ -1044,7 +1044,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
       );
       const navigationTargetLeagues = targetLeagues.filter((league) => remainingLeagueIds.has(league.api_football_league_id));
 
-      await logger("info", "ligas selecionadas para navegacao na bet365", {
+      await logger("info", "ligas selecionadas para navegação na bet365", {
         targetLeagues: navigationTargetLeagues.length,
         skippedWithoutFixtures: summary.leaguesSkippedNoFixtures,
         fixturesTargeted: remainingFixturesForNavigation.length,
@@ -1099,7 +1099,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
               attempt.pageHasTargetFixture = pageHasTargetFixture;
             } catch (error) {
               attempt.error = errorMessage(error);
-              await logger("warn", "falha ao abrir URL de liga da bet365; tentando proxima alternativa", {
+              await logger("warn", "falha ao abrir URL de liga da bet365; tentando próxima alternativa", {
                 leagueName: league.name,
                 apiFootballLeagueId: league.api_football_league_id,
                 label: candidate.label,
@@ -1156,7 +1156,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
           }
 
           if (!openedLeague) {
-            await logger("info", "liga nao abriu na bet365; tentando busca direta pelos jogos", {
+            await logger("info", "liga não abriu na bet365; tentando busca direta pelos jogos", {
               leagueName: league.name,
               country: league.country,
               apiFootballLeagueId: league.api_football_league_id,
@@ -1170,7 +1170,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
                 if (!isPrematch(fixture.starts_at)) {
                   summary.eventsSkippedStarted += 1;
                   processedFixtureIds.add(fixture.id);
-                  await logger("info", "jogo ignorado porque ja comecou ou esta perto demais do inicio", {
+                  await logger("info", "jogo ignorado porque já começou ou está perto demais do início", {
                     leagueName: league.name,
                     fixtureId: fixture.id,
                     homeTeam: fixture.home_team,
@@ -1185,7 +1185,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
 
                 if (!openedBySearch) {
                   summary.eventsUnmatched += 1;
-                  await logger("warn", "nao consegui abrir o jogo da bet365 pela busca", {
+                  await logger("warn", "não consegui abrir o jogo da bet365 pela busca", {
                     leagueName: league.name,
                     fixtureId: fixture.id,
                     homeTeam: fixture.home_team,
@@ -1268,7 +1268,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
 
             if (hasSeedLeagueUrl) {
               await resolveBookmakerLeagueUrlRequest(bookmaker.slug, league, seedUrl ?? previousUrl, logger);
-              await logger("warn", "liga da bet365 ignorada sem pendencia manual porque ja possui URL fixa cadastrada", {
+            await logger("warn", "liga da bet365 ignorada sem pendência manual porque já possui URL fixa cadastrada", {
                 leagueName: league.name,
                 country: league.country,
                 apiFootballLeagueId: league.api_football_league_id,
@@ -1292,7 +1292,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
                 logger
               );
             }
-            await logger("warn", "liga ignorada porque nao foi aberta", {
+            await logger("warn", "liga ignorada porque não foi aberta", {
               leagueName: league.name,
               country: league.country,
               apiFootballLeagueId: league.api_football_league_id,
@@ -1332,7 +1332,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
 
               if (!isPrematch(candidate.startsAt)) {
                 summary.eventsSkippedStarted += 1;
-                await logger("info", "jogo ignorado porque ja comecou ou esta perto demais do inicio", {
+                await logger("info", "jogo ignorado porque já começou ou está perto demais do início", {
                   leagueName: league.name,
                   homeTeam: candidate.homeTeam,
                   awayTeam: candidate.awayTeam,
@@ -1352,13 +1352,13 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
                 if (openedEvent) {
                   summary.eventsOpenedFromCache += 1;
                 } else {
-                  await logger("warn", "URL em cache da bet365 nao abriu o jogo esperado; voltando para a liga", {
+                  await logger("warn", "URL em cache da bet365 não abriu o jogo esperado; voltando para a liga", {
                     fixtureId: previewMatch?.fixture.id,
                     cachedUrl,
                     homeTeam: candidate.homeTeam,
                     awayTeam: candidate.awayTeam
                   });
-                  await client.goToUrl(leagueUrl, "voltando para a liga apos cache invalido");
+                  await client.goToUrl(leagueUrl, "voltando para a liga após cache inválido");
                 }
               }
 
@@ -1368,13 +1368,13 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
 
               if (!openedEvent) {
                 summary.eventsUnmatched += 1;
-                await logger("warn", "evento bruto encontrado, mas nao consegui abrir a pagina do jogo", {
+                await logger("warn", "evento bruto encontrado, mas não consegui abrir a página do jogo", {
                   leagueName: league.name,
                   homeTeam: candidate.homeTeam,
                   awayTeam: candidate.awayTeam,
                   startsAt: candidate.startsAt
                 });
-                await client.goToUrl(leagueUrl, "voltando para a liga apos falha ao abrir jogo");
+                await client.goToUrl(leagueUrl, "voltando para a liga após falha ao abrir jogo");
                 continue;
               }
 
@@ -1413,7 +1413,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
                 cachedUrlByFixtureId.set(persisted.fixtureId, event.sourceUrl);
               }
 
-              await client.goToUrl(leagueUrl, "voltando para a liga apos coletar jogo");
+              await client.goToUrl(leagueUrl, "voltando para a liga após coletar jogo");
             } catch (error) {
               summary.errors += 1;
               summary.lastError = errorMessage(error);
@@ -1424,7 +1424,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
                 startsAt: candidate.startsAt,
                 error: serializeError(error)
               });
-              await client.goToUrl(leagueUrl, "voltando para a liga apos erro no jogo").catch(() => undefined);
+              await client.goToUrl(leagueUrl, "voltando para a liga após erro no jogo").catch(() => undefined);
             }
           }
 
@@ -1433,7 +1433,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
           );
 
           if (missingLeagueFixtures.length) {
-            await logger("info", "tentando abrir jogos restantes pela pagina da liga", {
+            await logger("info", "tentando abrir jogos restantes pela página da liga", {
               leagueName: league.name,
               fixtures: missingLeagueFixtures.length
             });
@@ -1443,7 +1443,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
                 if (!isPrematch(fixture.starts_at)) {
                   summary.eventsSkippedStarted += 1;
                   processedFixtureIds.add(fixture.id);
-                  await logger("info", "jogo ignorado porque ja comecou ou esta perto demais do inicio", {
+                  await logger("info", "jogo ignorado porque já começou ou está perto demais do início", {
                     leagueName: league.name,
                     fixtureId: fixture.id,
                     homeTeam: fixture.home_team,
@@ -1459,7 +1459,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
 
                 if (!openedEvent) {
                   summary.eventsUnmatched += 1;
-                  await logger("warn", "evento bruto encontrado, mas nao consegui abrir a pagina do jogo", {
+                  await logger("warn", "evento bruto encontrado, mas não consegui abrir a página do jogo", {
                     leagueName: league.name,
                     homeTeam: fixture.home_team,
                     awayTeam: fixture.away_team,
@@ -1502,7 +1502,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
               } catch (error) {
                 summary.errors += 1;
                 summary.lastError = errorMessage(error);
-                await logger("error", "falha ao coletar jogo restante da bet365 pela pagina da liga", {
+                await logger("error", "falha ao coletar jogo restante da bet365 pela página da liga", {
                   leagueName: league.name,
                   fixtureId: fixture.id,
                   homeTeam: fixture.home_team,

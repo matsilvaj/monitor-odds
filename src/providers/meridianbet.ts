@@ -69,7 +69,7 @@ async function waitForCdp(port: number, timeoutMs: number) {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
-  throw new Error(`Chrome CDP nao respondeu na porta ${port}`);
+  throw new Error(`Chrome CDP não respondeu na porta ${port}`);
 }
 
 function normalizeVisibleText(value: unknown) {
@@ -233,7 +233,7 @@ export class MeridianbetBrowserClient {
     const profileDir = path.resolve(this.config.chromeProfileDir);
     await mkdir(profileDir, { recursive: true });
     const chromePath = findChromeExecutable(this.config.chromeExecutablePath);
-    if (!chromePath) throw new Error("chrome.exe nao encontrado. Configure MERIDIANBET_CHROME_EXECUTABLE no .env.");
+    if (!chromePath) throw new Error("chrome.exe não encontrado. Configure MERIDIANBET_CHROME_EXECUTABLE no .env.");
 
     const launch = async (targetProfileDir: string) => {
       const port = 9800 + Math.floor(Math.random() * 500);
@@ -256,7 +256,7 @@ export class MeridianbetBrowserClient {
       await waitForCdp(port, this.config.navigationTimeoutMs);
       this.browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
       this.context = this.browser.contexts()[0] ?? null;
-      if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegacao");
+      if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegação");
     };
 
     try {
@@ -265,7 +265,7 @@ export class MeridianbetBrowserClient {
       this.chromeProcess?.kill();
       const fallbackProfileDir = path.resolve(`${this.config.chromeProfileDir}-run-${Date.now()}`);
       await mkdir(fallbackProfileDir, { recursive: true });
-      await this.logger("warn", "perfil principal da meridianbet nao abriu CDP; tentando perfil temporario", {
+      await this.logger("warn", "perfil principal da meridianbet não abriu CDP; tentando perfil temporário", {
         profileDir,
         fallbackProfileDir,
         error: error instanceof Error ? error.message : String(error)
@@ -273,7 +273,7 @@ export class MeridianbetBrowserClient {
       await launch(fallbackProfileDir);
     }
 
-    if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegacao");
+    if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegação");
     this.page = await this.context.newPage();
     this.page.setDefaultTimeout(this.config.navigationTimeoutMs);
     this.page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
@@ -282,14 +282,20 @@ export class MeridianbetBrowserClient {
   }
 
   async stop() {
-    if (!this.browser || this.config.keepBrowserOpen) return;
+    if (!this.browser && !this.chromeProcess) return;
     await this.logger("info", "fechando Chrome da meridianbet");
-    await this.browser.close();
+    await this.closePages();
+    await this.browser?.close().catch(() => undefined);
     this.chromeProcess?.kill();
     this.browser = null;
     this.context = null;
     this.page = null;
     this.chromeProcess = null;
+  }
+
+  private async closePages() {
+    const pages = this.context?.pages() ?? (this.page ? [this.page] : []);
+    await Promise.allSettled(pages.map((page) => page.close({ runBeforeUnload: false })));
   }
 
   currentUrl() {
@@ -322,7 +328,7 @@ export class MeridianbetBrowserClient {
       }
     }
 
-    await this.logger("warn", "filtro TUDO da meridianbet nao encontrado na barra de tempo");
+    await this.logger("warn", "filtro TUDO da meridianbet não encontrado na barra de tempo");
   }
 
   async pageHasFixturePair(fixtures: MeridianFixtureTarget[]) {
@@ -375,7 +381,7 @@ export class MeridianbetBrowserClient {
     for (let attempt = 0; attempt < 16; attempt += 1) {
       const target = await this.findFixtureClickTarget(homeTokens, awayTokens);
       if (target) {
-        await this.logger("info", "jogo encontrado na meridianbet; abrindo pagina do evento", {
+        await this.logger("info", "jogo encontrado na meridianbet; abrindo página do evento", {
           fixtureId: fixture.id,
           attempt: attempt + 1,
           targetText: target.text.slice(0, 180),
@@ -398,7 +404,7 @@ export class MeridianbetBrowserClient {
       await page.waitForTimeout(450);
     }
 
-    await this.logger("warn", "nao consegui abrir o jogo automaticamente na meridianbet", {
+    await this.logger("warn", "não consegui abrir o jogo automaticamente na meridianbet", {
       fixtureId: fixture.id,
       homeTeam: fixture.homeTeam,
       awayTeam: fixture.awayTeam
@@ -419,7 +425,7 @@ export class MeridianbetBrowserClient {
     await this.waitForUi();
     const sourceUrl = page.url();
     if (!(await this.verifyCurrentEvent(fixture))) {
-      throw new Error(`MeridianBet nao abriu a pagina do evento: ${fixture.homeTeam} x ${fixture.awayTeam}`);
+      throw new Error(`MeridianBet não abriu a página do evento: ${fixture.homeTeam} x ${fixture.awayTeam}`);
     }
 
     await this.clickExactText("PRINCIPAL").catch(() => false);
@@ -437,7 +443,7 @@ export class MeridianbetBrowserClient {
     }
 
     if (!eventDetailText) {
-      throw new Error(`MeridianBet abriu a lista da liga, mas nao confirmou o painel do evento: ${fixture.homeTeam} x ${fixture.awayTeam}`);
+      throw new Error(`MeridianBet abriu a lista da liga, mas não confirmou o painel do evento: ${fixture.homeTeam} x ${fixture.awayTeam}`);
     }
 
     const textBlocks = moneylineBlocksFromText(eventDetailText);
@@ -449,7 +455,7 @@ export class MeridianbetBrowserClient {
       .map((text, index) => parseMoneylineMarket(text, fixture, index))
       .filter((market): market is MeridianCollectedMarket => Boolean(market));
 
-    await this.logger("info", "odds lidas na pagina do jogo da meridianbet", {
+    await this.logger("info", "odds lidas na página do jogo da meridianbet", {
       fixtureId: fixture.id,
       sourceUrl,
       markets: markets.length,
