@@ -51,7 +51,8 @@
       {
         "provider": "github",
         "owner": "matsilvaj",
-        "repo": "monitor-odds"
+        "repo": "monitor-odds",
+        "releaseType": "release"
       }
     ],
     "win": {
