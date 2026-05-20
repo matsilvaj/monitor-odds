@@ -1,6 +1,7 @@
 const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
 const chromeButton = document.querySelector("#chrome-button");
+const updateButton = document.querySelector("#update-button");
 const appVersion = document.querySelector("#app-version");
 const chromePath = document.querySelector("#chrome-path");
 const statusPill = document.querySelector("#status-pill");
@@ -41,6 +42,10 @@ function applyState(state) {
 
 function applyUpdateState(state) {
   if (!updateStatus) return;
+
+  if (updateButton) {
+    updateButton.disabled = ["checking", "downloading", "installing"].includes(state?.status);
+  }
 
   const shouldShow = state?.message && !["idle", "disabled"].includes(state.status);
   updateStatus.hidden = !shouldShow;
@@ -161,6 +166,13 @@ stopButton.addEventListener("click", () => {
 
 chromeButton.addEventListener("click", () => {
   window.monitorOdds.selectChrome();
+});
+
+updateButton.addEventListener("click", async () => {
+  updateButton.disabled = true;
+  const result = await window.monitorOdds.checkUpdates();
+  if (!result?.ok && result?.error) appendLog(result.error);
+  if (!result?.ok) updateButton.disabled = false;
 });
 
 window.monitorOdds.onState(applyState);

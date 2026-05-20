@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -22,6 +22,7 @@ const bookmakerNames = {
 };
 const browserCollectorSlugs = ["bet365", "meridianbet"];
 const pendingRequestPollIntervalMs = 30_000;
+const updateCheckIntervalMs = 30 * 60 * 1000;
 
 let mainWindow = null;
 let monitorProcess = null;
@@ -34,6 +35,8 @@ const bookmakerFailureCounts = new Map();
 const bookmakerLastErrorMessages = new Map();
 const bookmakerFailedRuns = new Set();
 let pollTimer = null;
+let updateCheckTimer = null;
+let updateCheckInFlight = false;
 let logParseBuffer = "";
 let isShuttingDown = false;
 let allowWindowClose = false;
@@ -117,6 +120,38 @@ function setUpdateState(nextState) {
 function appendUpdateLog(message) {
   setUpdateState({ message });
   appendLog(message);
+}
+
+async function checkForUpdates(reason = "manual") {
+  if (!app.isPackaged) {
+    setUpdateState({ status: "disabled", message: "Atualizacoes disponiveis apenas no app instalado." });
+    return { ok: false, error: "Atualizacoes disponiveis apenas no app instalado." };
+  }
+
+  if (updateCheckInFlight) {
+    return { ok: true, skipped: true };
+  }
+
+  if (["downloading", "installing"].includes(updateState.status)) {
+    return { ok: true, skipped: true };
+  }
+
+  updateCheckInFlight = true;
+  if (reason === "manual") {
+    setUpdateState({ status: "checking", message: "Verificando atualizacoes..." });
+  }
+
+  try {
+    await autoUpdater.checkForUpdates();
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setUpdateState({ status: "error", message: `Falha ao verificar atualizacao: ${message}` });
+    appendLog(`Falha ao verificar atualizacao: ${message}`);
+    return { ok: false, error: message };
+  } finally {
+    updateCheckInFlight = false;
+  }
 }
 
 function bookmakerName(slug) {
@@ -442,7 +477,7 @@ async function installDownloadedUpdate() {
 
 function setupAutoUpdater() {
   if (!app.isPackaged) {
-    setUpdateState({ status: "disabled", message: "Atualização automática desativada no modo desenvolvimento." });
+    setUpdateState({ status: "disabled", message: "Atualizacoes disponiveis apenas no app instalado." });
     return;
   }
 
@@ -450,11 +485,11 @@ function setupAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = false;
 
   autoUpdater.on("checking-for-update", () => {
-    setUpdateState({ status: "checking", message: "Verificando atualizações..." });
+    setUpdateState({ status: "checking", message: "Verificando atualizacoes..." });
   });
 
   autoUpdater.on("update-available", (info) => {
-    appendUpdateLog(`Atualização ${info.version ?? ""} encontrada. Baixando...`.trim());
+    appendUpdateLog(`Atualizacao ${info.version ?? ""} encontrada. Baixando...`.trim());
     setUpdateState({ status: "downloading" });
   });
 
@@ -464,7 +499,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on("download-progress", (progress) => {
     const percent = Math.max(0, Math.min(100, Math.round(progress.percent ?? 0)));
-    setUpdateState({ status: "downloading", message: `Baixando atualização: ${percent}%` });
+    setUpdateState({ status: "downloading", message: `Baixando atualizacao: ${percent}%` });
   });
 
   autoUpdater.on("update-downloaded", () => {
@@ -473,21 +508,27 @@ function setupAutoUpdater() {
 
   autoUpdater.on("error", (error) => {
     setUpdateState({ status: "error", message: `Falha ao atualizar: ${error.message}` });
-    appendLog(`Falha ao verificar/baixar atualização: ${error.message}`);
+    appendLog(`Falha ao verificar/baixar atualizacao: ${error.message}`);
   });
 
   setTimeout(() => {
-    void autoUpdater.checkForUpdates().catch((error) => {
-      setUpdateState({ status: "error", message: `Falha ao verificar atualização: ${error.message}` });
-      appendLog(`Falha ao verificar atualização: ${error.message}`);
-    });
+    void checkForUpdates("startup");
   }, 4000);
+
+  updateCheckTimer = setInterval(() => {
+    void checkForUpdates("scheduled");
+  }, updateCheckIntervalMs);
 }
 
 async function shutdownBeforeClose() {
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
+  }
+
+  if (updateCheckTimer) {
+    clearInterval(updateCheckTimer);
+    updateCheckTimer = null;
   }
 
   await stopMonitorForShutdown().catch(() => undefined);
@@ -603,6 +644,7 @@ function createWindow() {
     minWidth: 640,
     minHeight: 560,
     title: "Servidor Monitor Odds",
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(currentDir, "preload.cjs"),
       contextIsolation: true,
@@ -610,6 +652,7 @@ function createWindow() {
     }
   });
 
+  mainWindow.setMenuBarVisibility(false);
   mainWindow.loadFile(path.join(currentDir, "index.html"));
   mainWindow.on("close", (event) => {
     if (allowWindowClose) return;
@@ -628,6 +671,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
   monitorEnv = await loadMonitorEnv();
   supabase = createSupabaseClient(monitorEnv);
   createWindow();
@@ -639,6 +683,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   if (pollTimer) clearInterval(pollTimer);
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (monitorProcess) void killProcessTree(monitorProcess);
 });
 
@@ -646,6 +691,7 @@ ipcMain.handle("select-chrome", selectChromeExecutable);
 ipcMain.handle("start-monitor", startMonitor);
 ipcMain.handle("stop-monitor", stopMonitor);
 ipcMain.handle("get-state", sendState);
+ipcMain.handle("check-updates", () => checkForUpdates("manual"));
 ipcMain.handle("save-competition-url", (_event, payload) => saveCompetitionUrl(payload));
 ipcMain.handle("open-user-data", () => userDataDir);
 

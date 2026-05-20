@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("monitorOdds", {
   selectChrome: () => ipcRenderer.invoke("select-chrome"),
   startMonitor: () => ipcRenderer.invoke("start-monitor"),
   stopMonitor: () => ipcRenderer.invoke("stop-monitor"),
+  checkUpdates: () => ipcRenderer.invoke("check-updates"),
   getState: () => ipcRenderer.invoke("get-state"),
   saveCompetitionUrl: (payload) => ipcRenderer.invoke("save-competition-url", payload),
   onState: (callback) => ipcRenderer.on("state", (_event, value) => callback(value)),
