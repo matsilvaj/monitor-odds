@@ -40,7 +40,7 @@ try {
 }
 
 if (!process.env.GH_TOKEN) {
-  throw new Error("GH_TOKEN nao encontrado. Configure GH_TOKEN no .env ou no ambiente do terminal antes de publicar.");
+  throw new Error("GH_TOKEN não encontrado. Configure GH_TOKEN no .env ou no ambiente do terminal antes de publicar.");
 }
 
 const npmCommand = "npm";

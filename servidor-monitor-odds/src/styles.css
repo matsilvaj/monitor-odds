@@ -55,11 +55,16 @@ h2 {
   margin-bottom: 12px;
 }
 
+#app-version,
 #chrome-path {
   margin-top: 6px;
   color: var(--muted);
   font-size: 13px;
   overflow-wrap: anywhere;
+}
+
+#app-version {
+  font-weight: 600;
 }
 
 .status-pill {

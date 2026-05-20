@@ -1,10 +1,14 @@
-import { collectBrowserBookmakers, collectFastBookmakers } from "../bookmakers/registry.js";
+import { collectBookmakerBySlug, collectFastBookmakers } from "../bookmakers/registry.js";
 import { cleanupOldLogs } from "../services/log-retention.js";
 import { syncApiFootballFixtures, type SyncApiFootballFixturesOptions } from "../services/api-football-sync.js";
 import { formatFixtureSyncSummary } from "../services/sync-report.js";
 
 const LOG_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const MIN_MIDNIGHT_SYNC_DELAY_MS = 1000;
+const BROWSER_BOOKMAKER_LOOPS = [
+  { slug: "bet365", name: "bet365" },
+  { slug: "meridianbet", name: "Meridian" }
+] as const;
 
 function nextLocalMidnight(date = new Date()) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1, 0, 0, 0, 0);
@@ -40,7 +44,7 @@ async function runFixtureSync(label: string, options: SyncApiFootballFixturesOpt
 function scheduleMidnightFixtureSync() {
   const nextMidnight = nextLocalMidnight();
   const delayMs = Math.max(MIN_MIDNIGHT_SYNC_DELAY_MS, nextMidnight.getTime() - Date.now());
-  console.log(`[sync] API-Football: proxima atualizacao de amanha em ${nextMidnight.toLocaleString("pt-BR")}.`);
+  console.log(`[sync] API-Football: próxima atualização de amanhã em ${nextMidnight.toLocaleString("pt-BR")}.`);
 
   setTimeout(() => {
     void runFixtureSync("virada do dia", {
@@ -49,7 +53,7 @@ function scheduleMidnightFixtureSync() {
       force: true
     })
       .catch((error) => {
-        console.error("[sync] Falha na atualizacao de amanha pela API-Football.", error);
+        console.error("[sync] Falha na atualização de amanhã pela API-Football.", error);
       })
       .finally(scheduleMidnightFixtureSync);
   }, delayMs);
@@ -77,13 +81,15 @@ async function runFastBookmakerLoop() {
   }
 }
 
-async function runBrowserBookmakerLoop() {
+async function runBrowserBookmakerLoop(bookmaker: (typeof BROWSER_BOOKMAKER_LOOPS)[number]) {
   while (true) {
     const startedAt = new Date();
-    console.log(`[sync] Ciclo das casas com navegador iniciado as ${startedAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`);
-    await collectBrowserBookmakers({ logProgress: true, trigger: "watch", force: true, cleanupStarted: false });
-    console.log("[sync] Ciclo das casas com navegador finalizado. Reiniciando imediatamente.");
+    console.log(
+      `[sync] Ciclo da ${bookmaker.name} iniciado as ${startedAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`
+    );
+    await collectBookmakerBySlug(bookmaker.slug, { logProgress: true, trigger: "watch", force: true, cleanupStarted: false });
+    console.log(`[sync] Ciclo da ${bookmaker.name} finalizado. Reiniciando imediatamente.`);
   }
 }
 
-await Promise.all([runFastBookmakerLoop(), runBrowserBookmakerLoop()]);
+await Promise.all([runFastBookmakerLoop(), ...BROWSER_BOOKMAKER_LOOPS.map((bookmaker) => runBrowserBookmakerLoop(bookmaker))]);

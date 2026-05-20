@@ -1,7 +1,10 @@
 import { supabase } from "./supabase.js";
+import { errorMessage } from "../utils/errors.js";
 
-const DEFAULT_BATCH_SIZE = 200;
-const DELETE_FIXTURE_BATCH_SIZE = 50;
+const DEFAULT_BATCH_SIZE = 50;
+const DELETE_FIXTURE_BATCH_SIZE = 10;
+const DB_RETRY_ATTEMPTS = 3;
+const DB_RETRY_BASE_DELAY_MS = 500;
 
 export type BookmakerLinkRow = {
   bookmaker_slug: string;
@@ -45,6 +48,30 @@ function chunks<T>(items: T[], size: number) {
   return result;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isStatementTimeout(error: unknown) {
+  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+  return code === "57014" || /statement timeout/i.test(errorMessage(error));
+}
+
+async function withStatementTimeoutRetry(label: string, operation: () => Promise<{ error: unknown }>) {
+  for (let attempt = 1; attempt <= DB_RETRY_ATTEMPTS; attempt += 1) {
+    const { error } = await operation();
+    if (!error) return;
+
+    if (!isStatementTimeout(error) || attempt === DB_RETRY_ATTEMPTS) {
+      throw error;
+    }
+
+    const delayMs = DB_RETRY_BASE_DELAY_MS * attempt;
+    console.warn(`[db] ${label} cancelado por timeout; tentando novamente (${attempt + 1}/${DB_RETRY_ATTEMPTS})...`);
+    await sleep(delayMs);
+  }
+}
+
 export class OddsRepository {
   static async saveAll(
     bookmakerSlug: string,
@@ -59,11 +86,11 @@ export class OddsRepository {
     const oddsToSave = odds.map((odd) => ({ ...odd, updated_at: saveStartedAt }));
 
     for (const linkBatch of chunks(linksToSave, DEFAULT_BATCH_SIZE)) {
-      const { error: linksError } = await supabase.from("bookmaker_event_links").upsert(linkBatch, {
-        onConflict: "bookmaker_slug,external_event_id"
-      });
-
-      if (linksError) throw linksError;
+      await withStatementTimeoutRetry("upsert de links de eventos", async () =>
+        await supabase.from("bookmaker_event_links").upsert(linkBatch, {
+          onConflict: "bookmaker_slug,external_event_id"
+        })
+      );
     }
 
     const uniqueOdds = [
@@ -73,32 +100,33 @@ export class OddsRepository {
     ];
 
     for (const oddBatch of chunks(uniqueOdds, DEFAULT_BATCH_SIZE)) {
-      const { error: oddsError } = await supabase.from("odds").upsert(oddBatch, {
-        onConflict: "fixture_id,bookmaker_slug,market_code,selection,pa_category,source_odd_id"
-      });
-
-      if (oddsError) throw oddsError;
+      await withStatementTimeoutRetry("upsert de odds", async () =>
+        await supabase.from("odds").upsert(oddBatch, {
+          onConflict: "fixture_id,bookmaker_slug,market_code,selection,pa_category,source_odd_id"
+        })
+      );
     }
 
     if (fixtureIds.length) {
       for (const fixtureIdBatch of chunks(fixtureIds, DELETE_FIXTURE_BATCH_SIZE)) {
-        const { error: deleteOddsError } = await supabase
-          .from("odds")
-          .delete()
-          .eq("bookmaker_slug", bookmakerSlug)
-          .in("market_code", marketCodes)
-          .in("fixture_id", fixtureIdBatch)
-          .lt("updated_at", saveStartedAt);
+        await withStatementTimeoutRetry("limpeza de odds antigas", async () =>
+          await supabase
+            .from("odds")
+            .delete()
+            .eq("bookmaker_slug", bookmakerSlug)
+            .in("market_code", marketCodes)
+            .in("fixture_id", fixtureIdBatch)
+            .lt("updated_at", saveStartedAt)
+        );
 
-        if (deleteOddsError) throw deleteOddsError;
-
-        const { error: deleteLinksError } = await supabase
-          .from("bookmaker_event_links")
-          .delete()
-          .eq("bookmaker_slug", bookmakerSlug)
-          .in("fixture_id", fixtureIdBatch)
-          .lt("updated_at", saveStartedAt);
-        if (deleteLinksError) throw deleteLinksError;
+        await withStatementTimeoutRetry("limpeza de links antigos", async () =>
+          await supabase
+            .from("bookmaker_event_links")
+            .delete()
+            .eq("bookmaker_slug", bookmakerSlug)
+            .in("fixture_id", fixtureIdBatch)
+            .lt("updated_at", saveStartedAt)
+        );
       }
     }
 

@@ -94,6 +94,7 @@ async function sendState() {
   const config = await loadConfig();
   const state = {
     status,
+    appVersion: app.getVersion(),
     chromeExecutablePath: config.chromeExecutablePath ?? null,
     pendingRequests,
     bookmakerIssues,
@@ -184,7 +185,7 @@ function recordBookmakerRun(slug, errors) {
 
   upsertBookmakerIssue(
     slug,
-    bookmakerLastErrorMessages.get(slug) ?? `A ultima coleta terminou com ${errors} erro${errors === 1 ? "" : "s"}. Confira os logs.`
+    bookmakerLastErrorMessages.get(slug) ?? `A última coleta terminou com ${errors} erro${errors === 1 ? "" : "s"}. Confira os logs.`
   );
 }
 
@@ -298,7 +299,7 @@ async function resetBrowserCollectionState() {
     { onConflict: "bookmaker_slug" }
   );
 
-  if (error) appendLog(`Nao consegui limpar o estado das coletas de navegador: ${error.message}`);
+  if (error) appendLog(`Não consegui limpar o estado das coletas de navegador: ${error.message}`);
 }
 
 async function startMonitor() {
@@ -414,23 +415,23 @@ async function startMonitorAfterUpdateIfNeeded() {
   if (!config.startAfterUpdate) return;
 
   await saveConfig({ ...config, startAfterUpdate: false });
-  appendLog("Atualizacao aplicada. Reiniciando monitor automaticamente...");
+  appendLog("Atualização aplicada. Reiniciando monitor automaticamente...");
   const result = await startMonitor();
-  if (!result?.ok) appendLog(result?.error ?? "Nao consegui reiniciar o monitor apos a atualizacao.");
+  if (!result?.ok) appendLog(result?.error ?? "Não consegui reiniciar o monitor após a atualização.");
 }
 
 async function installDownloadedUpdate() {
   if (updateInstallStarted) return;
 
   updateInstallStarted = true;
-  setUpdateState({ status: "installing", message: "Atualizacao baixada. Reiniciando para instalar..." });
+  setUpdateState({ status: "installing", message: "Atualização baixada. Reiniciando para instalar..." });
 
   await rememberUpdateRestartPreference().catch((error) => {
-    appendLog(`Nao consegui salvar a retomada automatica apos update: ${error.message}`);
+    appendLog(`Não consegui salvar a retomada automática após update: ${error.message}`);
   });
 
   await stopMonitorForShutdown().catch((error) => {
-    appendLog(`Nao consegui parar o monitor antes do update: ${error.message}`);
+    appendLog(`Não consegui parar o monitor antes do update: ${error.message}`);
   });
   await resetBrowserCollectionState().catch(() => undefined);
 
@@ -440,7 +441,7 @@ async function installDownloadedUpdate() {
 
 function setupAutoUpdater() {
   if (!app.isPackaged) {
-    setUpdateState({ status: "disabled", message: "Atualizacao automatica desativada no modo desenvolvimento." });
+    setUpdateState({ status: "disabled", message: "Atualização automática desativada no modo desenvolvimento." });
     return;
   }
 
@@ -448,11 +449,11 @@ function setupAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = false;
 
   autoUpdater.on("checking-for-update", () => {
-    setUpdateState({ status: "checking", message: "Verificando atualizacoes..." });
+    setUpdateState({ status: "checking", message: "Verificando atualizações..." });
   });
 
   autoUpdater.on("update-available", (info) => {
-    appendUpdateLog(`Atualizacao ${info.version ?? ""} encontrada. Baixando...`.trim());
+    appendUpdateLog(`Atualização ${info.version ?? ""} encontrada. Baixando...`.trim());
     setUpdateState({ status: "downloading" });
   });
 
@@ -462,7 +463,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on("download-progress", (progress) => {
     const percent = Math.max(0, Math.min(100, Math.round(progress.percent ?? 0)));
-    setUpdateState({ status: "downloading", message: `Baixando atualizacao: ${percent}%` });
+    setUpdateState({ status: "downloading", message: `Baixando atualização: ${percent}%` });
   });
 
   autoUpdater.on("update-downloaded", () => {
@@ -471,13 +472,13 @@ function setupAutoUpdater() {
 
   autoUpdater.on("error", (error) => {
     setUpdateState({ status: "error", message: `Falha ao atualizar: ${error.message}` });
-    appendLog(`Falha ao verificar/baixar atualizacao: ${error.message}`);
+    appendLog(`Falha ao verificar/baixar atualização: ${error.message}`);
   });
 
   setTimeout(() => {
     void autoUpdater.checkForUpdates().catch((error) => {
-      setUpdateState({ status: "error", message: `Falha ao verificar atualizacao: ${error.message}` });
-      appendLog(`Falha ao verificar atualizacao: ${error.message}`);
+      setUpdateState({ status: "error", message: `Falha ao verificar atualização: ${error.message}` });
+      appendLog(`Falha ao verificar atualização: ${error.message}`);
     });
   }, 4000);
 }
@@ -530,7 +531,7 @@ async function refreshPendingRequests() {
     .order("updated_at", { ascending: false });
 
   if (error) {
-    appendLog(`Nao consegui ler pendencias de URL: ${error.message}`);
+    appendLog(`Não consegui ler pendências de URL: ${error.message}`);
     return;
   }
 
@@ -540,14 +541,14 @@ async function refreshPendingRequests() {
 }
 
 async function saveCompetitionUrl({ requestId, url }) {
-  if (!supabase) return { ok: false, error: "Supabase nao configurado." };
+  if (!supabase) return { ok: false, error: "Supabase não configurado." };
 
   const sourceUrl = String(url ?? "").trim();
   try {
     const parsed = new URL(sourceUrl);
-    if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("URL invalida");
+    if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("URL inválida");
   } catch {
-    return { ok: false, error: "Cole uma URL valida da competicao." };
+    return { ok: false, error: "Cole uma URL válida da competição." };
   }
 
   const { data: request, error: requestError } = await supabase
@@ -557,7 +558,7 @@ async function saveCompetitionUrl({ requestId, url }) {
     .maybeSingle();
 
   if (requestError) return { ok: false, error: requestError.message };
-  if (!request) return { ok: false, error: "Pendencia nao encontrada." };
+  if (!request) return { ok: false, error: "Pendência não encontrada." };
 
   const updatedAt = new Date().toISOString();
   const { error: linkError } = await supabase.from("bookmaker_league_links").upsert(

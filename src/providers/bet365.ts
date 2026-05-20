@@ -1,12 +1,16 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import type { Bet365BookmakerConfig } from "../config/bookmakers.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 
 type Logger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
+
+const execFileAsync = promisify(execFile);
+const CDP_PORT_FILE = "monitor-odds-cdp-port.txt";
 
 export type Bet365FixtureTarget = {
   id: string;
@@ -458,12 +462,22 @@ export class Bet365BrowserClient {
       this.browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
       this.context = this.browser.contexts()[0] ?? null;
       if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegacao");
+      await this.rememberCdpPort(targetProfileDir, port);
     };
 
     try {
       await launch(profileDir);
     } catch (error) {
       this.chromeProcess?.kill();
+      this.chromeProcess = null;
+
+      if (await this.connectToExistingProfileBrowser(profileDir, error)) {
+        if (!this.context) throw new Error("Chrome CDP existente iniciou sem contexto de navegacao");
+        this.page = await this.context.newPage();
+        await this.configurePage(this.page);
+        return;
+      }
+
       const fallbackProfileDir = path.resolve(`${this.config.chromeProfileDir}-run-${Date.now()}`);
       await mkdir(fallbackProfileDir, { recursive: true });
       await this.logger("warn", "perfil principal da bet365 nao abriu CDP; tentando perfil temporario", {
@@ -479,6 +493,66 @@ export class Bet365BrowserClient {
     await this.configurePage(this.page);
   }
 
+  private async rememberCdpPort(profileDir: string, port: number) {
+    await writeFile(path.join(profileDir, CDP_PORT_FILE), String(port), "utf8").catch(() => undefined);
+  }
+
+  private async readRememberedCdpPort(profileDir: string) {
+    const rawPort = await readFile(path.join(profileDir, CDP_PORT_FILE), "utf8").catch(() => "");
+    const port = Number(rawPort.trim());
+    return Number.isInteger(port) && port > 0 ? port : null;
+  }
+
+  private async findExistingCdpPortForProfile(profileDir: string) {
+    const rememberedPort = await this.readRememberedCdpPort(profileDir);
+    if (rememberedPort) return rememberedPort;
+
+    if (process.platform !== "win32") return null;
+
+    const escapedProfileDir = path.resolve(profileDir).replace(/'/g, "''");
+    const command =
+      `$profileDir = '${escapedProfileDir}'; ` +
+      "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" | " +
+      "Where-Object { $_.CommandLine -like '*--remote-debugging-port=*' -and $_.CommandLine -like \"*$profileDir*\" } | " +
+      "ForEach-Object { $_.CommandLine }";
+
+    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
+      timeout: 5000,
+      windowsHide: true
+    }).catch(() => ({ stdout: "" }));
+
+    const port = /--remote-debugging-port=(\d+)/i.exec(stdout)?.[1];
+    const parsed = port ? Number(port) : null;
+    return parsed && Number.isInteger(parsed) ? parsed : null;
+  }
+
+  private async connectToExistingProfileBrowser(profileDir: string, originalError: unknown) {
+    const port = await this.findExistingCdpPortForProfile(profileDir);
+    if (!port) return false;
+
+    await this.logger("warn", "perfil principal da bet365 ja esta aberto; conectando ao Chrome existente", {
+      profileDir,
+      port,
+      originalError: originalError instanceof Error ? originalError.message : String(originalError)
+    });
+
+    try {
+      await waitForCdp(port, 5000);
+      this.browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+      this.context = this.browser.contexts()[0] ?? null;
+      return Boolean(this.context);
+    } catch (error) {
+      await this.logger("warn", "nao consegui conectar ao Chrome existente da bet365", {
+        profileDir,
+        port,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      this.browser = null;
+      this.context = null;
+      return false;
+    }
+  }
+
   private async configurePage(page: Page) {
     page.setDefaultTimeout(this.config.navigationTimeoutMs);
     page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
@@ -486,7 +560,7 @@ export class Bet365BrowserClient {
     await page.route("**/*", (route) => {
       const resourceType = route.request().resourceType();
 
-      if (["image", "media", "font", "stylesheet"].includes(resourceType)) {
+      if (["image", "media", "font"].includes(resourceType)) {
         return route.abort().catch(() => undefined);
       }
 
@@ -515,7 +589,7 @@ export class Bet365BrowserClient {
   async goToUrl(url: string, label: string) {
     const page = this.requirePage();
     await this.logger("info", label, { url });
-    if (this.isEventUrl(page.url()) && /\/G40\//i.test(url)) {
+    if (/\/G40\/?/i.test(url)) {
       await page.goto("about:blank", { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs }).catch(() => undefined);
     }
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs });

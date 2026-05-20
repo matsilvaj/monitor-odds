@@ -243,7 +243,7 @@ async function collectBookmakers(bookmakers: BookmakerCollector[], options: Coll
       const report = await getBookmakerOddsReport(result.bookmaker, fixtureReport);
       for (const line of formatBookmakerResultLines(result, report)) console.log(line);
     } catch (error) {
-      console.warn(`[${result.bookmaker}] Coleta finalizada, mas nÃ£o consegui montar o resumo do banco: ${errorMessage(error)}`);
+      console.warn(`[${result.bookmaker}] Coleta finalizada, mas não consegui montar o resumo do banco: ${errorMessage(error)}`);
     }
   };
 
@@ -334,6 +334,13 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
 export async function collectFastBookmakers(options: CollectAllBookmakersOptions = {}) {
   const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => !BROWSER_COLLECTOR_SLUGS.has(bookmaker.slug));
   return collectBookmakers(fastCollectors, options);
+}
+
+export async function collectBookmakerBySlug(slug: string, options: CollectAllBookmakersOptions = {}) {
+  const bookmaker = BOOKMAKER_COLLECTORS.find((collector) => collector.slug === slug);
+  if (!bookmaker) throw new Error(`Bookmaker "${slug}" nao encontrada ou desabilitada.`);
+
+  return collectBookmakers([bookmaker], { ...options, concurrency: 1 });
 }
 
 export async function collectBrowserBookmakers(options: CollectAllBookmakersOptions = {}) {

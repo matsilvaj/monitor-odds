@@ -1,6 +1,7 @@
 const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
 const chromeButton = document.querySelector("#chrome-button");
+const appVersion = document.querySelector("#app-version");
 const chromePath = document.querySelector("#chrome-path");
 const statusPill = document.querySelector("#status-pill");
 const updateStatus = document.querySelector("#update-status");
@@ -30,7 +31,8 @@ function setStatus(status) {
 function applyState(state) {
   if (!state) return;
   setStatus(state.status);
-  chromePath.textContent = state.chromeExecutablePath ? `Chrome: ${state.chromeExecutablePath}` : "Chrome: nao configurado";
+  appVersion.textContent = state.appVersion ? `Versão atual: ${state.appVersion}` : "Versão atual: --";
+  chromePath.textContent = state.chromeExecutablePath ? `Chrome: ${state.chromeExecutablePath}` : "Chrome: não configurado";
   if (Array.isArray(state.pendingRequests)) pendingRequests = state.pendingRequests;
   if (Array.isArray(state.bookmakerIssues)) bookmakerIssues = state.bookmakerIssues;
   applyUpdateState(state.updateState);
@@ -59,10 +61,10 @@ function appendLog(text) {
 
 function pendingMessage(request) {
   if (request.reason === "saved-url-failed") {
-    return `A URL salva para "${request.leagueName}" nao funcionou.\nEntre na ${request.bookmakerName} e atualize a URL da competicao:`;
+    return `A URL salva para "${request.leagueName}" não funcionou.\nEntre na ${request.bookmakerName} e atualize a URL da competição:`;
   }
 
-  return `Nao encontrei a competicao "${request.leagueName}" na ${request.bookmakerName}.\nEntre na ${request.bookmakerName} e pegue a URL da competicao:`;
+  return `Não encontrei a competição "${request.leagueName}" na ${request.bookmakerName}.\nEntre na ${request.bookmakerName} e pegue a URL da competição:`;
 }
 
 function renderIssueCard(issue) {
@@ -70,10 +72,10 @@ function renderIssueCard(issue) {
   card.className = "pending-card issue-card";
 
   const title = document.createElement("h3");
-  title.textContent = `${issue.bookmakerName ?? issue.bookmakerSlug} precisa de atencao`;
+  title.textContent = `${issue.bookmakerName ?? issue.bookmakerSlug} precisa de atenção`;
 
   const message = document.createElement("p");
-  message.textContent = `Erro na ultima coleta: ${issue.message}`;
+  message.textContent = `Erro na última coleta: ${issue.message}`;
 
   const meta = document.createElement("div");
   meta.className = "issue-meta";
@@ -88,7 +90,7 @@ function renderPendingRequestCard(request) {
   card.className = "pending-card";
 
   const title = document.createElement("h3");
-  title.textContent = `${request.bookmakerName} precisa de atencao`;
+  title.textContent = `${request.bookmakerName} precisa de atenção`;
 
   const message = document.createElement("p");
   message.textContent = pendingMessage(request);
@@ -98,7 +100,7 @@ function renderPendingRequestCard(request) {
 
   const input = document.createElement("input");
   input.type = "url";
-  input.placeholder = "URL da competicao";
+  input.placeholder = "URL da competição";
   input.autocomplete = "off";
 
   const button = document.createElement("button");
@@ -117,12 +119,12 @@ function renderPendingRequestCard(request) {
     });
 
     if (!result?.ok) {
-      feedback.textContent = result?.error ?? "Nao consegui salvar a URL.";
+      feedback.textContent = result?.error ?? "Não consegui salvar a URL.";
       button.disabled = false;
       return;
     }
 
-    feedback.textContent = "URL salva. O proximo ciclo vai usar esse link.";
+    feedback.textContent = "URL salva. O próximo ciclo vai usar esse link.";
     card.remove();
     pendingRequests = pendingRequests.filter((item) => item.id !== request.id);
     renderAttention();
@@ -139,7 +141,7 @@ function renderAttention() {
   if (!bookmakerIssues.length && !pendingRequests.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "Nenhuma pendencia no momento.";
+    empty.textContent = "Nenhuma pendência no momento.";
     pendingList.append(empty);
     return;
   }
@@ -150,7 +152,7 @@ function renderAttention() {
 
 startButton.addEventListener("click", async () => {
   const result = await window.monitorOdds.startMonitor();
-  if (!result?.ok) appendLog(result?.error ?? "Nao consegui iniciar o monitor.");
+  if (!result?.ok) appendLog(result?.error ?? "Não consegui iniciar o monitor.");
 });
 
 stopButton.addEventListener("click", () => {

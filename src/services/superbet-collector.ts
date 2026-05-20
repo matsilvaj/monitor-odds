@@ -60,7 +60,7 @@ async function getCanonicalFixtures() {
 }
 
 function splitTeams(event: SuperbetEvent) {
-  const [homeTeam, awayTeam] = String(event.matchName ?? "").split(/[·Â]+/);
+  const [homeTeam, awayTeam] = String(event.matchName ?? "").split(/[\u00b7\u00c2]+/);
   return { homeTeam: homeTeam?.trim() || null, awayTeam: awayTeam?.trim() || null };
 }
 
