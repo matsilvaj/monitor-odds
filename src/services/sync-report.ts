@@ -201,8 +201,7 @@ export function formatBookmakerResultLines(result: BookmakerCollectorResult, rep
   const errors = numberField(summary, ["errors"]);
   const collected = numberField(summary, ["eventsCollected", "eventsMatched", "fixturesCollected"]);
   const oddsSaved = numberField(summary, ["oddsUpserted"]);
-  const skippedItems =
-    numberField(summary, ["eventsSkippedFresh"]) + numberField(summary, ["eventsSkippedStarted"]) + numberField(summary, ["leaguesSkipped"]);
+  const skippedItems = numberField(summary, ["eventsSkippedStarted"]) + numberField(summary, ["leaguesSkipped"]);
   const nextRunAt = formatDateTime(summary.nextRunAt);
 
   const status = result.error

@@ -9,6 +9,7 @@ import type { Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetnacionalClient, type BetnacionalOdd, type BetnacionalSearchEvent } from "../providers/betnacional.js";
 import { errorMessage } from "../utils/errors.js";
+import { logCollectorMessage } from "./collector-log.js";
 import { getSavedBookmakerEventLinks, objectRaw } from "./saved-bookmaker-events.js";
 
 function serializeError(error: unknown) {
@@ -55,12 +56,7 @@ type BetnacionalEvent = {
 };
 
 async function log(bookmaker: BetnacionalBookmakerConfig, level: "info" | "warn" | "error", message: string, context: Record<string, unknown> = {}) {
-  await supabase.from("collection_logs").insert({
-    bookmaker_slug: bookmaker.slug,
-    level,
-    message,
-    context
-  });
+  logCollectorMessage(bookmaker.slug, level, message, context);
 }
 
 async function ensureBaseRows(bookmaker: BetnacionalBookmakerConfig) {
@@ -336,13 +332,12 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
       return summary;
     }
 
-    const refreshPlan = await filterFixturesDueForOddsRefresh(bookmaker.slug, fixtures, options);
+    const refreshPlan = await filterFixturesDueForOddsRefresh(fixtures);
     applyFixtureRefreshPlan(summary, refreshPlan);
     fixtures = refreshPlan.fixtures;
     if (!fixtures.length) {
-      await log(bookmaker, "info", "no fixtures due for odds refresh", {
+      await log(bookmaker, "info", "no prematch fixtures for odds refresh", {
         fixturesAvailable: refreshPlan.fixturesAvailable,
-        skippedFresh: refreshPlan.skippedFresh,
         skippedStarted: refreshPlan.skippedStarted
       });
       return summary;

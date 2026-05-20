@@ -161,15 +161,6 @@ create table if not exists fixture_sync_runs (
 
 alter table fixture_sync_runs add column if not exists league_ids_hash text;
 
-create table if not exists collection_logs (
-  id uuid primary key default gen_random_uuid(),
-  bookmaker_slug text not null,
-  level text not null,
-  message text not null,
-  context jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
-);
-
 create table if not exists bookmaker_event_snapshots (
   id uuid primary key default gen_random_uuid(),
   bookmaker_slug text not null references bookmakers(slug) on delete cascade,
@@ -365,7 +356,6 @@ revoke all on
   bookmaker_payload_cache,
   odds,
   fixture_sync_runs,
-  collection_logs,
   bookmaker_event_snapshots,
   bookmaker_collection_state
 from anon, authenticated;
@@ -381,7 +371,6 @@ alter table bookmaker_league_url_requests enable row level security;
 alter table bookmaker_payload_cache enable row level security;
 alter table odds enable row level security;
 alter table fixture_sync_runs enable row level security;
-alter table collection_logs enable row level security;
 alter table bookmaker_event_snapshots enable row level security;
 alter table bookmaker_collection_state enable row level security;
 

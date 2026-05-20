@@ -2,7 +2,8 @@ import { supabase } from "./supabase.js";
 import { errorMessage } from "../utils/errors.js";
 
 const DEFAULT_BATCH_SIZE = 50;
-const DELETE_FIXTURE_BATCH_SIZE = 10;
+const SELECT_BATCH_SIZE = 500;
+const DELETE_ROW_BATCH_SIZE = 200;
 const DB_RETRY_ATTEMPTS = 3;
 const DB_RETRY_BASE_DELAY_MS = 500;
 
@@ -39,6 +40,15 @@ export type OddRow = {
   updated_at: string;
 };
 
+type ExistingBookmakerLinkRow = BookmakerLinkRow & {
+  id: string;
+};
+
+type ExistingOddRow = Omit<OddRow, "source_odd_id"> & {
+  id: string;
+  source_odd_id: string | number | null;
+};
+
 function chunks<T>(items: T[], size: number) {
   const result: T[][] = [];
   for (let index = 0; index < items.length; index += size) {
@@ -72,6 +82,106 @@ async function withStatementTimeoutRetry(label: string, operation: () => Promise
   }
 }
 
+function keyValue(value: string | number | null | undefined) {
+  return value == null ? "" : String(value);
+}
+
+function numericValue(value: unknown, precision: number) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue.toFixed(precision) : String(value ?? "");
+}
+
+function timestampValue(value: unknown) {
+  if (value == null) return "";
+  const time = new Date(String(value)).getTime();
+  return Number.isFinite(time) ? String(time) : String(value);
+}
+
+function oddKey(row: Pick<OddRow, "fixture_id" | "bookmaker_slug" | "market_code" | "selection" | "pa_category"> & { source_odd_id?: string | number | null }) {
+  return [
+    row.fixture_id,
+    row.bookmaker_slug,
+    row.market_code,
+    row.selection,
+    row.pa_category,
+    keyValue(row.source_odd_id)
+  ].join(":");
+}
+
+function linkKey(row: Pick<BookmakerLinkRow, "bookmaker_slug"> & { external_event_id: string | number | null }) {
+  return `${row.bookmaker_slug}:${keyValue(row.external_event_id)}`;
+}
+
+function sameOdd(existing: ExistingOddRow, next: OddRow) {
+  return (
+    existing.market_name === next.market_name &&
+    existing.raw_market_name === next.raw_market_name &&
+    existing.raw_label === next.raw_label &&
+    existing.raw_odd_type === next.raw_odd_type &&
+    numericValue(existing.price, 4) === numericValue(next.price, 4) &&
+    numericValue(existing.confidence_score, 3) === numericValue(next.confidence_score, 3)
+  );
+}
+
+function sameLink(existing: ExistingBookmakerLinkRow, next: BookmakerLinkRow) {
+  return (
+    existing.fixture_id === next.fixture_id &&
+    existing.bookmaker_event_name === next.bookmaker_event_name &&
+    existing.bookmaker_home_team === next.bookmaker_home_team &&
+    existing.bookmaker_away_team === next.bookmaker_away_team &&
+    existing.normalized_bookmaker_home_team === next.normalized_bookmaker_home_team &&
+    existing.normalized_bookmaker_away_team === next.normalized_bookmaker_away_team &&
+    timestampValue(existing.starts_at) === timestampValue(next.starts_at) &&
+    numericValue(existing.match_confidence_score, 3) === numericValue(next.match_confidence_score, 3) &&
+    existing.source_url === next.source_url
+  );
+}
+
+async function fetchExistingLinks(bookmakerSlug: string, fixtureIds: string[]) {
+  const rows: ExistingBookmakerLinkRow[] = [];
+
+  for (const fixtureIdBatch of chunks(fixtureIds, SELECT_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from("bookmaker_event_links")
+      .select(
+        "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,raw,updated_at"
+      )
+      .eq("bookmaker_slug", bookmakerSlug)
+      .in("fixture_id", fixtureIdBatch);
+
+    if (error) throw error;
+    rows.push(...((data ?? []) as unknown as ExistingBookmakerLinkRow[]));
+  }
+
+  return rows;
+}
+
+async function fetchExistingOdds(bookmakerSlug: string, fixtureIds: string[], marketCodes: string[]) {
+  const rows: ExistingOddRow[] = [];
+
+  for (const fixtureIdBatch of chunks(fixtureIds, SELECT_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from("odds")
+      .select(
+        "id,fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,raw_odd_type,source_odd_id,raw,updated_at"
+      )
+      .eq("bookmaker_slug", bookmakerSlug)
+      .in("market_code", marketCodes)
+      .in("fixture_id", fixtureIdBatch);
+
+    if (error) throw error;
+    rows.push(...((data ?? []) as unknown as ExistingOddRow[]));
+  }
+
+  return rows;
+}
+
+async function deleteRowsById(table: "bookmaker_event_links" | "odds", label: string, ids: string[]) {
+  for (const idBatch of chunks(ids, DELETE_ROW_BATCH_SIZE)) {
+    await withStatementTimeoutRetry(label, async () => await supabase.from(table).delete().in("id", idBatch));
+  }
+}
+
 export class OddsRepository {
   static async saveAll(
     bookmakerSlug: string,
@@ -82,10 +192,21 @@ export class OddsRepository {
     const saveStartedAt = new Date().toISOString();
     const fixtureIds = [...new Set(options.cleanupFixtureIds?.length ? options.cleanupFixtureIds : links.map((link) => link.fixture_id))];
     const marketCodes = options.marketCodes?.length ? options.marketCodes : ["1X2"];
-    const linksToSave = links.map((link) => ({ ...link, updated_at: saveStartedAt }));
+    const linksToSave = [
+      ...new Map(links.map((link) => [linkKey(link), { ...link, updated_at: saveStartedAt }])).values()
+    ];
     const oddsToSave = odds.map((odd) => ({ ...odd, updated_at: saveStartedAt }));
 
-    for (const linkBatch of chunks(linksToSave, DEFAULT_BATCH_SIZE)) {
+    const existingLinks = fixtureIds.length ? await fetchExistingLinks(bookmakerSlug, fixtureIds) : [];
+    const existingLinksByKey = new Map(existingLinks.map((row) => [linkKey(row), row]));
+    const currentLinkKeys = new Set(linksToSave.map(linkKey));
+    const changedLinks = linksToSave.filter((link) => {
+      const existing = existingLinksByKey.get(linkKey(link));
+      return !existing || !sameLink(existing, link);
+    });
+    const staleLinkIds = existingLinks.filter((link) => !currentLinkKeys.has(linkKey(link))).map((link) => link.id);
+
+    for (const linkBatch of chunks(changedLinks, DEFAULT_BATCH_SIZE)) {
       await withStatementTimeoutRetry("upsert de links de eventos", async () =>
         await supabase.from("bookmaker_event_links").upsert(linkBatch, {
           onConflict: "bookmaker_slug,external_event_id"
@@ -99,7 +220,16 @@ export class OddsRepository {
       ).values()
     ];
 
-    for (const oddBatch of chunks(uniqueOdds, DEFAULT_BATCH_SIZE)) {
+    const existingOdds = fixtureIds.length ? await fetchExistingOdds(bookmakerSlug, fixtureIds, marketCodes) : [];
+    const existingOddsByKey = new Map(existingOdds.map((row) => [oddKey(row), row]));
+    const currentOddKeys = new Set(uniqueOdds.map(oddKey));
+    const changedOdds = uniqueOdds.filter((odd) => {
+      const existing = existingOddsByKey.get(oddKey(odd));
+      return !existing || !sameOdd(existing, odd);
+    });
+    const staleOddIds = existingOdds.filter((odd) => !currentOddKeys.has(oddKey(odd))).map((odd) => odd.id);
+
+    for (const oddBatch of chunks(changedOdds, DEFAULT_BATCH_SIZE)) {
       await withStatementTimeoutRetry("upsert de odds", async () =>
         await supabase.from("odds").upsert(oddBatch, {
           onConflict: "fixture_id,bookmaker_slug,market_code,selection,pa_category,source_odd_id"
@@ -108,28 +238,10 @@ export class OddsRepository {
     }
 
     if (fixtureIds.length) {
-      for (const fixtureIdBatch of chunks(fixtureIds, DELETE_FIXTURE_BATCH_SIZE)) {
-        await withStatementTimeoutRetry("limpeza de odds antigas", async () =>
-          await supabase
-            .from("odds")
-            .delete()
-            .eq("bookmaker_slug", bookmakerSlug)
-            .in("market_code", marketCodes)
-            .in("fixture_id", fixtureIdBatch)
-            .lt("updated_at", saveStartedAt)
-        );
-
-        await withStatementTimeoutRetry("limpeza de links antigos", async () =>
-          await supabase
-            .from("bookmaker_event_links")
-            .delete()
-            .eq("bookmaker_slug", bookmakerSlug)
-            .in("fixture_id", fixtureIdBatch)
-            .lt("updated_at", saveStartedAt)
-        );
-      }
+      await deleteRowsById("odds", "limpeza de odds antigas", staleOddIds);
+      await deleteRowsById("bookmaker_event_links", "limpeza de links antigos", staleLinkIds);
     }
 
-    return uniqueOdds.length;
+    return changedOdds.length;
   }
 }

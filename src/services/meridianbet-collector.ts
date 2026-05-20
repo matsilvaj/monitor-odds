@@ -13,11 +13,7 @@ import {
 import { errorMessage } from "../utils/errors.js";
 import { syncApiFootballFixtures } from "./api-football-sync.js";
 import { requestBookmakerLeagueUrl, resolveBookmakerLeagueUrlRequest } from "./bookmaker-league-url-requests.js";
-import {
-  isFixturePrematchForOddsRefresh as isPrematch,
-  refreshIntervalMsForStart,
-  shouldUseFixtureRefreshCadence
-} from "./collector-resilience.js";
+import { isFixturePrematchForOddsRefresh as isPrematch } from "./collector-resilience.js";
 
 type CanonicalFixture = {
   id: string;
@@ -65,8 +61,6 @@ type MeridianLeagueLinkRow = {
 
 type MeridianLogger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
 
-const MINUTE_MS = 60 * 1000;
-
 const MERIDIAN_SEEDED_LEAGUE_URLS: Record<number, Array<{ label: string; sourceUrl: string }>> = {
   1: [{ label: "Copa do Mundo 2026", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327" }],
   2: [{ label: "Liga dos Campeoes", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/europa/liga-dos-campe%C3%B5es?leagueIds=84" }],
@@ -111,11 +105,6 @@ function dateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function formatDuration(ms: number) {
-  const minutes = Math.max(1, Math.round(ms / MINUTE_MS));
-  return `${minutes}m`;
-}
-
 function targetDateKeys(date: BookmakerCollectOptions["date"]) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -152,7 +141,6 @@ function formatMeridianConsoleLine(level: "info" | "warn" | "error", message: st
   if (message === "links de ligas da meridianbet carregados") return `[meridianbet] Atalhos de liga: ${contextValue(context, "savedLinks")} salvos | ${contextValue(context, "seedLinks")} conhecidos.`;
   if (message === "abrindo liga da meridianbet por URL") return `[meridianbet] Abrindo liga por URL: ${contextValue(context, "label") || contextValue(context, "leagueName")}.`;
   if (message === "jogo aberto por URL cacheada da meridianbet") return `[meridianbet] URL salva abriu: ${fixtureName(context)}.`;
-  if (message === "jogo pulado porque as odds da meridianbet ainda estao recentes") return `[meridianbet] Pulando ${fixtureName(context)}: odds recentes.`;
   if (message === "jogo da meridianbet salvo no banco") return `[meridianbet] Odds salvas: ${fixtureName(context)} | ${contextValue(context, "oddsUpserted")} odds.`;
   if (message === "jogo da meridianbet nao abriu") return `[meridianbet] Jogo não aberto: ${fixtureName(context)}.`;
   if (message === "pagina atual da meridianbet nao e um evento; odds ignoradas") return `[meridianbet] Página de evento não confirmada: ${fixtureName(context)}.`;
@@ -168,7 +156,7 @@ function formatMeridianConsoleLine(level: "info" | "warn" | "error", message: st
   return null;
 }
 
-function createLogger(bookmaker: MeridianbetBookmakerConfig, logToConsole: boolean): MeridianLogger {
+function createLogger(_bookmaker: MeridianbetBookmakerConfig, logToConsole: boolean): MeridianLogger {
   return async (level, message, context = {}) => {
     if (logToConsole) {
       const line = formatMeridianConsoleLine(level, message, context);
@@ -177,13 +165,6 @@ function createLogger(bookmaker: MeridianbetBookmakerConfig, logToConsole: boole
         method(line);
       }
     }
-
-    await supabase.from("collection_logs").insert({
-      bookmaker_slug: bookmaker.slug,
-      level,
-      message,
-      context
-    });
   };
 }
 
@@ -283,31 +264,6 @@ function fixtureTargetFromCanonical(fixture: CanonicalFixture): MeridianFixtureT
     leagueCountry: league?.country ?? null,
     startsAt: fixture.starts_at
   };
-}
-
-function shouldSkipFreshFixture(fixture: CanonicalFixture, lastUpdatedAt: string | undefined, now = new Date()) {
-  if (!lastUpdatedAt) return { skip: false, refreshMs: refreshIntervalMsForStart(fixture.starts_at, now), ageMs: null as number | null };
-  const refreshMs = refreshIntervalMsForStart(fixture.starts_at, now);
-  const ageMs = now.getTime() - new Date(lastUpdatedAt).getTime();
-  return { skip: Number.isFinite(ageMs) && ageMs >= 0 && ageMs < refreshMs, refreshMs, ageMs };
-}
-
-async function getLastOddsUpdatedByFixture(bookmakerSlug: string, fixtureIds: string[]) {
-  const updatedByFixtureId = new Map<string, string>();
-  if (!fixtureIds.length) return updatedByFixtureId;
-
-  const { data, error } = await supabase
-    .from("odds")
-    .select("fixture_id,updated_at")
-    .eq("bookmaker_slug", bookmakerSlug)
-    .in("fixture_id", fixtureIds)
-    .order("updated_at", { ascending: false });
-
-  if (error) throw error;
-  for (const row of (data ?? []) as Array<{ fixture_id: string; updated_at: string }>) {
-    if (!updatedByFixtureId.has(row.fixture_id)) updatedByFixtureId.set(row.fixture_id, row.updated_at);
-  }
-  return updatedByFixtureId;
 }
 
 async function getCachedEventUrls(bookmakerSlug: string, fixtureIds: string[]) {
@@ -503,7 +459,6 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
     const dateKeys = targetDateKeys(options.date);
     const summary = {
       trigger: options.trigger ?? "manual",
-      force: Boolean(options.force),
       targetDateKeys: dateKeys,
       skipped: false,
       skipReason: null as string | null,
@@ -517,7 +472,6 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
       eventsOpenedFromCache: 0,
       eventsCollected: 0,
       eventsWithoutOdds: 0,
-      eventsSkippedFresh: 0,
       eventsSkippedStarted: 0,
       eventsUnmatched: 0,
       oddsFound: 0,
@@ -574,8 +528,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
     }
 
     const fixtureIds = fixtures.map((fixture) => fixture.id);
-    const [lastOddsByFixtureId, cachedUrlByFixtureId, cachedLeagueLinkByApiId] = await Promise.all([
-      getLastOddsUpdatedByFixture(bookmaker.slug, fixtureIds),
+    const [cachedUrlByFixtureId, cachedLeagueLinkByApiId] = await Promise.all([
       getCachedEventUrls(bookmaker.slug, fixtureIds),
       getCachedLeagueLinks(bookmaker.slug, targetLeagues.map((league) => league.api_football_league_id))
     ]);
@@ -602,20 +555,6 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           continue;
         }
 
-        const freshness = shouldSkipFreshFixture(fixture, lastOddsByFixtureId.get(fixture.id));
-        if (shouldUseFixtureRefreshCadence(options) && freshness.skip) {
-          processedFixtureIds.add(fixture.id);
-          summary.eventsSkippedFresh += 1;
-          await logger("info", "jogo pulado porque as odds da meridianbet ainda estao recentes", {
-            fixtureId: fixture.id,
-            homeTeam: fixture.home_team,
-            awayTeam: fixture.away_team,
-            startsAt: fixture.starts_at,
-            refreshEvery: formatDuration(freshness.refreshMs)
-          });
-          continue;
-        }
-
         const cachedUrl = cachedUrlByFixtureId.get(fixture.id);
         if (!cachedUrl) continue;
 
@@ -638,7 +577,6 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           summary.oddsFound += persisted.oddsFound;
           summary.oddsUpserted += persisted.oddsUpserted;
           processedFixtureIds.add(fixture.id);
-          if (persisted.oddsUpserted > 0) lastOddsByFixtureId.set(fixture.id, new Date().toISOString());
         } catch (error) {
           summary.errors += 1;
           summary.lastError = errorMessage(error);
@@ -709,7 +647,6 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
               summary.oddsUpserted += persisted.oddsUpserted;
               processedFixtureIds.add(fixture.id);
               if (event.sourceUrl) cachedUrlByFixtureId.set(fixture.id, event.sourceUrl);
-              if (persisted.oddsUpserted > 0) lastOddsByFixtureId.set(fixture.id, new Date().toISOString());
 
               await client.goToUrl(candidate.sourceUrl, "voltando para a liga da meridianbet apos coletar jogo");
               await client.selectAllPeriod();

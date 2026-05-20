@@ -10,6 +10,7 @@ import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/n
 import { normalizeName } from "../domain/text.js";
 import { AltenarClient, type AltenarEventDetails, type AltenarMarket, type AltenarOdd } from "../providers/altenar.js";
 import { errorMessage } from "../utils/errors.js";
+import { logCollectorMessage } from "./collector-log.js";
 import { getSavedBookmakerEventLinks } from "./saved-bookmaker-events.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,12 +47,7 @@ function splitTeams(details: AltenarEventDetails) {
 }
 
 async function log(bookmaker: AltenarBookmakerConfig, level: "info" | "warn" | "error", message: string, context: Record<string, unknown> = {}) {
-  await supabase.from("collection_logs").insert({
-    bookmaker_slug: bookmaker.slug,
-    level,
-    message,
-    context
-  });
+  logCollectorMessage(bookmaker.slug, level, message, context);
 }
 
 async function ensureBaseRows(bookmaker: AltenarBookmakerConfig) {
@@ -215,13 +211,12 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
       return summary;
     }
 
-    const refreshPlan = await filterFixturesDueForOddsRefresh(bookmaker.slug, canonicalFixtures, options);
+    const refreshPlan = await filterFixturesDueForOddsRefresh(canonicalFixtures);
     applyFixtureRefreshPlan(summary, refreshPlan);
     canonicalFixtures = refreshPlan.fixtures;
     if (!canonicalFixtures.length) {
-      await log(bookmaker, "info", "no fixtures due for odds refresh", {
+      await log(bookmaker, "info", "no prematch fixtures for odds refresh", {
         fixturesAvailable: refreshPlan.fixturesAvailable,
-        skippedFresh: refreshPlan.skippedFresh,
         skippedStarted: refreshPlan.skippedStarted
       });
       return summary;

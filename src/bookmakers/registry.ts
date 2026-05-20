@@ -213,7 +213,6 @@ export type CollectAllBookmakersOptions = {
   concurrency?: number;
   logProgress?: boolean;
   trigger?: "manual" | "sync" | "watch";
-  force?: boolean;
   cleanupStarted?: boolean;
 };
 
@@ -254,7 +253,7 @@ async function collectBookmakers(bookmakers: BookmakerCollector[], options: Coll
     }
 
     try {
-      const summary = await bookmaker.collect({ logToConsole: logProgress, manualFallback: false, force: options.force, trigger });
+      const summary = await bookmaker.collect({ logToConsole: logProgress, manualFallback: false, trigger });
       const durationMs = Math.round(performance.now() - start);
       const result = { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
       await printBookmakerResult(result);
@@ -303,7 +302,7 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
     }
 
     try {
-      const summary = await bookmaker.collect({ logToConsole: logProgress, manualFallback: false, force: options.force, trigger });
+      const summary = await bookmaker.collect({ logToConsole: logProgress, manualFallback: false, trigger });
       const durationMs = Math.round(performance.now() - start);
       const result = { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
       await printBookmakerResult(result);

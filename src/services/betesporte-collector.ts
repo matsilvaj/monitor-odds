@@ -9,6 +9,7 @@ import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetesporteClient, type BetesporteEvent, type BetesporteMarket, type BetesporteOption } from "../providers/betesporte.js";
 import { errorMessage } from "../utils/errors.js";
+import { logCollectorMessage } from "./collector-log.js";
 import { getSavedBookmakerEventLinks, objectRaw, type SavedBookmakerEventLink } from "./saved-bookmaker-events.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,12 +48,7 @@ type CanonicalFixture = {
 };
 
 async function log(bookmaker: BetesporteBookmakerConfig, level: "info" | "warn" | "error", message: string, context: Record<string, unknown> = {}) {
-  await supabase.from("collection_logs").insert({
-    bookmaker_slug: bookmaker.slug,
-    level,
-    message,
-    context
-  });
+  logCollectorMessage(bookmaker.slug, level, message, context);
 }
 
 async function ensureBaseRows(bookmaker: BetesporteBookmakerConfig) {
@@ -277,13 +273,12 @@ export function createBetesporteCollector(bookmaker: BetesporteBookmakerConfig) 
       return summary;
     }
 
-    const refreshPlan = await filterFixturesDueForOddsRefresh(bookmaker.slug, fixtures, options);
+    const refreshPlan = await filterFixturesDueForOddsRefresh(fixtures);
     applyFixtureRefreshPlan(summary, refreshPlan);
     fixtures = refreshPlan.fixtures;
     if (!fixtures.length) {
-      await log(bookmaker, "info", "no fixtures due for odds refresh", {
+      await log(bookmaker, "info", "no prematch fixtures for odds refresh", {
         fixturesAvailable: refreshPlan.fixturesAvailable,
-        skippedFresh: refreshPlan.skippedFresh,
         skippedStarted: refreshPlan.skippedStarted
       });
       return summary;

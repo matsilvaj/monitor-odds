@@ -21,6 +21,7 @@ const bookmakerNames = {
   meridianbet: "MeridianBet"
 };
 const browserCollectorSlugs = ["bet365", "meridianbet"];
+const pendingRequestPollIntervalMs = 30_000;
 
 let mainWindow = null;
 let monitorProcess = null;
@@ -632,7 +633,7 @@ app.whenReady().then(async () => {
   createWindow();
   setupAutoUpdater();
   await refreshPendingRequests();
-  pollTimer = setInterval(refreshPendingRequests, 5000);
+  pollTimer = setInterval(refreshPendingRequests, pendingRequestPollIntervalMs);
   await startMonitorAfterUpdateIfNeeded();
 });
 

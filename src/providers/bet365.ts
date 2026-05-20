@@ -745,6 +745,92 @@ export class Bet365BrowserClient {
     return false;
   }
 
+  async searchAndOpenFixture(fixture: Bet365FixtureTarget, attempts = 2) {
+    const page = this.requirePage();
+    const home = compactSpaces(String(fixture.homeTeam ?? ""));
+    const away = compactSpaces(String(fixture.awayTeam ?? ""));
+    const simplifiedHome = tokensFromName(home)
+      .filter((token) => !/^\d+$/.test(token))
+      .slice(0, 2)
+      .join(" ");
+    const simplifiedAway = tokensFromName(away)
+      .filter((token) => !/^\d+$/.test(token))
+      .slice(0, 2)
+      .join(" ");
+    const queries = [
+      [home, away].filter(Boolean).join(" "),
+      [home, "v", away].filter(Boolean).join(" "),
+      [away, home].filter(Boolean).join(" "),
+      simplifiedHome,
+      simplifiedAway
+    ].filter((query, index, all) => query.length >= 4 && all.indexOf(query) === index);
+
+    if (!queries.length) {
+      await this.logger("warn", "fixture sem nomes suficientes para pesquisar na bet365", {
+        fixtureId: fixture.id,
+        homeTeam: fixture.homeTeam,
+        awayTeam: fixture.awayTeam
+      });
+      return false;
+    }
+
+    await this.openHome();
+
+    for (const query of queries) {
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        await this.logger("info", "pesquisando jogo na bet365", {
+          fixtureId: fixture.id,
+          homeTeam: fixture.homeTeam,
+          awayTeam: fixture.awayTeam,
+          query,
+          attempt,
+          attempts
+        });
+
+        const searchUrl = this.hashUrl(`/AX/K%5E${encodeURIComponent(query)}/`);
+        await this.goToUrl(searchUrl, "abrindo busca da bet365");
+        await page.waitForTimeout(2500);
+
+        let hasFixturePair = await this.pageHasFixturePair([fixture]);
+        if (!hasFixturePair) {
+          await page.waitForTimeout(1800);
+          hasFixturePair = await this.pageHasFixturePair([fixture]);
+        }
+
+        if (!hasFixturePair) {
+          await this.logger("warn", "busca da bet365 nao mostrou o jogo esperado", {
+            fixtureId: fixture.id,
+            homeTeam: fixture.homeTeam,
+            awayTeam: fixture.awayTeam,
+            query
+          });
+          continue;
+        }
+
+        const opened = await this.openFixture(fixture);
+        await this.waitForUi();
+
+        if (opened && (await this.verifyCurrentEvent(fixture))) return true;
+        if (this.isEventUrl(page.url())) {
+          await this.logger("warn", "pagina do evento abriu pela busca, mas a validacao inicial nao confirmou os times", {
+            fixtureId: fixture.id,
+            homeTeam: fixture.homeTeam,
+            awayTeam: fixture.awayTeam,
+            url: page.url()
+          });
+          return true;
+        }
+      }
+    }
+
+    await this.logger("warn", "nao consegui abrir o jogo pela busca da bet365", {
+      fixtureId: fixture.id,
+      homeTeam: fixture.homeTeam,
+      awayTeam: fixture.awayTeam
+    });
+    return false;
+  }
+
   async collectLeagueEvents(targetDateKeys: string[]) {
     const page = this.requirePage();
     const byKey = new Map<string, Bet365LeagueEventCandidate>();
@@ -855,6 +941,14 @@ export class Bet365BrowserClient {
           return true;
         }
 
+        if (page.url() !== beforeUrl && this.isEventUrl(page.url())) {
+          await this.logger("warn", "pagina do evento abriu, mas os mercados ainda nao apareceram na validacao inicial", {
+            fixtureId: fixture.id,
+            url: page.url()
+          });
+          return true;
+        }
+
         const fallbackClicked = await this.clickText(fixture.homeTeam ?? homeTokens[0]);
         if (fallbackClicked) {
           await this.waitForUi();
@@ -892,7 +986,23 @@ export class Bet365BrowserClient {
   async collectCurrentEvent(fixture: Bet365FixtureTarget): Promise<Bet365CollectedEvent> {
     const page = this.requirePage();
     await this.waitForUi();
-    const sourceUrl = page.url();
+    let sourceUrl = page.url();
+
+    if (this.isEventUrl(sourceUrl) && !/\/G40(?:\/|$)/i.test(sourceUrl)) {
+      const moneylineUrl = sourceUrl.replace(/\/G\d+(?=\/|$)/i, "/G40");
+      if (moneylineUrl !== sourceUrl) {
+        await this.logger("info", "ajustando pagina do evento da bet365 para mercado principal", {
+          fixtureId: fixture.id,
+          sourceUrl,
+          moneylineUrl
+        });
+        await page.goto("about:blank", { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs }).catch(() => undefined);
+        await page.goto(moneylineUrl, { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs });
+        await this.waitForUi();
+        sourceUrl = page.url();
+      }
+    }
+
     let rawText = await this.visibleText();
     let marketTexts = await this.marketGroupTexts();
     let reloadedEventPage = false;

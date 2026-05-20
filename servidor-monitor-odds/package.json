@@ -1,6 +1,6 @@
 {
   "name": "servidor-monitor-odds",
-  "version": "1.0.9",
+  "version": "1.0.11",
   "description": "Launcher simples do servidor local do Monitor Odds.",
   "main": "src/main.js",
   "type": "module",

@@ -27,11 +27,6 @@ function parseOptions(rawArgs: string[]): BookmakerCollectOptions {
       continue;
     }
 
-    if (arg === "--force") {
-      options.force = true;
-      continue;
-    }
-
     if (arg === "--trigger") {
       const trigger = rawArgs[index + 1];
       if (trigger === "manual" || trigger === "sync" || trigger === "watch") {
@@ -62,9 +57,7 @@ if (!slug) {
     try {
       const options = parseOptions(args);
       if (options.trigger !== "watch") {
-        options.force = true;
         options.trigger ??= "manual";
-        console.log(`[${bookmaker.slug}] Coleta manual: ignorando cadencia de odds recentes.`);
       }
       const cleanup = await cleanupStartedFixtures();
       console.log(formatStartedFixtureCleanupSummary(cleanup));

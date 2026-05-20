@@ -31,7 +31,6 @@ const envSchema = z.object({
   API_FOOTBALL_FIXTURE_TTL_MINUTES: z.coerce.number().int().min(1).default(720),
   ALTENAR_BASE_URL: z.string().url().default("https://sb2frontend-altenar2.biahosted.com/api/"),
   COLLECT_DELAY_MS: z.coerce.number().int().min(0).default(1500),
-  LOG_RETENTION_DAYS: z.coerce.number().int().min(1).default(7),
   BET365_BASE_URL: z.string().url().default("https://www.bet365.bet.br/"),
   BET365_CHROME_PROFILE_DIR: z.string().default(".browser/bet365-cdp-profile"),
   BET365_CHROME_EXECUTABLE: optionalNonEmptyString(),

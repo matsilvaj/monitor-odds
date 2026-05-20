@@ -68,7 +68,7 @@ Para aplicar o schema, `SUPABASE_DB_PASSWORD` tambem pode ser usado quando a URL
 
 ## Overrides opcionais
 
-O codigo ja tem defaults para API-Football base URL/timezone/TTL, Altenar, retencao de logs e bet365. So adicione essas variaveis ao `.env` quando precisar sobrescrever algo localmente.
+O codigo ja tem defaults para API-Football base URL/timezone/TTL, Altenar e bet365. So adicione essas variaveis ao `.env` quando precisar sobrescrever algo localmente.
 
 Para a bet365, o projeto tenta encontrar o Chrome instalado automaticamente. Se o Chrome estiver em um caminho fora do padrao, use `BET365_CHROME_EXECUTABLE` temporariamente no `.env` local.
 

@@ -4,6 +4,7 @@ import { supabase } from "../db/supabase.js";
 import { normalizeName } from "../domain/text.js";
 import { ApiFootballClient, type ApiFootballFixtureRow, type ApiFootballLeagueCatalogRow } from "../providers/api-football.js";
 import { cleanupStartedFixtures } from "./fixture-cleanup.js";
+import { logCollectorMessage } from "./collector-log.js";
 
 const TARGET_LEAGUE_IDS = new Set(MVP_LEAGUES.map((league) => league.apiFootballLeagueId));
 const TARGET_LEAGUE_ID_LIST = [...TARGET_LEAGUE_IDS].sort((a, b) => a - b);
@@ -47,12 +48,7 @@ function shouldDeleteFixture(row: ApiFootballFixtureRow) {
 }
 
 async function log(level: "info" | "warn" | "error", message: string, context: Record<string, unknown> = {}) {
-  await supabase.from("collection_logs").insert({
-    bookmaker_slug: "api-football",
-    level,
-    message,
-    context
-  });
+  logCollectorMessage("api-football", level, message, context);
 }
 
 async function hasTargetFixturesForDate(key: string) {
