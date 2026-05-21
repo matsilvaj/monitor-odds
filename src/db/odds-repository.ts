@@ -6,6 +6,8 @@ const SELECT_BATCH_SIZE = 500;
 const DELETE_ROW_BATCH_SIZE = 200;
 const DB_RETRY_ATTEMPTS = 3;
 const DB_RETRY_BASE_DELAY_MS = 500;
+const MIN_1X2_IMPLIED_PROBABILITY = 0.9;
+const MAX_1X2_IMPLIED_PROBABILITY = 1.35;
 
 export type BookmakerLinkRow = {
   bookmaker_slug: string;
@@ -108,6 +110,10 @@ function oddKey(row: Pick<OddRow, "fixture_id" | "bookmaker_slug" | "market_code
   ].join(":");
 }
 
+function oddGroupKey(row: Pick<OddRow, "fixture_id" | "bookmaker_slug" | "market_code" | "pa_category">) {
+  return [row.fixture_id, row.bookmaker_slug, row.market_code, row.pa_category].join(":");
+}
+
 function linkKey(row: Pick<BookmakerLinkRow, "bookmaker_slug"> & { external_event_id: string | number | null }) {
   return `${row.bookmaker_slug}:${keyValue(row.external_event_id)}`;
 }
@@ -135,6 +141,46 @@ function sameLink(existing: ExistingBookmakerLinkRow, next: BookmakerLinkRow) {
     numericValue(existing.match_confidence_score, 3) === numericValue(next.match_confidence_score, 3) &&
     existing.source_url === next.source_url
   );
+}
+
+function impliedProbability(rows: OddRow[]) {
+  return rows.reduce((total, row) => total + 1 / row.price, 0);
+}
+
+function filterInvalidMoneylineGroups(rows: OddRow[]) {
+  const invalidRows = new Set<OddRow>();
+  const groups = new Map<string, OddRow[]>();
+
+  for (const row of rows) {
+    if (row.market_code !== "1X2") continue;
+
+    const groupRows = groups.get(oddGroupKey(row)) ?? [];
+    groupRows.push(row);
+    groups.set(oddGroupKey(row), groupRows);
+  }
+
+  for (const [key, groupRows] of groups) {
+    const bySelection = new Map(groupRows.map((row) => [row.selection, row]));
+    const completeRows = ["HOME", "DRAW", "AWAY"].map((selection) => bySelection.get(selection));
+    const complete = completeRows.every((row): row is OddRow => Boolean(row));
+    const hasOnlyExpectedRows = groupRows.every((row) => row.selection === "HOME" || row.selection === "DRAW" || row.selection === "AWAY");
+
+    if (!complete || !hasOnlyExpectedRows || groupRows.length !== 3) {
+      for (const row of groupRows) invalidRows.add(row);
+      console.warn(`[odds] grupo 1X2 incompleto ou duplicado ignorado: ${key}`);
+      continue;
+    }
+
+    const totalProbability = impliedProbability(completeRows);
+    if (totalProbability < MIN_1X2_IMPLIED_PROBABILITY || totalProbability > MAX_1X2_IMPLIED_PROBABILITY) {
+      for (const row of groupRows) invalidRows.add(row);
+      console.warn(
+        `[odds] grupo 1X2 com probabilidade implicita suspeita ignorado: ${key} (${totalProbability.toFixed(3)})`
+      );
+    }
+  }
+
+  return rows.filter((row) => !invalidRows.has(row));
 }
 
 async function fetchExistingLinks(bookmakerSlug: string, fixtureIds: string[]) {
@@ -214,11 +260,11 @@ export class OddsRepository {
       );
     }
 
-    const uniqueOdds = [
+    const uniqueOdds = filterInvalidMoneylineGroups([
       ...new Map(
         oddsToSave.map((row) => [`${row.fixture_id}:${row.bookmaker_slug}:${row.market_code}:${row.selection}:${row.pa_category}:${row.source_odd_id}`, row])
       ).values()
-    ];
+    ]);
 
     const existingOdds = fixtureIds.length ? await fetchExistingOdds(bookmakerSlug, fixtureIds, marketCodes) : [];
     const existingOddsByKey = new Map(existingOdds.map((row) => [oddKey(row), row]));

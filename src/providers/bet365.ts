@@ -67,6 +67,7 @@ type Bet365CompetitionTarget = {
 
 const MONEYLINE_MARKET_RE = /(full\s*time\s*result|resultado\s+final|resultado\s+da\s+partida|resultado\s+do\s+jogo|\b1x2\b)/i;
 const ODD_RE = /\b(?:[1-9]\d{0,2}|0)[.,]\d{2,3}\b/g;
+const EXACT_ODD_RE = /^(?:[1-9]\d{0,2}|0)[.,]\d{2,3}$/;
 
 function findChromeExecutable(configuredPath: string | undefined) {
   const candidates = [
@@ -150,6 +151,103 @@ function hasEveryImportantToken(text: string, tokens: string[]) {
 
 function parseOdd(value: string) {
   return Number(value.replace(",", "."));
+}
+
+function normalizedLine(value: unknown) {
+  return normalizeVisibleText(value).replace(/\s+/g, " ");
+}
+
+function isMoneylineHeading(line: string) {
+  const normalized = normalizedLine(line);
+  return /^(?:full time result|resultado final|resultado da partida|resultado do jogo|1x2)(?: (?:enhanced prices|precos ajustados|odds aumentadas|super odds|odds turbinadas|turbo odds|boost|boosted|pagamento antecipado|pague antecipado|early payout|early pay out|2 gols de vantagem))?$/.test(normalized);
+}
+
+function hasMoneylineHeading(rawText: string) {
+  return rawText.split(/\n+/).some((line) => isMoneylineHeading(line.trim()));
+}
+
+function isMarketBoundary(line: string) {
+  const normalized = normalizedLine(line);
+  if (isMoneylineHeading(line)) return true;
+  return /^(?:double chance|chance dupla|total goals|gols mais menos|ambos marcam|both teams to score|resultado ambos marcam|resultado correto|correct score|marcadores|goalscorers|criar aposta|bet builder|cartoes|cards|escanteios|corners|half|tempo|player|jogador|specials|especiais|minutes|minutos|asian lines|odds asiaticas)\b/.test(
+    normalized
+  );
+}
+
+function isSelectionMarker(line: string) {
+  return /^(?:ca|pagamento antecipado|pague antecipado|acumuladores aumentados|precos ajustados|substituicao\+?|popular|principais|todos|\d+\s+aumentos?)$/.test(
+    normalizedLine(line)
+  );
+}
+
+function selectionFromLabel(label: string, fixture: Bet365FixtureTarget): Selection | null {
+  const normalized = normalizedLine(label);
+  if (!normalized || isSelectionMarker(normalized)) return null;
+  if (/^(?:x|empate|draw)$/.test(normalized)) return "DRAW";
+  if (normalized === "1") return "HOME";
+  if (normalized === "2") return "AWAY";
+
+  if (hasEveryImportantToken(normalized, tokensFromName(fixture.homeTeam))) return "HOME";
+  if (hasEveryImportantToken(normalized, tokensFromName(fixture.awayTeam))) return "AWAY";
+
+  return null;
+}
+
+function oddInLine(line: string) {
+  const trimmed = line.trim();
+  if (EXACT_ODD_RE.test(trimmed)) return { price: parseOdd(trimmed), inlineLabel: null as string | null };
+
+  const matches = [...trimmed.matchAll(ODD_RE)];
+  if (matches.length !== 1) return null;
+
+  const match = matches[0];
+  const inlineLabel = trimmed.slice(0, match.index).trim();
+  if (!inlineLabel) return null;
+
+  return { price: parseOdd(match[0]), inlineLabel };
+}
+
+function findPreviousSelectionLabel(lines: string[], oddIndex: number, fixture: Bet365FixtureTarget) {
+  for (let index = oddIndex - 1; index >= 0 && oddIndex - index <= 5; index -= 1) {
+    const label = lines[index]?.trim() ?? "";
+    if (!label || isSelectionMarker(label) || EXACT_ODD_RE.test(label)) continue;
+
+    const selection = selectionFromLabel(label, fixture);
+    if (selection) return { label, selection };
+  }
+
+  return null;
+}
+
+function parseMoneylineSelections(lines: string[], fixture: Bet365FixtureTarget) {
+  const selections = new Map<Selection, Bet365CollectedSelection>();
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const odd = oddInLine(lines[index]);
+    if (!odd || !Number.isFinite(odd.price) || odd.price < 1.01 || odd.price > 1000) continue;
+
+    const inlineSelection = odd.inlineLabel ? selectionFromLabel(odd.inlineLabel, fixture) : null;
+    const resolved = inlineSelection
+      ? { label: odd.inlineLabel ?? "", selection: inlineSelection }
+      : findPreviousSelectionLabel(lines, index, fixture);
+
+    if (!resolved || selections.has(resolved.selection)) continue;
+
+    selections.set(resolved.selection, {
+      selection: resolved.selection,
+      label: resolved.label,
+      price: odd.price,
+      index: selections.size
+    });
+  }
+
+  const orderedSelections: Selection[] = ["HOME", "DRAW", "AWAY"];
+  if (!orderedSelections.every((selection) => selections.has(selection))) return null;
+
+  return orderedSelections.map((selection, index) => ({
+    ...selections.get(selection)!,
+    index
+  }));
 }
 
 function hashToPositiveInt(value: string) {
@@ -303,7 +401,7 @@ function classifyMarket(rawText: string): { category: PaCategory; confidence: nu
     return { category: "COM_PA", confidence: 0.98, reason: "bet365-explicit-payment-advance" };
   }
 
-  if (/(precos ajustados|odds aumentadas|acumuladores aumentados|super odds|boost|boosted)/.test(normalized)) {
+  if (/(enhanced prices|precos ajustados|odds aumentadas|acumuladores aumentados|super odds|boost|boosted)/.test(normalized)) {
     return { category: "SEM_PA", confidence: 1, reason: "bet365-adjusted-prices-without-payment-advance" };
   }
 
@@ -311,27 +409,39 @@ function classifyMarket(rawText: string): { category: PaCategory; confidence: nu
 }
 
 function parseMoneylineMarket(rawText: string, fixture: Bet365FixtureTarget, index: number): Bet365CollectedMarket | null {
-  if (!MONEYLINE_MARKET_RE.test(rawText)) return null;
+  if (!hasMoneylineHeading(rawText)) return null;
 
-  const odds = [...rawText.matchAll(ODD_RE)]
-    .map((match) => parseOdd(match[0]))
-    .filter((value) => Number.isFinite(value) && value >= 1.01 && value <= 1000);
+  const lines = rawText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const headingIndex = lines.findIndex(isMoneylineHeading);
 
-  if (odds.length < 3) return null;
+  if (headingIndex < 0) return null;
 
-  const pa = classifyMarket(rawText);
+  let endIndex = lines.length;
+  for (let cursor = headingIndex + 1; cursor < lines.length; cursor += 1) {
+    if (isMarketBoundary(lines[cursor])) {
+      endIndex = cursor;
+      break;
+    }
+  }
+
+  const marketLines = lines.slice(headingIndex, endIndex);
+  const selections = parseMoneylineSelections(marketLines, fixture);
+
+  if (!selections) return null;
+
+  const marketText = marketLines.join("\n");
+  const pa = classifyMarket(marketText);
   return {
     marketName: "MoneyLine",
     paCategory: pa.category,
     confidence: pa.confidence,
     classificationReason: pa.reason,
-    rawText: rawText.slice(0, 1500),
+    rawText: marketText.slice(0, 1500),
     index,
-    selections: [
-      { selection: "HOME", label: fixture.homeTeam ?? "Home", price: odds[0], index: 0 },
-      { selection: "DRAW", label: "Draw", price: odds[1], index: 1 },
-      { selection: "AWAY", label: fixture.awayTeam ?? "Away", price: odds[2], index: 2 }
-    ]
+    selections
   };
 }
 
@@ -342,17 +452,14 @@ function moneylineBlocksFromText(rawText: string) {
     .filter(Boolean);
   const starts = lines
     .map((line, index) => ({ line, index }))
-    .filter(({ line }) => /^(full\s*time\s*result|resultado\s+final|resultado\s+da\s+partida|resultado\s+do\s+jogo|\b1x2\b)/i.test(line));
-
-  const boundaryRe =
-    /^(full\s*time\s*result|resultado\s+final|resultado\s+da\s+partida|resultado\s+do\s+jogo|\b1x2\b|double\s+chance|total\s+goals|both\s+teams|goalscorers|aposta\s+aumentada|criar\s+aposta|cards|corners|half|player|specials|minutes|asian\s+lines)/i;
+    .filter(({ line }) => isMoneylineHeading(line));
 
   return starts.map(({ index }, blockIndex) => {
     const nextStart = starts[blockIndex + 1]?.index ?? lines.length;
     let end = nextStart;
 
     for (let cursor = index + 1; cursor < nextStart; cursor += 1) {
-      if (cursor > index + 2 && boundaryRe.test(lines[cursor])) {
+      if (cursor > index + 2 && isMarketBoundary(lines[cursor])) {
         end = cursor;
         break;
       }
@@ -1014,7 +1121,7 @@ export class Bet365BrowserClient {
     let marketTexts = await this.marketGroupTexts();
     let reloadedEventPage = false;
 
-    for (let attempt = 0; attempt < 20 && !marketTexts.length && !MONEYLINE_MARKET_RE.test(rawText); attempt += 1) {
+    for (let attempt = 0; attempt < 20 && !marketTexts.length && !hasMoneylineHeading(rawText); attempt += 1) {
       if (!reloadedEventPage && attempt === 5 && this.isEventUrl(sourceUrl)) {
         await this.logger("info", "recarregando URL do evento para aguardar mercados da bet365", { fixtureId: fixture.id, sourceUrl });
         await page.goto("about:blank", { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs }).catch(() => undefined);
@@ -1029,7 +1136,7 @@ export class Bet365BrowserClient {
     }
 
     const rawMarkets = [
-      ...new Map([...marketTexts, ...moneylineBlocksFromText(rawText), rawText].map((text) => [compactSpaces(text).slice(0, 240), text])).values()
+      ...new Map([...moneylineBlocksFromText(rawText), ...marketTexts, rawText].map((text) => [compactSpaces(text).slice(0, 240), text])).values()
     ];
     const markets = rawMarkets
       .map((text, index) => parseMoneylineMarket(text, fixture, index))
@@ -1735,8 +1842,15 @@ export class Bet365BrowserClient {
     const page = this.requirePage();
     const script = String.raw`
 (() => {
-  const moneylineRe = /(full\s*time\s*result|resultado\s+final|resultado\s+da\s+partida|resultado\s+do\s+jogo|\b1x2\b)/i;
   const oddRe = /\b(?:[1-9]\d{0,2}|0)[.,]\d{2,3}\b/g;
+  const norm = (value) => String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const moneylineHeadingRe = /^(?:full time result|resultado final|resultado da partida|resultado do jogo|1x2)(?: (?:enhanced prices|precos ajustados|odds aumentadas|super odds|odds turbinadas|turbo odds|boost|boosted|pagamento antecipado|pague antecipado|early payout|early pay out|2 gols de vantagem))?$/;
+  const hasMoneylineHeading = (text) => text.split(/\n+/).some((line) => moneylineHeadingRe.test(norm(line)));
   const nodes = [...document.querySelectorAll("[class*='MarketGroup'],[class*='Market'],[class*='Coupon'],div")];
   const candidates = [];
 
@@ -1749,7 +1863,7 @@ export class Bet365BrowserClient {
 
     const text = (node.innerText || node.textContent || "").trim();
     if (text.length < 20 || text.length > 1800) continue;
-    if (!moneylineRe.test(text)) continue;
+    if (!hasMoneylineHeading(text)) continue;
     if ((text.match(oddRe) ?? []).length < 3) continue;
 
     candidates.push({
