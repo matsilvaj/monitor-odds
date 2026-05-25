@@ -243,90 +243,8 @@ create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on bookm
 create index if not exists bookmaker_event_snapshots_league_idx on bookmaker_event_snapshots (league_api_football_id);
 create index if not exists bookmaker_collection_state_next_run_idx on bookmaker_collection_state (next_run_at);
 
-create or replace view public.public_odds_feed
-with (security_invoker = true)
-as
-select
-  f.id as fixture_id,
-  f.api_football_fixture_id,
-  f.name as fixture_name,
-  f.home_team,
-  f.away_team,
-  f.starts_at,
-  f.date_key,
-  f.status,
-  f.round,
-  l.name as league_name,
-  l.slug as league_slug,
-  l.country as league_country,
-  o.bookmaker_slug,
-  b.name as bookmaker_name,
-  o.market_code,
-  o.market_name,
-  o.selection,
-  o.price,
-  o.pa_category,
-  o.confidence_score,
-  o.updated_at as odd_updated_at,
-  l.logo_url as league_logo_url,
-  l.country_flag_url as league_country_flag_url,
-  coalesce(
-    bel.source_url,
-    case o.bookmaker_slug
-      when 'apostabet' then 'https://aposta.bet.br/'
-      when 'bet365' then 'https://www.bet365.bet.br/'
-      when 'bet7k' then 'https://7k.bet.br/'
-      when 'betano' then 'https://www.betano.bet.br/'
-      when 'betboom' then 'https://betboom.bet.br/'
-      when 'betesporte' then 'https://betesporte.bet.br/'
-      when 'betfair' then 'https://www.betfair.bet.br/'
-      when 'betfast' then 'https://betfast.bet.br/'
-      when 'betmgm' then 'https://www.betmgm.bet.br/'
-      when 'betnacional' then 'https://betnacional.bet.br/'
-      when 'betvip' then 'https://betvip.bet.br/'
-      when 'br4bet' then 'https://br4.bet.br/'
-      when 'casadeapostas' then 'https://casadeapostas.bet.br/'
-      when 'esportesdasorte' then 'https://esportesdasorte.bet.br/'
-      when 'esportiva' then 'https://esportiva.bet.br/'
-      when 'estrelabet' then 'https://www.estrelabet.bet.br/'
-      when 'jogodeouro' then 'https://jogodeouro.bet.br/'
-      when 'kto' then 'https://www.kto.bet.br/'
-      when 'lotogreen' then 'https://lotogreen.bet.br/'
-      when 'meridianbet' then 'https://meridianbet.bet.br/'
-      when 'novibet' then 'https://www.novibet.bet.br/'
-      when 'segurobet' then 'https://www.seguro.bet.br/'
-      when 'sportingbet' then 'https://www.sportingbet.bet.br/'
-      when 'sportybet' then 'https://www.sporty.bet.br/'
-      when 'superbet' then 'https://superbet.bet.br/'
-      when 'tradeball' then 'https://bolsadeaposta.bet.br/tradeball/'
-      when 'vaidebet' then 'https://vaidebet.bet.br/'
-      when 'versusbet' then 'https://www.versus.bet.br/'
-      when 'vupibet' then 'https://www.vupi.bet.br/'
-      else null
-    end
-  ) as bookmaker_event_url
-from fixtures f
-join leagues l on l.id = f.league_id
-join odds o on o.fixture_id = f.id
-join bookmakers b on b.slug = o.bookmaker_slug
-left join lateral (
-  select
-    case
-      when source_url ~* '/api/' then null
-      when bookmaker_slug in ('bet7k', 'betvip') and source_url ~* '/esportes/evento/' then null
-      when bookmaker_slug = 'sportybet' and source_url ~* '/br/sport/football/?$' then null
-      when bookmaker_slug = 'meridianbet' and source_url !~ '/[0-9]+/?$' then null
-      else source_url
-    end as source_url
-  from bookmaker_event_links
-  where bookmaker_event_links.fixture_id = f.id
-    and bookmaker_event_links.bookmaker_slug = o.bookmaker_slug
-    and bookmaker_event_links.source_url is not null
-  order by bookmaker_event_links.updated_at desc
-  limit 1
-) bel on true
-where f.starts_at > now()
-  and l.enabled = true;
+drop view if exists public.public_odds_feed_compact;
+drop view if exists public.public_odds_feed;
 
 create or replace view public.public_odds_feed_status
 with (security_invoker = true)
@@ -341,7 +259,7 @@ left join odds o on o.fixture_id = f.id
 where f.starts_at > now()
   and l.enabled = true;
 
-create or replace view public.public_odds_feed_compact
+create view public.public_odds_feed
 with (security_invoker = true)
 as
 select
@@ -559,4 +477,3 @@ grant select (
 grant select (date_key, source, status, fixtures_seen, synced_at) on fixture_sync_runs to anon, authenticated;
 grant select on public.public_odds_feed to anon, authenticated;
 grant select on public.public_odds_feed_status to anon, authenticated;
-grant select on public.public_odds_feed_compact to anon, authenticated;
