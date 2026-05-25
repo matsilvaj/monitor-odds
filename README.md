@@ -65,6 +65,7 @@ O `lz` deve ler o Supabase deste projeto pelo servidor do Next.js, sem chamar um
 Use somente as views publicas:
 
 - `public_odds_feed`: feed limpo de jogos futuros e odds.
+- `public_odds_feed_compact`: feed agrupado por jogo, com as odds dentro do array `odds`; prefira esta view para reduzir egress.
 - `public_odds_feed_status`: ultima atualizacao e contadores do feed.
 
 O feed publico tambem expoe metadados visuais da liga:

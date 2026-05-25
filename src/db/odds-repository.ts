@@ -42,11 +42,11 @@ export type OddRow = {
   updated_at: string;
 };
 
-type ExistingBookmakerLinkRow = BookmakerLinkRow & {
+type ExistingBookmakerLinkRow = Omit<BookmakerLinkRow, "raw"> & {
   id: string;
 };
 
-type ExistingOddRow = Omit<OddRow, "source_odd_id"> & {
+type ExistingOddRow = Omit<OddRow, "source_odd_id" | "raw"> & {
   id: string;
   source_odd_id: string | number | null;
 };
@@ -190,7 +190,7 @@ async function fetchExistingLinks(bookmakerSlug: string, fixtureIds: string[]) {
     const { data, error } = await supabase
       .from("bookmaker_event_links")
       .select(
-        "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,raw,updated_at"
+        "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,updated_at"
       )
       .eq("bookmaker_slug", bookmakerSlug)
       .in("fixture_id", fixtureIdBatch);
@@ -209,7 +209,7 @@ async function fetchExistingOdds(bookmakerSlug: string, fixtureIds: string[], ma
     const { data, error } = await supabase
       .from("odds")
       .select(
-        "id,fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,raw_odd_type,source_odd_id,raw,updated_at"
+        "id,fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,raw_odd_type,source_odd_id,updated_at"
       )
       .eq("bookmaker_slug", bookmakerSlug)
       .in("market_code", marketCodes)
