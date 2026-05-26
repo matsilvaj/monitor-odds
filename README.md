@@ -64,8 +64,10 @@ O `lz` deve ler o Supabase deste projeto pelo servidor do Next.js, sem chamar um
 
 Use somente as views publicas:
 
-- `public_odds_feed`: feed agrupado por jogo, com as odds dentro do array `odds`.
-- `public_odds_feed_status`: ultima atualizacao e contadores do feed.
+- `public_odds_fixtures`: catalogo de jogos, ligas, horarios, status e imagens, sem odds.
+- `public_odds_snapshot`: odds agrupadas por `fixture_id`, com payload pequeno para atualizacao frequente.
+- `public_odds_feed`: view de compatibilidade com jogo + array `odds`.
+- `public_odds_feed_status`: `fixtures_version`, `odds_version`, ultima atualizacao e contadores do feed.
 
 O feed publico tambem expoe metadados visuais da liga:
 
@@ -82,7 +84,7 @@ MONITOR_SUPABASE_URL=...
 MONITOR_SUPABASE_PUBLISHABLE_KEY=...
 ```
 
-O `lz` deve usar `public_odds_feed_status.latest_odd_updated_at` para detectar se houve atualizacao e recarregar a tela/cache.
+O `lz` deve usar `public_odds_feed_status.fixtures_version` para invalidar busca/listas de jogos e `public_odds_feed_status.odds_version` para atualizar apenas as odds dos jogos visiveis. `latest_odd_updated_at` fica como compatibilidade com consumidores antigos.
 
 Antes de publicar:
 

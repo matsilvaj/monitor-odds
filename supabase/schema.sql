@@ -243,23 +243,56 @@ create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on bookm
 create index if not exists bookmaker_event_snapshots_league_idx on bookmaker_event_snapshots (league_api_football_id);
 create index if not exists bookmaker_collection_state_next_run_idx on bookmaker_collection_state (next_run_at);
 
-drop view if exists public.public_odds_feed_compact;
 drop view if exists public.public_odds_feed;
+drop view if exists public.public_odds_snapshot;
+drop view if exists public.public_odds_fixtures;
+drop view if exists public.public_odds_feed_compact;
+drop view if exists public.public_odds_feed_status;
 
-create or replace view public.public_odds_feed_status
+create view public.public_odds_feed_status
 with (security_invoker = true)
 as
+with upcoming_fixtures as (
+  select
+    f.id,
+    greatest(f.updated_at, l.updated_at) as fixture_version
+  from fixtures f
+  join leagues l on l.id = f.league_id
+  where f.starts_at > now()
+    and l.enabled = true
+),
+latest_links as (
+  select
+    fixture_id,
+    bookmaker_slug,
+    max(updated_at) as updated_at
+  from bookmaker_event_links
+  group by fixture_id, bookmaker_slug
+),
+upcoming_odds as (
+  select
+    o.fixture_id,
+    greatest(
+      o.updated_at,
+      b.updated_at,
+      coalesce(latest_links.updated_at, o.updated_at)
+    ) as odds_version
+  from odds o
+  join upcoming_fixtures uf on uf.id = o.fixture_id
+  join bookmakers b on b.slug = o.bookmaker_slug
+  left join latest_links
+    on latest_links.fixture_id = o.fixture_id
+   and latest_links.bookmaker_slug = o.bookmaker_slug
+)
 select
-  max(o.updated_at) as latest_odd_updated_at,
-  count(distinct f.id) as upcoming_fixture_count,
-  count(o.fixture_id) as odd_count
-from fixtures f
-join leagues l on l.id = f.league_id
-left join odds o on o.fixture_id = f.id
-where f.starts_at > now()
-  and l.enabled = true;
+  (select max(fixture_version) from upcoming_fixtures) as fixtures_version,
+  (select max(odds_version) from upcoming_odds) as odds_version,
+  (select max(odds_version) from upcoming_odds) as latest_odd_updated_at,
+  (select count(*) from upcoming_fixtures) as upcoming_fixture_count,
+  (select count(*) from upcoming_odds) as odd_count
+;
 
-create view public.public_odds_feed
+create view public.public_odds_fixtures
 with (security_invoker = true)
 as
 select
@@ -277,6 +310,22 @@ select
   l.country as league_country,
   l.logo_url as league_logo_url,
   l.country_flag_url as league_country_flag_url,
+  greatest(f.updated_at, l.updated_at) as fixture_updated_at
+from fixtures f
+join leagues l on l.id = f.league_id
+where f.starts_at > now()
+  and l.enabled = true;
+
+create view public.public_odds_snapshot
+with (security_invoker = true)
+as
+select
+  f.id as fixture_id,
+  max(greatest(
+    o.updated_at,
+    b.updated_at,
+    coalesce(bel.updated_at, o.updated_at)
+  )) as latest_odd_updated_at,
   jsonb_agg(
     jsonb_build_object(
       'bookmaker_slug', o.bookmaker_slug,
@@ -332,6 +381,7 @@ join odds o on o.fixture_id = f.id
 join bookmakers b on b.slug = o.bookmaker_slug
 left join lateral (
   select
+    updated_at,
     case
       when source_url ~* '/api/' then null
       when bookmaker_slug in ('bet7k', 'betvip') and source_url ~* '/esportes/evento/' then null
@@ -348,7 +398,30 @@ left join lateral (
 ) bel on true
 where f.starts_at > now()
   and l.enabled = true
-group by f.id, l.id;
+group by f.id;
+
+create view public.public_odds_feed
+with (security_invoker = true)
+as
+select
+  f.fixture_id,
+  f.api_football_fixture_id,
+  f.fixture_name,
+  f.home_team,
+  f.away_team,
+  f.starts_at,
+  f.date_key,
+  f.status,
+  f.round,
+  f.league_name,
+  f.league_slug,
+  f.league_country,
+  f.league_logo_url,
+  f.league_country_flag_url,
+  s.odds
+from public.public_odds_fixtures f
+join public.public_odds_snapshot s on s.fixture_id = f.fixture_id
+where f.starts_at > now();
 
 -- Security baseline: external Supabase consumers get read-only access to safe columns only.
 -- Server-side jobs keep using the Supabase secret/service role, which bypasses RLS.
@@ -442,8 +515,8 @@ create policy public_read_fixture_sync_status
   to anon, authenticated
   using (source = 'api-football');
 
-grant select (slug, name) on bookmakers to anon, authenticated;
-grant select (id, api_football_league_id, name, slug, country, logo_url, country_flag_url, season, enabled) on leagues to anon, authenticated;
+grant select (slug, name, updated_at) on bookmakers to anon, authenticated;
+grant select (id, api_football_league_id, name, slug, country, logo_url, country_flag_url, season, enabled, updated_at) on leagues to anon, authenticated;
 grant select (
   id,
   api_football_fixture_id,
@@ -475,5 +548,7 @@ grant select (
   updated_at
 ) on odds to anon, authenticated;
 grant select (date_key, source, status, fixtures_seen, synced_at) on fixture_sync_runs to anon, authenticated;
+grant select on public.public_odds_fixtures to anon, authenticated;
+grant select on public.public_odds_snapshot to anon, authenticated;
 grant select on public.public_odds_feed to anon, authenticated;
 grant select on public.public_odds_feed_status to anon, authenticated;
