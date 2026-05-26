@@ -147,6 +147,36 @@ create table if not exists odds (
   unique (fixture_id, bookmaker_slug, market_code, selection, pa_category, source_odd_id)
 );
 
+create or replace function set_database_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists odds_set_database_updated_at on odds;
+create trigger odds_set_database_updated_at
+before insert or update on odds
+for each row
+execute function set_database_updated_at();
+
+drop trigger if exists bookmaker_event_links_set_database_updated_at on bookmaker_event_links;
+create trigger bookmaker_event_links_set_database_updated_at
+before insert or update on bookmaker_event_links
+for each row
+execute function set_database_updated_at();
+
+update odds
+set updated_at = now()
+where updated_at > now();
+
+update bookmaker_event_links
+set updated_at = now()
+where updated_at > now();
+
 create table if not exists fixture_sync_runs (
   id uuid primary key default gen_random_uuid(),
   date_key date not null,
@@ -261,28 +291,12 @@ with upcoming_fixtures as (
   where f.starts_at > now()
     and l.enabled = true
 ),
-latest_links as (
-  select
-    fixture_id,
-    bookmaker_slug,
-    max(updated_at) as updated_at
-  from bookmaker_event_links
-  group by fixture_id, bookmaker_slug
-),
 upcoming_odds as (
   select
     o.fixture_id,
-    greatest(
-      o.updated_at,
-      b.updated_at,
-      coalesce(latest_links.updated_at, o.updated_at)
-    ) as odds_version
+    o.updated_at as odds_version
   from odds o
   join upcoming_fixtures uf on uf.id = o.fixture_id
-  join bookmakers b on b.slug = o.bookmaker_slug
-  left join latest_links
-    on latest_links.fixture_id = o.fixture_id
-   and latest_links.bookmaker_slug = o.bookmaker_slug
 )
 select
   (select max(fixture_version) from upcoming_fixtures) as fixtures_version,
@@ -321,11 +335,7 @@ with (security_invoker = true)
 as
 select
   f.id as fixture_id,
-  max(greatest(
-    o.updated_at,
-    b.updated_at,
-    coalesce(bel.updated_at, o.updated_at)
-  )) as latest_odd_updated_at,
+  max(o.updated_at) as latest_odd_updated_at,
   jsonb_agg(
     jsonb_build_object(
       'bookmaker_slug', o.bookmaker_slug,
