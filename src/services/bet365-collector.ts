@@ -102,6 +102,7 @@ const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   1: [{ label: "Copa do Mundo", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E131901075/G40/" }],
   2: [{ label: "Champions League", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E94400598/G40/" }],
   3: [{ label: "Europa League", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E123393868/G40/" }],
+  10: [{ label: "International Friendlies", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E133610643/G40/" }],
   11: [{ label: "Copa Sul-Americana", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E101830177/G40/" }],
   13: [{ label: "Libertadores", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E131418680/G40/" }],
   39: [{ label: "Premier League", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E91422157/G40/H%5E1/" }],
@@ -842,7 +843,7 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    const activeLeagues = await getActiveLeagues();
+    let activeLeagues = await getActiveLeagues();
     summary.activeLeagues = activeLeagues.length;
 
     if (!activeLeagues.length) {
@@ -885,6 +886,8 @@ export function createBet365Collector(bookmaker: Bet365BookmakerConfig) {
       summary.fixtureSyncSummary = await syncApiFootballFixtures();
       fixtures = await getCanonicalFixtures(dateKeys, { futureOnly: true });
       fixturesIncludingStarted = await getCanonicalFixtures(dateKeys);
+      activeLeagues = await getActiveLeagues();
+      summary.activeLeagues = activeLeagues.length;
     }
 
     summary.fixturesAvailable = fixtures.length;

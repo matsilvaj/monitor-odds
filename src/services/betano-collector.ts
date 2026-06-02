@@ -8,7 +8,7 @@ import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } 
 import { matchingTokens, normalizeForMatching } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
-import { BetanoClient, type BetanoEvent, type BetanoLeague, type BetanoMarket, type BetanoOffer, type BetanoSelection } from "../providers/betano.js";
+import { BetanoClient, type BetanoEvent, type BetanoLeague, type BetanoMarket, type BetanoOffer, type BetanoSearchResult, type BetanoSelection } from "../providers/betano.js";
 import { errorMessage } from "../utils/errors.js";
 import { logCollectorMessage } from "./collector-log.js";
 import { getSavedBookmakerEventLinks, objectRaw, relativePathFromUrl, type SavedBookmakerEventLink } from "./saved-bookmaker-events.js";
@@ -88,8 +88,11 @@ function leagueScore(canonicalName: string, betanoLeague: BetanoLeague) {
   const canonicalCompact = compact(canonicalName);
   const candidateName = leagueName(betanoLeague);
   const candidateCompact = compact(candidateName);
+  const canonicalText = normalizeForMatching(canonicalName);
+  const candidateText = normalizeForMatching(candidateName);
 
   if (!canonicalCompact || !candidateCompact) return 0;
+  if (/friendlies|friendly/.test(canonicalText) && /amistoso|amistosos|friendly|friendlies/.test(candidateText)) return 0.96;
   if (candidateCompact === canonicalCompact) return 1;
   if (candidateCompact.includes(canonicalCompact) || canonicalCompact.includes(candidateCompact)) {
     const extraLength = Math.abs(candidateCompact.length - canonicalCompact.length);
@@ -196,6 +199,40 @@ function eventTeams(event: BetanoEvent) {
 
   const [homeTeam, awayTeam] = String(event.shortName ?? event.name ?? "").split(/\s+-\s+|\s+vs\.?\s+/i);
   return { homeTeam: homeTeam?.trim() || null, awayTeam: awayTeam?.trim() || null };
+}
+
+function eventFromSearchResult(result: BetanoSearchResult): BetanoEvent | null {
+  if (result.level !== "event" || result.filter?.sportId !== "FOOT") return null;
+
+  const id = result.filter.eventId ?? result.url?.match(/\/(\d+)\/?$/)?.[1];
+  const label = result.labelLatin ?? result.label ?? "";
+  const [eventName, leagueName] = label.split("|").map((item) => item.trim());
+  if (!id || !eventName || !result.url || !Number.isFinite(Number(result.startTime))) return null;
+
+  const [homeTeam, awayTeam] = eventName.split(/\s+-\s+|\s+vs\.?\s+/i).map((item) => item.trim());
+
+  return {
+    id,
+    name: eventName,
+    shortName: eventName,
+    startTime: Number(result.startTime),
+    url: result.url,
+    leagueName,
+    leagueDescription: leagueName,
+    participants: homeTeam && awayTeam ? [{ name: homeTeam }, { name: awayTeam }] : undefined,
+    rawSearchResult: result
+  };
+}
+
+function searchTermsForFixture(fixture: CanonicalFixture) {
+  return [
+    fixture.home_team,
+    fixture.away_team,
+    fixture.normalized_home_team,
+    fixture.normalized_away_team
+  ]
+    .map((value) => String(value ?? "").trim())
+    .filter((value) => value.length >= 3);
 }
 
 function isNearCanonicalFixtureWindow(event: BetanoEvent, fixtures: CanonicalFixture[]) {
@@ -359,6 +396,7 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
       eventsUnmatched: 0,
       eventsCollectedDirect: 0,
       eventsCollectedByDiscovery: 0,
+      eventsDiscoveredBySearch: 0,
       directEventsFailed: 0,
       oddsUpserted: 0,
       errors: 0,
@@ -446,6 +484,8 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
       }
 
       const footballPage = await client.getFootballPage();
+      const todayPage = await client.getTodayFootballPage();
+      const topEventsPage = await client.getTopEvents();
       const leagues = flattenLeagues([
         ...(footballPage.data?.topLeagues ?? []),
         ...(footballPage.data?.dropdownList ?? []).flatMap((region) => region.leagues ?? []),
@@ -469,7 +509,15 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
         { concurrency: 2 }
       );
 
-      const events = leaguePages.flatMap((page) => page.data?.blocks?.flatMap((block) => block.events ?? []) ?? []);
+      const events = [
+        ...new Map(
+          [
+            ...(todayPage.data?.blocks?.flatMap((block) => block.events ?? []) ?? []),
+            ...(topEventsPage.data?.topEvents?.find((group) => group.id === "FOOT")?.events ?? []),
+            ...leaguePages.flatMap((page) => page.data?.blocks?.flatMap((block) => block.events ?? []) ?? [])
+          ].map((event) => [event.id, event])
+        ).values()
+      ];
       summary.eventsSeen = events.length;
 
       const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, discoveryFixtures));
@@ -489,6 +537,43 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
           bestMatchByFixtureId.set(matched.fixture.id, { event, matched });
         }
       }
+
+      const searchFixtures = discoveryFixtures.filter((fixture) => !bestMatchByFixtureId.has(fixture.id));
+      await pMap(
+        searchFixtures,
+        async (fixture) => {
+          const searchEvents: BetanoEvent[] = [];
+
+          for (const term of [...new Set(searchTermsForFixture(fixture))]) {
+            try {
+              const results = await client.searchEvents(term);
+              searchEvents.push(
+                ...results
+                  .map(eventFromSearchResult)
+                  .filter((event): event is BetanoEvent => Boolean(event))
+              );
+            } catch (error) {
+              await log(bookmaker, "warn", "betano search fallback failed", {
+                fixtureId: fixture.id,
+                term,
+                error: serializeError(error)
+              });
+            }
+          }
+
+          for (const event of [...new Map(searchEvents.map((item) => [item.id, item])).values()]) {
+            const matched = findBestMatch(event, [fixture]);
+            if (!matched) continue;
+
+            const previous = bestMatchByFixtureId.get(fixture.id);
+            if (!previous || matched.score > previous.matched.score) {
+              bestMatchByFixtureId.set(fixture.id, { event, matched });
+              summary.eventsDiscoveredBySearch += 1;
+            }
+          }
+        },
+        { concurrency: 2 }
+      );
 
       await pMap(
         [...bestMatchByFixtureId.values()],

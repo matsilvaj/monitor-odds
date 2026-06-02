@@ -195,7 +195,7 @@ export function formatBookmakerStartLine(bookmakerSlug: string, fixtureReport: F
   return `[${bookmakerSlug}] Iniciando coleta. Jogos alvo: ${fixtureReport.total} (${byDate}).`;
 }
 
-export function formatBookmakerResultLines(result: BookmakerCollectorResult, report: BookmakerOddsReport) {
+export function formatBookmakerResultLines(result: BookmakerCollectorResult, report: BookmakerOddsReport, fixtureReport?: FixtureReport) {
   const summary = asRecord(result.summary);
   const skipped = summary.skipped === true;
   const errors = numberField(summary, ["errors"]);
@@ -203,6 +203,7 @@ export function formatBookmakerResultLines(result: BookmakerCollectorResult, rep
   const oddsSaved = numberField(summary, ["oddsUpserted"]);
   const skippedItems = numberField(summary, ["eventsSkippedStarted"]) + numberField(summary, ["leaguesSkipped"]);
   const nextRunAt = formatDateTime(summary.nextRunAt);
+  const fixturesTargeted = fixtureReport?.total ?? 0;
 
   const status = result.error
     ? `falhou em ${formatDuration(result.durationMs)}`
@@ -225,6 +226,12 @@ export function formatBookmakerResultLines(result: BookmakerCollectorResult, rep
     lines.push(`[${result.bookmaker}] Nesta execução: ${collected} jogos coletados | ${oddsSaved} odds salvas | ${skippedItems} pulados | ${errors} erros.`);
   }
 
+  if (!skipped && fixturesTargeted > 0 && report.totalGames === 0) {
+    lines.push(
+      `[${result.bookmaker}] ATENCAO: nenhum jogo alvo ficou com odds no banco. Provavel endpoint/layout alterado, bloqueio ou feed vazio; revisar esta casa.`
+    );
+  }
+
   if (result.error) {
     lines.push(`[${result.bookmaker}] Erro: ${String(result.error)}`);
   } else if (errors > 0 && typeof summary.lastError === "string" && summary.lastError) {
@@ -241,6 +248,9 @@ export function formatFixtureSyncSummary(summary: unknown) {
   const seen = numberField(record, ["fixturesSeen"]);
   const kept = numberField(record, ["fixturesKept"]);
   const deleted = numberField(record, ["fixturesDeleted"]);
+  const rejectedByEligibility = numberField(record, ["fixturesRejectedByEligibility"]);
+  const ineligibleDeleted = numberField(record, ["ineligibleFixturesDeleted"]);
+  const ineligibleSnapshotsDeleted = numberField(record, ["ineligibleSnapshotsDeleted"]);
   const startedDeleted = numberField(record, ["startedFixturesDeleted"]);
   const snapshotsDeleted = numberField(record, ["startedSnapshotsDeleted"]);
   const errors = numberField(record, ["errors"]);
@@ -251,5 +261,5 @@ export function formatFixtureSyncSummary(summary: unknown) {
   const skippedByCache = numberField(record, ["skippedByCache"]);
   const skippedByExistingData = numberField(record, ["skippedByExistingData"]);
 
-  return `[sync] API-Football: ${leaguesSynced} ligas salvas | ${leaguesDisabled} ligas desativadas | ${leaguesMissing} ligas nao encontradas | ${countText(seen, "jogo lido", "jogos lidos")} | ${kept} salvos | ${deleted} removidos pela API | ${startedDeleted} iniciados removidos | ${snapshotsDeleted} snapshots removidos | ${skippedByCache} pulos por cache | ${skippedByExistingData} pulos por dados existentes | ${apiCalls} chamadas | ${errors} erros.`;
+  return `[sync] API-Football: ${leaguesSynced} ligas salvas | ${leaguesDisabled} ligas desativadas | ${leaguesMissing} ligas nao encontradas | ${countText(seen, "jogo lido", "jogos lidos")} | ${kept} salvos | ${deleted} removidos pela API | ${rejectedByEligibility} rejeitados por elegibilidade | ${ineligibleDeleted} inelegiveis removidos | ${ineligibleSnapshotsDeleted} snapshots inelegiveis removidos | ${startedDeleted} iniciados removidos | ${snapshotsDeleted} snapshots removidos | ${skippedByCache} pulos por cache | ${skippedByExistingData} pulos por dados existentes | ${apiCalls} chamadas | ${errors} erros.`;
 }

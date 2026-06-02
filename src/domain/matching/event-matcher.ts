@@ -1,4 +1,5 @@
 import { matchingTokens, significantTokenSet, teamNameSimilarity, tokenSetSimilarity } from "./text-similarity.js";
+import { nationalTeamTokenGroups, tokenGroupsOverlap } from "./team-aliases.js";
 import type { Selection } from "../normalize.js";
 
 export type MatchableEvent = {
@@ -37,7 +38,16 @@ function hasSharedSignificantToken(left: MatchableEvent, right: MatchableEvent) 
 
   const leftAll = matchingTokens(`${left.homeTeam ?? ""} ${left.awayTeam ?? ""}`).join("");
   const rightAll = matchingTokens(`${right.homeTeam ?? ""} ${right.awayTeam ?? ""}`).join("");
-  return leftAll.length >= 5 && rightAll.length >= 5 && (leftAll.includes(rightAll) || rightAll.includes(leftAll));
+  if (leftAll.length >= 5 && rightAll.length >= 5 && (leftAll.includes(rightAll) || rightAll.includes(leftAll))) return true;
+
+  const leftHomeGroups = nationalTeamTokenGroups(left.homeTeam);
+  const leftAwayGroups = nationalTeamTokenGroups(left.awayTeam);
+  const rightHomeGroups = nationalTeamTokenGroups(right.homeTeam);
+  const rightAwayGroups = nationalTeamTokenGroups(right.awayTeam);
+  return (
+    (tokenGroupsOverlap(leftHomeGroups, rightHomeGroups) && tokenGroupsOverlap(leftAwayGroups, rightAwayGroups)) ||
+    (tokenGroupsOverlap(leftHomeGroups, rightAwayGroups) && tokenGroupsOverlap(leftAwayGroups, rightHomeGroups))
+  );
 }
 
 function hasStrongLeagueSignal(left: MatchableEvent, right: MatchableEvent) {

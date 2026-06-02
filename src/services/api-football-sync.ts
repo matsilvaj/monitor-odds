@@ -1,9 +1,10 @@
 import { MVP_LEAGUES } from "../config/leagues.js";
 import { env } from "../config/env.js";
 import { supabase } from "../db/supabase.js";
+import { fixtureEligibilityDecision } from "../domain/fixture-eligibility.js";
 import { normalizeName } from "../domain/text.js";
 import { ApiFootballClient, type ApiFootballFixtureRow, type ApiFootballLeagueCatalogRow } from "../providers/api-football.js";
-import { cleanupStartedFixtures } from "./fixture-cleanup.js";
+import { cleanupIneligibleFixtures, cleanupStartedFixtures } from "./fixture-cleanup.js";
 import { logCollectorMessage } from "./collector-log.js";
 
 const TARGET_LEAGUE_IDS = new Set(MVP_LEAGUES.map((league) => league.apiFootballLeagueId));
@@ -64,6 +65,15 @@ async function hasTargetFixturesForDate(key: string) {
 
 function configuredLeague(apiFootballLeagueId: number) {
   return MVP_LEAGUES.find((league) => league.apiFootballLeagueId === apiFootballLeagueId);
+}
+
+function fixtureEligibility(row: ApiFootballFixtureRow) {
+  return fixtureEligibilityDecision(configuredLeague(row.league.id), {
+    leagueName: row.league.name,
+    round: row.league.round,
+    homeTeam: row.teams.home.name,
+    awayTeam: row.teams.away.name
+  });
 }
 
 function leagueSlug(name: string) {
@@ -261,6 +271,17 @@ async function upsertFixture(row: ApiFootballFixtureRow, leagueId: string, homeT
   return data.id as string;
 }
 
+async function deleteExistingFixtureByApiFootballId(apiFootballFixtureId: number) {
+  const { data: existing, error: selectError } = await supabase.from("fixtures").select("id").eq("api_football_fixture_id", apiFootballFixtureId).maybeSingle();
+  if (selectError) throw selectError;
+
+  if (!existing?.id) return false;
+
+  const { error } = await supabase.from("fixtures").delete().eq("id", existing.id);
+  if (error) throw error;
+  return true;
+}
+
 export async function syncApiFootballFixtures(options: SyncApiFootballFixturesOptions = {}) {
   const client = new ApiFootballClient();
   const forceSync = isForceSync(options.force);
@@ -276,6 +297,9 @@ export async function syncApiFootballFixtures(options: SyncApiFootballFixturesOp
     fixturesSeen: 0,
     fixturesKept: 0,
     fixturesDeleted: 0,
+    fixturesRejectedByEligibility: 0,
+    ineligibleFixturesDeleted: 0,
+    ineligibleSnapshotsDeleted: 0,
     startedFixturesDeleted: 0,
     startedSnapshotsDeleted: 0,
     errors: 0
@@ -294,6 +318,17 @@ export async function syncApiFootballFixtures(options: SyncApiFootballFixturesOp
         error: error instanceof Error ? error.message : String(error)
       });
     }
+  }
+
+  try {
+    const cleanup = await cleanupIneligibleFixtures();
+    summary.ineligibleFixturesDeleted = cleanup.ineligibleFixturesDeleted;
+    summary.ineligibleSnapshotsDeleted = cleanup.ineligibleSnapshotsDeleted;
+  } catch (error) {
+    summary.errors += 1;
+    await log("error", "ineligible fixtures cleanup failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
   }
 
   if (shouldCleanupStarted) {
@@ -341,17 +376,14 @@ export async function syncApiFootballFixtures(options: SyncApiFootballFixturesOp
 
       for (const row of rows.filter((item) => TARGET_LEAGUE_IDS.has(item.league.id))) {
         if (shouldDeleteFixture(row)) {
-          const { data: existing } = await supabase
-            .from("fixtures")
-            .select("id")
-            .eq("api_football_fixture_id", row.fixture.id)
-            .maybeSingle();
+          if (await deleteExistingFixtureByApiFootballId(row.fixture.id)) summary.fixturesDeleted += 1;
+          continue;
+        }
 
-          if (existing?.id) {
-            const { error } = await supabase.from("fixtures").delete().eq("id", existing.id);
-            if (error) throw error;
-            summary.fixturesDeleted += 1;
-          }
+        const eligibility = fixtureEligibility(row);
+        if (!eligibility.eligible) {
+          if (await deleteExistingFixtureByApiFootballId(row.fixture.id)) summary.fixturesDeleted += 1;
+          summary.fixturesRejectedByEligibility += 1;
           continue;
         }
 

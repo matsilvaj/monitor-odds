@@ -13,6 +13,9 @@ import { errorMessage } from "../utils/errors.js";
 import { logCollectorMessage } from "./collector-log.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const STRICT_TIME_WINDOW_MINUTES = 20;
+const RELAXED_DELTA_TIME_WINDOW_MINUTES = 120;
+const RELAXED_DELTA_MIN_TEAM_SCORE = 0.94;
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -121,18 +124,63 @@ function findBestMatch(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
     if (!best || result.score > best.score) best = { ...result, fixture };
   }
 
+  if (!best) {
+    for (const fixture of fixtures) {
+      const fixtureStart = new Date(fixture.starts_at).getTime();
+      const eventStart = Number(event.fsd);
+      const diffMs = Math.abs(fixtureStart - eventStart);
+      if (!Number.isFinite(fixtureStart) || !Number.isFinite(eventStart) || diffMs > RELAXED_DELTA_TIME_WINDOW_MINUTES * 60 * 1000) continue;
+
+      const normalHomeScore = teamNameSimilarity(fixture.home_team, event.hcN);
+      const normalAwayScore = teamNameSimilarity(fixture.away_team, event.acN);
+      const invertedHomeScore = teamNameSimilarity(fixture.home_team, event.acN);
+      const invertedAwayScore = teamNameSimilarity(fixture.away_team, event.hcN);
+      const normalScore = (normalHomeScore + normalAwayScore) / 2;
+      const invertedScore = (invertedHomeScore + invertedAwayScore) / 2;
+      const orientation = normalScore >= invertedScore ? "NORMAL" : "INVERTED";
+      const teamScore = Math.max(normalScore, invertedScore);
+      const sideScores = orientation === "NORMAL" ? [normalHomeScore, normalAwayScore] : [invertedHomeScore, invertedAwayScore];
+      if (teamScore < RELAXED_DELTA_MIN_TEAM_SCORE || Math.min(...sideScores) < 0.88) continue;
+
+      const timeScore = Math.max(0, 1 - diffMs / (RELAXED_DELTA_TIME_WINDOW_MINUTES * 60 * 1000));
+      const score = teamScore * 0.9 + timeScore * 0.1;
+      if (!best || score > best.score) {
+        best = {
+          matched: true,
+          score,
+          timeScore,
+          teamScore,
+          orientation,
+          reason: "vaidebet-relaxed-time",
+          fixture
+        };
+      }
+    }
+  }
+
   if (!best) return null;
   return { ...best, homeTeam: event.hcN ?? null, awayTeam: event.acN ?? null };
 }
 
-function isNearCanonicalFixtureWindow(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
+function isNearCanonicalFixtureWindow(event: VaidebetFixture, fixtures: CanonicalFixture[], maxDiffMinutes = STRICT_TIME_WINDOW_MINUTES) {
   const eventStart = Number(event.fsd);
   if (!Number.isFinite(eventStart)) return false;
 
   return fixtures.some((fixture) => {
     const fixtureStart = new Date(fixture.starts_at).getTime();
-    return Number.isFinite(fixtureStart) && Math.abs(fixtureStart - eventStart) <= 20 * 60 * 1000;
+    return Number.isFinite(fixtureStart) && Math.abs(fixtureStart - eventStart) <= maxDiffMinutes * 60 * 1000;
   });
+}
+
+function collectionWindow(fixtures: CanonicalFixture[]) {
+  const times = fixtures.map((fixture) => new Date(fixture.starts_at).getTime()).filter(Number.isFinite);
+  const minTime = Math.min(...times);
+  const maxTime = Math.max(...times);
+
+  return {
+    start: new Date(minTime - 60 * 60 * 1000),
+    end: new Date(maxTime + 60 * 60 * 1000)
+  };
 }
 
 function isMoneylineMarket(market: VaidebetMarket) {
@@ -269,6 +317,46 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
     }
 
     try {
+      if (bookmaker.deltaApiBaseUrl) {
+        const { start, end } = collectionWindow(fixtures);
+        const events = await client.getDeltaSoccerEvents(start, end);
+        summary.eventsSeen = events.length;
+
+        const targetEvents = events.filter((event) => event.vld !== false && event.frz !== true && isNearCanonicalFixtureWindow(event, fixtures, RELAXED_DELTA_TIME_WINDOW_MINUTES));
+        summary.eventsInWindow = targetEvents.length;
+
+        const bestMatchByFixtureId = new Map<string, { event: VaidebetFixture; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+        const linksToSave: BookmakerLinkRow[] = [];
+        const oddsToSave: OddRow[] = [];
+
+        for (const event of targetEvents) {
+          const matched = findBestMatch(event, fixtures);
+          if (!matched) {
+            summary.eventsUnmatched += 1;
+            continue;
+          }
+
+          const previous = bestMatchByFixtureId.get(matched.fixture.id);
+          if (!previous || matched.score > previous.matched.score) {
+            bestMatchByFixtureId.set(matched.fixture.id, { event, matched });
+          }
+        }
+
+        for (const { event, matched } of bestMatchByFixtureId.values()) {
+          linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
+          oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
+          summary.eventsCollected += 1;
+          summary.eventsMatched += 1;
+        }
+
+        summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
+        summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
+          cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
+        });
+        await log(bookmaker, "info", "vaidebet collection finished", summary);
+        return summary;
+      }
+
       const seasons = await client.getFootballSeasons();
       const selectedSeasonIds = [...new Set(seasons.map((season) => season.sId))];
       summary.seasonsSeen = seasons.length;

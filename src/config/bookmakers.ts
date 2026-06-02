@@ -44,6 +44,7 @@ export type VaidebetBookmakerConfig = {
   enabled: boolean;
   provider: "vaidebet";
   baseUrl: string;
+  deltaApiBaseUrl?: string;
   referer: string;
   routeSegment: string;
   languageId: number;
@@ -242,6 +243,7 @@ export type TradeballBookmakerConfig = {
   provider: "tradeball";
   baseUrl: string;
   dballBaseUrl: string;
+  exchangeApiBaseUrl: string;
   referer: string;
   sportId: string;
   perPage: number;
@@ -380,6 +382,7 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     enabled: true,
     provider: "vaidebet",
     baseUrl: "https://vaidebet.bet.br/",
+    deltaApiBaseUrl: "https://delta-sb.ngbras.com/",
     referer: "https://vaidebet.bet.br/",
     routeSegment: "d",
     languageId: 23,
@@ -583,6 +586,7 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     provider: "tradeball",
     baseUrl: "https://bolsadeaposta.bet.br/tradeball/",
     dballBaseUrl: "https://tradeball.bolsadeaposta.bet.br/",
+    exchangeApiBaseUrl: "https://mexchange-api.bolsadeaposta.bet.br/",
     referer: "https://tradeball.bolsadeaposta.bet.br/dballTradingFeed",
     sportId: "15",
     perPage: 50,

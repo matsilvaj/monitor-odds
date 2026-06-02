@@ -65,6 +65,7 @@ const MERIDIAN_SEEDED_LEAGUE_URLS: Record<number, Array<{ label: string; sourceU
   1: [{ label: "Copa do Mundo 2026", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327" }],
   2: [{ label: "Liga dos Campeoes", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/europa/liga-dos-campe%C3%B5es?leagueIds=84" }],
   3: [{ label: "Liga Europa", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/europa/liga-europa?leagueIds=86" }],
+  10: [{ label: "Amistosos Internacionais", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/mundo/amistosos-internacionais?leagueIds=106" }],
   11: [{ label: "Copa Sudamericana", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/am%C3%A9rica-do-sul/sudamericana?leagueIds=417" }],
   13: [{ label: "Copa Libertadores", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/am%C3%A9rica-do-sul/copa-libertadores?leagueIds=231" }],
   39: [{ label: "Premier League", sourceUrl: "https://meridianbet.bet.br/ca/esportes/futebol/inglaterra/premier-league?leagueIds=80" }],
@@ -340,6 +341,7 @@ function meridianCountryUrl(bookmaker: MeridianbetBookmakerConfig, league: Activ
   const countryKey = normalizeName(league.country);
   const worldPathByLeagueId = new Map<number, string>([
     [1, "/ca/esportes/futebol/mundo"],
+    [10, "/ca/esportes/futebol/mundo"],
     [2, "/ca/esportes/futebol/europa"],
     [3, "/ca/esportes/futebol/europa"],
     [11, "/ca/esportes/futebol/am%C3%A9rica-do-sul"],
@@ -481,7 +483,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
     };
 
     await ensureBaseRows(bookmaker);
-    const activeLeagues = await getActiveLeagues();
+    let activeLeagues = await getActiveLeagues();
     summary.activeLeagues = activeLeagues.length;
 
     let fixtures = await getCanonicalFixtures(dateKeys, { futureOnly: true });
@@ -489,6 +491,8 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
       await logger("warn", "fixtures locais incompletos para a meridianbet; sincronizando API-Football antes de abrir o navegador", { dateKeys });
       await syncApiFootballFixtures();
       fixtures = await getCanonicalFixtures(dateKeys, { futureOnly: true });
+      activeLeagues = await getActiveLeagues();
+      summary.activeLeagues = activeLeagues.length;
     }
 
     summary.fixturesAvailable = fixtures.length;
@@ -634,7 +638,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
                   homeTeam: fixture.home_team,
                   awayTeam: fixture.away_team
                 });
-                await client.goToUrl(client.currentUrl(), "voltando para a liga da meridianbet após falha").catch(() => undefined);
+                await client.goToUrl(candidate.sourceUrl, "voltando para a liga da meridianbet após falha").catch(() => undefined);
                 continue;
               }
 

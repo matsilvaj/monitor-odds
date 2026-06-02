@@ -3,12 +3,14 @@ export type LeagueConfig = {
   name: string;
   apiFootballLeagueId: number;
   altenarChampId?: number;
+  eligibility?: "SENIOR_INTERNATIONAL_ONLY";
 };
 
 export const MVP_LEAGUES: LeagueConfig[] = [
   { slug: "world-cup", name: "World Cup", apiFootballLeagueId: 1, altenarChampId: 16807 },
   { slug: "champions-league", name: "Champions League", apiFootballLeagueId: 2, altenarChampId: 16808 },
   { slug: "europa-league", name: "Europa League", apiFootballLeagueId: 3, altenarChampId: 16809 },
+  { slug: "friendlies", name: "Friendlies", apiFootballLeagueId: 10, eligibility: "SENIOR_INTERNATIONAL_ONLY" },
   { slug: "sul-americana", name: "Copa Sul-Americana", apiFootballLeagueId: 11 },
   { slug: "libertadores", name: "Libertadores", apiFootballLeagueId: 13, altenarChampId: 3709 },
   { slug: "premier-league", name: "Premier League", apiFootballLeagueId: 39, altenarChampId: 2936 },

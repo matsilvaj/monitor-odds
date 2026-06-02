@@ -1,3 +1,5 @@
+import { nationalTeamAliases } from "./team-aliases.js";
+
 const STOP_WORDS = new Set(["fc", "cf", "sc", "ec", "ac", "ca", "cd", "sd", "ud", "club", "clube", "de", "do", "da", "the"]);
 
 export function normalizeForMatching(value: unknown) {
@@ -100,6 +102,20 @@ export function orderedTokenSimilarity(leftValue: unknown, rightValue: unknown) 
   return total / limit;
 }
 
-export function teamNameSimilarity(leftValue: unknown, rightValue: unknown) {
+function baseTeamNameSimilarity(leftValue: unknown, rightValue: unknown) {
   return Math.max(jaroWinkler(leftValue, rightValue), tokenSetSimilarity(leftValue, rightValue), orderedTokenSimilarity(leftValue, rightValue));
+}
+
+export function teamNameSimilarity(leftValue: unknown, rightValue: unknown) {
+  const leftAliases = nationalTeamAliases(leftValue);
+  const rightAliases = nationalTeamAliases(rightValue);
+  let best = 0;
+
+  for (const leftAlias of leftAliases) {
+    for (const rightAlias of rightAliases) {
+      best = Math.max(best, baseTeamNameSimilarity(leftAlias, rightAlias));
+    }
+  }
+
+  return best;
 }

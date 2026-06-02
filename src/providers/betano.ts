@@ -92,6 +92,37 @@ type SportPageResponse = {
   };
 };
 
+type TopEventsResponse = {
+  data?: {
+    topEvents?: Array<{
+      id?: string;
+      name?: string;
+      type?: string;
+      events?: BetanoEvent[];
+    }>;
+  };
+};
+
+export type BetanoSearchResult = {
+  level?: string;
+  label?: string;
+  labelLatin?: string;
+  startTime?: number;
+  url?: string;
+  filter?: {
+    classId?: string;
+    typeId?: string;
+    sportId?: string;
+    eventId?: string;
+  };
+};
+
+type SearchResponse = {
+  data?: {
+    results?: BetanoSearchResult[];
+  };
+};
+
 const REQ = "req=s,stnf,c,mb,mbl";
 
 export class BetanoClient {
@@ -116,6 +147,47 @@ export class BetanoClient {
       timeoutMs: 15_000,
       maxRetries: 1
     });
+  }
+
+  async getTodayFootballPage() {
+    return httpClient<SportPageResponse>({
+      url: new URL(`api/sport/futebol/jogos-de-hoje/?${REQ}`, this.config.baseUrl),
+      headers: this.headers,
+      referer: new URL("/sport/futebol/jogos-de-hoje/", this.config.baseUrl).href,
+      engine: this.config.engine,
+      timeoutMs: 15_000,
+      maxRetries: 1
+    });
+  }
+
+  async getTopEvents() {
+    return httpClient<TopEventsResponse>({
+      url: new URL("api/search/topevents", this.config.baseUrl),
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 15_000,
+      maxRetries: 1
+    });
+  }
+
+  async searchEvents(term: string) {
+    const cleanedTerm = term.trim();
+    if (!cleanedTerm) return [];
+
+    const searchUrl = new URL("api/search", this.config.baseUrl);
+    searchUrl.searchParams.set("term", cleanedTerm);
+
+    const data = await httpClient<SearchResponse>({
+      url: searchUrl,
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 15_000,
+      maxRetries: 1
+    });
+
+    return data.data?.results ?? [];
   }
 
   async getLeaguePage(leagueUrl: string) {

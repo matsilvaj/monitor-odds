@@ -469,6 +469,14 @@ function moneylineBlocksFromText(rawText: string) {
   });
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isRetryableNavigationError(error: unknown) {
+  return /ERR_NETWORK_CHANGED|ERR_ABORTED|ERR_TIMED_OUT|Timeout|Navigation failed|about:blank/i.test(errorMessage(error));
+}
+
 export class Bet365BrowserClient {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -703,11 +711,43 @@ export class Bet365BrowserClient {
   async goToUrl(url: string, label: string) {
     const page = this.requirePage();
     await this.logger("info", label, { url });
-    if (/\/G40\/?/i.test(url)) {
-      await page.goto("about:blank", { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs }).catch(() => undefined);
+
+    const attempts = 3;
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        if (attempt > 1 || /\/G40\/?/i.test(url)) {
+          await page.goto("about:blank", { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs }).catch(() => undefined);
+        }
+
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs });
+        await this.waitForUi();
+
+        if (url !== "about:blank" && page.url() === "about:blank") {
+          throw new Error("bet365 navigation ended at about:blank");
+        }
+
+        return;
+      } catch (error) {
+        lastError = error;
+        const retryable = isRetryableNavigationError(error);
+
+        if (!retryable || attempt >= attempts) {
+          throw error;
+        }
+
+        await this.logger("warn", "navegacao da bet365 falhou; tentando novamente", {
+          url,
+          attempt,
+          attempts,
+          error: errorMessage(error)
+        });
+        await page.waitForTimeout(1200 * attempt).catch(() => undefined);
+      }
     }
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs });
-    await this.waitForUi();
+
+    throw lastError instanceof Error ? lastError : new Error(`bet365 navigation failed: ${String(lastError)}`);
   }
 
   async openHome() {
@@ -1110,9 +1150,7 @@ export class Bet365BrowserClient {
           sourceUrl,
           moneylineUrl
         });
-        await page.goto("about:blank", { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs }).catch(() => undefined);
-        await page.goto(moneylineUrl, { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs });
-        await this.waitForUi();
+        await this.goToUrl(moneylineUrl, "abrindo mercado principal do evento na bet365");
         sourceUrl = page.url();
       }
     }
@@ -1124,9 +1162,7 @@ export class Bet365BrowserClient {
     for (let attempt = 0; attempt < 20 && !marketTexts.length && !hasMoneylineHeading(rawText); attempt += 1) {
       if (!reloadedEventPage && attempt === 5 && this.isEventUrl(sourceUrl)) {
         await this.logger("info", "recarregando URL do evento para aguardar mercados da bet365", { fixtureId: fixture.id, sourceUrl });
-        await page.goto("about:blank", { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs }).catch(() => undefined);
-        await page.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: this.config.navigationTimeoutMs });
-        await this.waitForUi();
+        await this.goToUrl(sourceUrl, "recarregando evento da bet365");
         reloadedEventPage = true;
       }
 

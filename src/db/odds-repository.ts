@@ -149,6 +149,7 @@ function impliedProbability(rows: OddRow[]) {
 
 function filterInvalidMoneylineGroups(rows: OddRow[]) {
   const invalidRows = new Set<OddRow>();
+  const selectedRows = new Set<OddRow>();
   const groups = new Map<string, OddRow[]>();
 
   for (const row of rows) {
@@ -160,12 +161,17 @@ function filterInvalidMoneylineGroups(rows: OddRow[]) {
   }
 
   for (const [key, groupRows] of groups) {
-    const bySelection = new Map(groupRows.map((row) => [row.selection, row]));
+    const bySelection = new Map<string, OddRow>();
+    for (const row of groupRows) {
+      const current = bySelection.get(row.selection);
+      if (!current || row.price > current.price) bySelection.set(row.selection, row);
+    }
+
     const completeRows = ["HOME", "DRAW", "AWAY"].map((selection) => bySelection.get(selection));
     const complete = completeRows.every((row): row is OddRow => Boolean(row));
     const hasOnlyExpectedRows = groupRows.every((row) => row.selection === "HOME" || row.selection === "DRAW" || row.selection === "AWAY");
 
-    if (!complete || !hasOnlyExpectedRows || groupRows.length !== 3) {
+    if (!complete || !hasOnlyExpectedRows) {
       for (const row of groupRows) invalidRows.add(row);
       console.warn(`[odds] grupo 1X2 incompleto ou duplicado ignorado: ${key}`);
       continue;
@@ -177,10 +183,13 @@ function filterInvalidMoneylineGroups(rows: OddRow[]) {
       console.warn(
         `[odds] grupo 1X2 com probabilidade implicita suspeita ignorado: ${key} (${totalProbability.toFixed(3)})`
       );
+      continue;
     }
+
+    for (const row of completeRows) selectedRows.add(row);
   }
 
-  return rows.filter((row) => !invalidRows.has(row));
+  return rows.filter((row) => row.market_code !== "1X2" || selectedRows.has(row)).filter((row) => !invalidRows.has(row));
 }
 
 async function fetchExistingLinks(bookmakerSlug: string, fixtureIds: string[]) {

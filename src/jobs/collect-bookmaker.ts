@@ -67,7 +67,7 @@ if (!slug) {
       const summary = await bookmaker.collect(options);
       const durationMs = Math.round(performance.now() - startedAt);
       const report = await getBookmakerOddsReport(bookmaker.slug, fixtureReport);
-      for (const line of formatBookmakerResultLines({ bookmaker: bookmaker.slug, summary, durationMs }, report)) {
+      for (const line of formatBookmakerResultLines({ bookmaker: bookmaker.slug, summary, durationMs }, report, fixtureReport)) {
         console.log(line);
       }
     } catch (error) {

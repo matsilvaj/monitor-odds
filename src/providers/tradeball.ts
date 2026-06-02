@@ -75,6 +75,12 @@ type TradeballDballResponse = {
   init?: TradeballDballEvent[];
 };
 
+type TradeballExchangeResponse = {
+  total?: number;
+  events?: TradeballEvent[];
+  "per-page"?: number;
+};
+
 const TRADEBALL_UTC_OFFSET_HOURS = 1;
 const TRADEBALL_UTC_OFFSET_MS = TRADEBALL_UTC_OFFSET_HOURS * 60 * 60 * 1000;
 
@@ -176,7 +182,53 @@ export class TradeballClient {
   }
 
   async getSoccerMoneylineEvents(start: Date, end: Date) {
-    return this.getDballGuestEvents(start, end);
+    const results = await Promise.allSettled([
+      this.getExchangeEvents(start, end),
+      this.getDballGuestEvents(start, end)
+    ]);
+    const exchangeEvents = results[0].status === "fulfilled" ? results[0].value : [];
+    const dballEvents = results[1].status === "fulfilled" ? results[1].value : [];
+
+    return [...new Map([...exchangeEvents, ...dballEvents].map((event) => [event.id, event])).values()];
+  }
+
+  private async getExchangeEvents(start: Date, end: Date) {
+    const perPage = this.config.perPage;
+    const maxPages = this.config.maxPages;
+    const events: TradeballEvent[] = [];
+    const after = Math.floor(start.getTime() / 1000);
+    const before = Math.floor(end.getTime() / 1000);
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const offset = page * perPage;
+      const url = new URL("api/events", this.config.exchangeApiBaseUrl);
+      url.searchParams.set("offset", String(offset));
+      url.searchParams.set("per-page", String(perPage));
+      url.searchParams.set("sort-by", "volume");
+      url.searchParams.set("sort-direction", "desc");
+      url.searchParams.set("sport-ids", this.config.sportId);
+      url.searchParams.set("market-types", "one_x_two");
+      url.searchParams.set("en-market-names", "Match Odds,Moneyline,Winner");
+      url.searchParams.set("after", String(after));
+      url.searchParams.set("before", String(before));
+      url.searchParams.set("markets-limit", "30");
+
+      const pageData = await httpClient<TradeballExchangeResponse>({
+        url,
+        headers: this.headers,
+        referer: this.config.referer,
+        engine: this.config.engine,
+        timeoutMs: 20_000,
+        maxRetries: 2
+      });
+
+      const pageEvents = pageData.events ?? [];
+      events.push(...pageEvents);
+
+      if (pageEvents.length < perPage || events.length >= (pageData.total ?? 0)) break;
+    }
+
+    return events;
   }
 
   private async getDballGuestEvents(start: Date, end: Date) {

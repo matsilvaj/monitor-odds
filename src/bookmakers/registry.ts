@@ -240,7 +240,7 @@ async function collectBookmakers(bookmakers: BookmakerCollector[], options: Coll
 
     try {
       const report = await getBookmakerOddsReport(result.bookmaker, fixtureReport);
-      for (const line of formatBookmakerResultLines(result, report)) console.log(line);
+      for (const line of formatBookmakerResultLines(result, report, fixtureReport)) console.log(line);
     } catch (error) {
       console.warn(`[${result.bookmaker}] Coleta finalizada, mas não consegui montar o resumo do banco: ${errorMessage(error)}`);
     }
@@ -289,7 +289,7 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
 
     try {
       const report = await getBookmakerOddsReport(result.bookmaker, fixtureReport);
-      for (const line of formatBookmakerResultLines(result, report)) console.log(line);
+      for (const line of formatBookmakerResultLines(result, report, fixtureReport)) console.log(line);
     } catch (error) {
       console.warn(`[${result.bookmaker}] Coleta finalizada, mas não consegui montar o resumo do banco: ${errorMessage(error)}`);
     }
