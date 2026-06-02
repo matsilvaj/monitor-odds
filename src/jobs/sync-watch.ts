@@ -1,6 +1,9 @@
+import { installProcessErrorHandlers } from "../utils/process-errors.js";
 import { collectBookmakerBySlug, collectFastBookmakers } from "../bookmakers/registry.js";
 import { syncApiFootballFixtures, type SyncApiFootballFixturesOptions } from "../services/api-football-sync.js";
 import { formatFixtureSyncSummary } from "../services/sync-report.js";
+
+installProcessErrorHandlers();
 
 const MIN_MIDNIGHT_SYNC_DELAY_MS = 1000;
 const WATCH_LOOP_PAUSE_MS = 2000;
@@ -93,7 +96,9 @@ process.once("SIGTERM", () => requestShutdown("sistema"));
 
 console.log("sync:watch iniciado. Ctrl+C para parar.");
 
-await runFixtureSync("inicial");
+await runFixtureSync("inicial").catch((error) => {
+  console.error("[sync] Falha na sincronizacao inicial da API-Football.", error);
+});
 scheduleMidnightFixtureSync();
 
 async function runFastBookmakerLoop() {
@@ -101,7 +106,12 @@ async function runFastBookmakerLoop() {
     const startedAt = new Date();
     console.log(`[sync] Ciclo das casas rápidas iniciado às ${startedAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`);
 
-    await collectFastBookmakers({ concurrency: 3, logProgress: true, trigger: "watch" });
+    try {
+      await collectFastBookmakers({ concurrency: 3, logProgress: true, trigger: "watch" });
+    } catch (error) {
+      console.error("[sync] Falha no ciclo das casas rapidas.", error);
+    }
+
     if (shutdownRequested) break;
 
     console.log("[sync] Ciclo das casas rápidas finalizado. Próximo ciclo em 2s.");
@@ -115,7 +125,12 @@ async function runBrowserBookmakerLoop(bookmaker: (typeof BROWSER_BOOKMAKER_LOOP
     console.log(
       `[sync] Ciclo da ${bookmaker.name} iniciado às ${startedAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`
     );
-    await collectBookmakerBySlug(bookmaker.slug, { logProgress: true, trigger: "watch", cleanupStarted: false });
+    try {
+      await collectBookmakerBySlug(bookmaker.slug, { logProgress: true, trigger: "watch", cleanupStarted: false });
+    } catch (error) {
+      console.error(`[sync] Falha no ciclo da ${bookmaker.name}.`, error);
+    }
+
     if (shutdownRequested) break;
 
     console.log(`[sync] Ciclo da ${bookmaker.name} finalizado. Próximo ciclo em 2s.`);

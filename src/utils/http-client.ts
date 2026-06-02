@@ -66,6 +66,7 @@ function isTransientNetworkError(error: unknown) {
       "ENOTFOUND",
       "EPIPE",
       "ERR_CRYPTO_OPERATION_FAILED",
+      "ERR_SSL_UNSUPPORTED_ELLIPTIC_CURVE",
       "UND_ERR_SOCKET",
       "UND_ERR_CONNECT_TIMEOUT",
       "UND_ERR_HEADERS_TIMEOUT",
@@ -81,6 +82,8 @@ function isTransientNetworkError(error: unknown) {
     message.includes("socket hang up") ||
     message.includes("other side closed") ||
     message.includes("failed to set ecdh curve") ||
+    message.includes("unsupported_elliptic_curve") ||
+    message.includes("unsupported elliptic curve") ||
     message.includes("err_crypto_operation_failed")
   );
 }
