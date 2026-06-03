@@ -381,14 +381,23 @@ function buildBookmakerLink(bookmaker: MeridianbetBookmakerConfig, fixture: Cano
     external_event_id: event.externalEventId,
     fixture_id: fixture.id,
     bookmaker_event_name: event.eventName || `${fixture.home_team} x ${fixture.away_team}`,
-    bookmaker_home_team: fixture.home_team,
-    bookmaker_away_team: fixture.away_team,
-    normalized_bookmaker_home_team: normalizeName(fixture.home_team),
-    normalized_bookmaker_away_team: normalizeName(fixture.away_team),
+    bookmaker_home_team: event.bookmakerHomeTeam ?? fixture.home_team,
+    bookmaker_away_team: event.bookmakerAwayTeam ?? fixture.away_team,
+    normalized_bookmaker_home_team: normalizeName(event.bookmakerHomeTeam ?? fixture.home_team),
+    normalized_bookmaker_away_team: normalizeName(event.bookmakerAwayTeam ?? fixture.away_team),
     starts_at: fixture.starts_at,
     match_confidence_score: 1,
     source_url: publicUrl,
-    raw: { sourceUrl: event.sourceUrl, collectionUrl: publicUrl, publicUrl, rawText: event.rawText, markets: event.markets },
+    raw: {
+      sourceUrl: event.sourceUrl,
+      collectionUrl: publicUrl,
+      publicUrl,
+      rawText: event.rawText,
+      markets: event.markets,
+      orientation: event.orientation,
+      bookmakerHomeTeam: event.bookmakerHomeTeam,
+      bookmakerAwayTeam: event.bookmakerAwayTeam
+    },
     updated_at: new Date().toISOString()
   };
 }
@@ -402,10 +411,25 @@ function isMeridianEventUrl(sourceUrl: string | null | undefined) {
   }
 }
 
+function rawOddTypeFromSelectionIndex(index: number) {
+  if (index === 0) return "1";
+  if (index === 1) return "X";
+  if (index === 2) return "2";
+  return String(index);
+}
+
+function sourceOddSelectionIndex(selection: string) {
+  if (selection === "HOME") return 0;
+  if (selection === "DRAW") return 1;
+  if (selection === "AWAY") return 2;
+  return 9;
+}
+
 function buildMoneylineOdds(bookmaker: MeridianbetBookmakerConfig, fixture: CanonicalFixture, event: MeridianCollectedEvent): OddRow[] {
   const rows: OddRow[] = [];
   for (const market of event.markets) {
     for (const selection of market.selections) {
+      const sourceSelectionIndex = sourceOddSelectionIndex(selection.selection);
       rows.push({
         fixture_id: fixture.id,
         bookmaker_slug: bookmaker.slug,
@@ -417,9 +441,9 @@ function buildMoneylineOdds(bookmaker: MeridianbetBookmakerConfig, fixture: Cano
         confidence_score: market.confidence,
         raw_market_name: market.marketName,
         raw_label: selection.label,
-        raw_odd_type: selection.selection,
-        source_odd_id: event.externalEventId * 1000 + market.index * 10 + selection.index,
-        raw: { sourceUrl: event.sourceUrl, market, selection },
+        raw_odd_type: rawOddTypeFromSelectionIndex(selection.index),
+        source_odd_id: event.externalEventId * 1000 + market.index * 10 + sourceSelectionIndex,
+        raw: { sourceUrl: event.sourceUrl, orientation: event.orientation, market, selection },
         updated_at: new Date().toISOString()
       });
     }
@@ -442,12 +466,13 @@ async function persistCollectedEvent(bookmaker: MeridianbetBookmakerConfig, fixt
 
   const link = buildBookmakerLink(bookmaker, fixture, event);
   const odds = buildMoneylineOdds(bookmaker, fixture, event);
-  const oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, [link], odds);
+  const oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, [link], odds, { replaceExistingOdds: true });
 
   await logger("info", "jogo da meridianbet salvo no banco", {
     fixtureId: fixture.id,
     eventName: event.eventName,
     sourceUrl: event.sourceUrl,
+    orientation: event.orientation,
     oddsFound: odds.length,
     oddsUpserted
   });

@@ -237,12 +237,20 @@ async function deleteRowsById(table: "bookmaker_event_links" | "odds", label: st
   }
 }
 
+async function deleteExistingOdds(bookmakerSlug: string, fixtureIds: string[], marketCodes: string[]) {
+  for (const fixtureIdBatch of chunks(fixtureIds, SELECT_BATCH_SIZE)) {
+    await withStatementTimeoutRetry("substituicao de odds antigas", async () =>
+      await supabase.from("odds").delete().eq("bookmaker_slug", bookmakerSlug).in("fixture_id", fixtureIdBatch).in("market_code", marketCodes)
+    );
+  }
+}
+
 export class OddsRepository {
   static async saveAll(
     bookmakerSlug: string,
     links: BookmakerLinkRow[],
     odds: OddRow[],
-    options: { marketCodes?: string[]; cleanupFixtureIds?: string[] } = {}
+    options: { marketCodes?: string[]; cleanupFixtureIds?: string[]; replaceExistingOdds?: boolean } = {}
   ) {
     const saveStartedAt = new Date().toISOString();
     const fixtureIds = [...new Set(options.cleanupFixtureIds?.length ? options.cleanupFixtureIds : links.map((link) => link.fixture_id))];
@@ -275,7 +283,11 @@ export class OddsRepository {
       ).values()
     ]);
 
-    const existingOdds = fixtureIds.length ? await fetchExistingOdds(bookmakerSlug, fixtureIds, marketCodes) : [];
+    if (options.replaceExistingOdds && fixtureIds.length) {
+      await deleteExistingOdds(bookmakerSlug, fixtureIds, marketCodes);
+    }
+
+    const existingOdds = !options.replaceExistingOdds && fixtureIds.length ? await fetchExistingOdds(bookmakerSlug, fixtureIds, marketCodes) : [];
     const existingOddsByKey = new Map(existingOdds.map((row) => [oddKey(row), row]));
     const currentOddKeys = new Set(uniqueOdds.map(oddKey));
     const changedOdds = uniqueOdds.filter((odd) => {

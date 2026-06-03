@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import type { MeridianbetBookmakerConfig } from "../config/bookmakers.js";
-import { nationalTeamTokenGroups, tokenGroupMatchesText } from "../domain/matching/team-aliases.js";
+import { nationalTeamAliases, nationalTeamTokenGroups, tokenGroupMatchesText } from "../domain/matching/team-aliases.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 
 type Logger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
@@ -39,6 +39,9 @@ export type MeridianCollectedEvent = {
   externalEventId: number;
   sourceUrl: string;
   eventName: string;
+  bookmakerHomeTeam: string | null;
+  bookmakerAwayTeam: string | null;
+  orientation: MeridianEventOrientation;
   markets: MeridianCollectedMarket[];
   rawText: string;
 };
@@ -52,7 +55,10 @@ type MeridianClickTarget = {
   kind: string;
 };
 
-const ODD_RE = /\b(?:[1-9]\d{0,2}|0)[.,]\d{2,3}\b/g;
+type MeridianEventOrientation = "NORMAL" | "INVERTED";
+
+const PRICE_LINE_RE = /^(?:[1-9]\d{0,2}|0)(?:[.,]\d{1,3})?$/;
+const SAFE_SHORT_TEAM_TOKENS = new Set(["dr", "rd", "u17", "u18", "u19", "u20", "u21", "u22", "usa", "eua", "uae"]);
 
 function findChromeExecutable(configuredPath: string | undefined) {
   const candidates = [
@@ -99,6 +105,34 @@ function parseOdd(value: string) {
   return Number(value.replace(",", "."));
 }
 
+function parsePriceLine(value: string) {
+  const trimmed = value.trim();
+  if (!PRICE_LINE_RE.test(trimmed)) return null;
+  const price = parseOdd(trimmed);
+  return Number.isFinite(price) && price >= 1.01 && price <= 1000 ? price : null;
+}
+
+function moneylinePricesFromBlock(rawText: string) {
+  const lines = rawText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const prices = new Map<"1" | "X" | "2", number>();
+
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const label = lines[index].toUpperCase();
+    if (label !== "1" && label !== "X" && label !== "2") continue;
+    const price = parsePriceLine(lines[index + 1]);
+    if (price == null) continue;
+    prices.set(label, price);
+  }
+
+  const home = prices.get("1");
+  const draw = prices.get("X");
+  const away = prices.get("2");
+  return home != null && draw != null && away != null ? [home, draw, away] : [];
+}
+
 function hashToPositiveInt(value: string) {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -133,16 +167,28 @@ function classifyMarket(rawText: string): { category: PaCategory; confidence: nu
   return { category: "SEM_PA", confidence: 1, reason: "meridianbet-resultado-final" };
 }
 
-function parseMoneylineMarket(rawText: string, fixture: MeridianFixtureTarget, index: number): MeridianCollectedMarket | null {
+function canonicalSelectionForDisplayOrder(selection: Selection, orientation: MeridianEventOrientation): Selection {
+  if (orientation !== "INVERTED") return selection;
+  if (selection === "HOME") return "AWAY";
+  if (selection === "AWAY") return "HOME";
+  return selection;
+}
+
+function parseMoneylineMarket(
+  rawText: string,
+  fixture: MeridianFixtureTarget,
+  orientation: MeridianEventOrientation,
+  index: number
+): MeridianCollectedMarket | null {
   if (!/resultado\s+final/i.test(rawText)) return null;
 
-  const odds = [...rawText.matchAll(ODD_RE)]
-    .map((match) => parseOdd(match[0]))
-    .filter((value) => Number.isFinite(value) && value >= 1.01 && value <= 1000);
+  const odds = moneylinePricesFromBlock(rawText);
 
   if (odds.length < 3) return null;
 
   const pa = classifyMarket(rawText);
+  const displayHomeTeam = orientation === "INVERTED" ? fixture.awayTeam : fixture.homeTeam;
+  const displayAwayTeam = orientation === "INVERTED" ? fixture.homeTeam : fixture.awayTeam;
   return {
     marketName: "MoneyLine",
     paCategory: pa.category,
@@ -151,9 +197,9 @@ function parseMoneylineMarket(rawText: string, fixture: MeridianFixtureTarget, i
     rawText: rawText.slice(0, 1500),
     index,
     selections: [
-      { selection: "HOME", label: fixture.homeTeam ?? "Home", price: odds[0], index: 0 },
+      { selection: canonicalSelectionForDisplayOrder("HOME", orientation), label: displayHomeTeam ?? "Home", price: odds[0], index: 0 },
       { selection: "DRAW", label: "Draw", price: odds[1], index: 1 },
-      { selection: "AWAY", label: fixture.awayTeam ?? "Away", price: odds[2], index: 2 }
+      { selection: canonicalSelectionForDisplayOrder("AWAY", orientation), label: displayAwayTeam ?? "Away", price: odds[2], index: 2 }
     ]
   };
 }
@@ -214,6 +260,163 @@ function eventDetailTextFromRawText(rawText: string, fixture: MeridianFixtureTar
   }
 
   return null;
+}
+
+function eventHeaderLinesFromRawText(rawText: string, fixture: MeridianFixtureTarget) {
+  const lines = rawText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const homeTokenGroups = nationalTeamTokenGroups(fixture.homeTeam);
+  const awayTokenGroups = nationalTeamTokenGroups(fixture.awayTeam);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (normalizeVisibleText(lines[index]) !== "principal") continue;
+
+    const headerLines = lines.slice(Math.max(0, index - 12), index);
+    const headerText = normalizeVisibleText(headerLines.join(" "));
+    const tabsText = normalizeVisibleText(lines.slice(index, index + 14).join(" "));
+    const marketText = normalizeVisibleText(lines.slice(index, index + 80).join(" "));
+    const hasFixtureHeader = tokenGroupMatchesText(headerText, homeTokenGroups) && tokenGroupMatchesText(headerText, awayTokenGroups);
+    const hasEventTabs = tabsText.includes("gols") && tabsText.includes("resultados finais");
+    const hasMoneyline = marketText.includes("resultado final");
+
+    if (hasFixtureHeader && hasEventTabs && hasMoneyline) return headerLines;
+  }
+
+  return [];
+}
+
+function significantTokensFromText(value: string) {
+  return normalizeVisibleText(value)
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 || SAFE_SHORT_TEAM_TOKENS.has(token));
+}
+
+function orderedTokenPosition(textTokens: string[], candidateTokens: string[]) {
+  let firstPosition: number | null = null;
+  let cursor = 0;
+
+  for (const token of candidateTokens) {
+    const foundAt = textTokens.indexOf(token, cursor);
+    if (foundAt < 0) return null;
+    if (firstPosition == null) firstPosition = foundAt;
+    cursor = foundAt + 1;
+  }
+
+  return firstPosition;
+}
+
+function unorderedTokenWindowPosition(textTokens: string[], candidateTokens: string[]) {
+  if (!candidateTokens.length || candidateTokens.length > textTokens.length) return null;
+
+  let best: { position: number; span: number } | null = null;
+  for (let start = 0; start < textTokens.length; start += 1) {
+    const remaining = new Map<string, number>();
+    for (const token of candidateTokens) remaining.set(token, (remaining.get(token) ?? 0) + 1);
+
+    for (let end = start; end < textTokens.length; end += 1) {
+      const current = remaining.get(textTokens[end]);
+      if (current != null) {
+        if (current <= 1) remaining.delete(textTokens[end]);
+        else remaining.set(textTokens[end], current - 1);
+      }
+
+      if (remaining.size) continue;
+
+      const span = end - start + 1;
+      if (!best || span < best.span || (span === best.span && start < best.position)) {
+        best = { position: start, span };
+      }
+      break;
+    }
+  }
+
+  return best;
+}
+
+function teamPositionInText(text: string, teamName: unknown, mode: "ordered" | "slug" = "ordered") {
+  const normalizedText = normalizeVisibleText(text);
+  if (!normalizedText) return null;
+
+  const textTokens = normalizedText.split(/\s+/).filter(Boolean);
+  const searchable = ` ${normalizedText} `;
+  let best: { position: number; span: number } | null = null;
+
+  for (const alias of nationalTeamAliases(teamName)) {
+    const normalizedAlias = normalizeVisibleText(alias);
+    if (!normalizedAlias) continue;
+
+    const exactPosition = searchable.indexOf(` ${normalizedAlias} `);
+    if (exactPosition >= 0) {
+      const tokenPosition = textTokens.indexOf(normalizedAlias.split(/\s+/)[0]);
+      const candidate = { position: tokenPosition >= 0 ? tokenPosition : exactPosition, span: significantTokensFromText(alias).length || 1 };
+      if (!best || candidate.span < best.span || (candidate.span === best.span && candidate.position < best.position)) best = candidate;
+      continue;
+    }
+
+    const candidateTokens = significantTokensFromText(alias).slice(0, 4);
+    if (!candidateTokens.length) continue;
+
+    const candidate =
+      mode === "slug"
+        ? unorderedTokenWindowPosition(textTokens, candidateTokens)
+        : (() => {
+            const position = orderedTokenPosition(textTokens, candidateTokens);
+            return position == null ? null : { position, span: candidateTokens.length };
+          })();
+
+    if (candidate && (!best || candidate.span < best.span || (candidate.span === best.span && candidate.position < best.position))) {
+      best = candidate;
+    }
+  }
+
+  return best?.position ?? null;
+}
+
+function eventOrderTextFromUrl(sourceUrl: string) {
+  try {
+    const pathParts = new URL(sourceUrl).pathname.split("/").filter(Boolean);
+    const eventIdIndex = pathParts.findIndex((part) => /^\d+$/.test(part));
+    const slug = eventIdIndex > 0 ? pathParts[eventIdIndex - 1] : null;
+    return slug ? decodeURIComponent(slug).replace(/[-_]+/g, " ") : "";
+  } catch {
+    return "";
+  }
+}
+
+function eventDisplayOrderFromSignals(rawText: string, sourceUrl: string, fixture: MeridianFixtureTarget) {
+  const headerText = eventHeaderLinesFromRawText(rawText, fixture).join(" ");
+  const signals = [
+    { text: eventOrderTextFromUrl(sourceUrl), mode: "slug" as const },
+    { text: headerText, mode: "ordered" as const }
+  ].filter((signal) => Boolean(signal.text));
+  let orientation: MeridianEventOrientation = "NORMAL";
+
+  for (const signal of signals) {
+    const homePosition = teamPositionInText(signal.text, fixture.homeTeam, signal.mode);
+    const awayPosition = teamPositionInText(signal.text, fixture.awayTeam, signal.mode);
+    if (homePosition != null && awayPosition != null && homePosition !== awayPosition) {
+      orientation = awayPosition < homePosition ? "INVERTED" : "NORMAL";
+      break;
+    }
+
+    if (signal.mode === "slug" && homePosition === 0 && awayPosition == null) {
+      orientation = "NORMAL";
+      break;
+    }
+
+    if (signal.mode === "slug" && awayPosition === 0 && homePosition == null) {
+      orientation = "INVERTED";
+      break;
+    }
+  }
+
+  return {
+    orientation,
+    bookmakerHomeTeam: orientation === "INVERTED" ? fixture.awayTeam : fixture.homeTeam,
+    bookmakerAwayTeam: orientation === "INVERTED" ? fixture.homeTeam : fixture.awayTeam
+  };
 }
 
 export class MeridianbetBrowserClient {
@@ -476,18 +679,20 @@ export class MeridianbetBrowserClient {
       throw new Error(`MeridianBet abriu a lista da liga, mas não confirmou o painel do evento: ${fixture.homeTeam} x ${fixture.awayTeam}`);
     }
 
+    const displayOrder = eventDisplayOrderFromSignals(rawText, sourceUrl, fixture);
     const textBlocks = moneylineBlocksFromText(eventDetailText);
     const directBlocks = marketTexts.filter(looksLikeStandaloneMoneylineBlock);
     const rawMarkets = [
       ...new Map([...(textBlocks.length ? textBlocks : directBlocks), ...directBlocks].map((text) => [compactSpaces(text).slice(0, 220), text])).values()
     ];
     const markets = rawMarkets
-      .map((text, index) => parseMoneylineMarket(text, fixture, index))
+      .map((text, index) => parseMoneylineMarket(text, fixture, displayOrder.orientation, index))
       .filter((market): market is MeridianCollectedMarket => Boolean(market));
 
     await this.logger("info", "odds lidas na página do jogo da meridianbet", {
       fixtureId: fixture.id,
       sourceUrl,
+      orientation: displayOrder.orientation,
       markets: markets.length,
       odds: markets.reduce((total, market) => total + market.selections.length, 0),
       categories: markets.map((market) => market.paCategory)
@@ -496,7 +701,10 @@ export class MeridianbetBrowserClient {
     return {
       externalEventId: parseMeridianEventId(sourceUrl, fixture.id),
       sourceUrl,
-      eventName: [fixture.homeTeam, fixture.awayTeam].filter(Boolean).join(" x "),
+      eventName: [displayOrder.bookmakerHomeTeam, displayOrder.bookmakerAwayTeam].filter(Boolean).join(" x "),
+      bookmakerHomeTeam: displayOrder.bookmakerHomeTeam,
+      bookmakerAwayTeam: displayOrder.bookmakerAwayTeam,
+      orientation: displayOrder.orientation,
       markets,
       rawText: eventDetailText
     };
@@ -777,7 +985,7 @@ export class MeridianbetBrowserClient {
     const page = this.requirePage();
     const script = String.raw`
 (() => {
-  const oddRe = /\b(?:[1-9]\d{0,2}|0)[.,]\d{2,3}\b/g;
+  const oddRe = /\b(?:[1-9]\d{0,2}|0)(?:[.,]\d{1,3})?\b/g;
   const nodes = [...document.querySelectorAll("div,section,article")];
   const selected = [];
   const signatures = new Set();
