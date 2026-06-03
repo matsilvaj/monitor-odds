@@ -21,6 +21,7 @@ export type EventMatchResult = {
 
 const MAX_TIME_DIFF_MS = 20 * 60 * 1000;
 const MIN_TEAM_SCORE = 0.65;
+const MIN_SIDE_TEAM_SCORE = 0.62;
 
 function timestamp(value: string | number | Date) {
   if (value instanceof Date) return value.getTime();
@@ -56,7 +57,15 @@ function hasStrongLeagueSignal(left: MatchableEvent, right: MatchableEvent) {
 }
 
 function pairScore(leftHome: unknown, leftAway: unknown, rightHome: unknown, rightAway: unknown) {
-  return (teamNameSimilarity(leftHome, rightHome) + teamNameSimilarity(leftAway, rightAway)) / 2;
+  const homeScore = teamNameSimilarity(leftHome, rightHome);
+  const awayScore = teamNameSimilarity(leftAway, rightAway);
+
+  return {
+    homeScore,
+    awayScore,
+    score: (homeScore + awayScore) / 2,
+    minSideScore: Math.min(homeScore, awayScore)
+  };
 }
 
 export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent): EventMatchResult {
@@ -78,11 +87,23 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
 
   const normalScore = pairScore(canonical.homeTeam, canonical.awayTeam, bookmaker.homeTeam, bookmaker.awayTeam);
   const invertedScore = pairScore(canonical.homeTeam, canonical.awayTeam, bookmaker.awayTeam, bookmaker.homeTeam);
-  const orientation = normalScore >= invertedScore ? "NORMAL" : "INVERTED";
-  const teamScore = Math.max(normalScore, invertedScore);
+  const selectedScore = normalScore.score >= invertedScore.score ? normalScore : invertedScore;
+  const orientation = normalScore.score >= invertedScore.score ? "NORMAL" : "INVERTED";
+  const teamScore = selectedScore.score;
   const timeScore = 1 - diffMs / MAX_TIME_DIFF_MS;
   const score = timeScore * 0.4 + teamScore * 0.6;
   const threshold = timeScore >= 0.95 ? 0.58 : timeScore >= 0.85 ? 0.64 : 0.72;
+
+  if (selectedScore.minSideScore < MIN_SIDE_TEAM_SCORE) {
+    return {
+      matched: false,
+      score,
+      timeScore,
+      teamScore,
+      orientation,
+      reason: "side-score-rejected"
+    };
+  }
 
   if (teamScore < MIN_TEAM_SCORE) {
     return {

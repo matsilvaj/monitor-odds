@@ -211,6 +211,32 @@ async function fetchExistingLinks(bookmakerSlug: string, fixtureIds: string[]) {
   return rows;
 }
 
+async function fetchExistingLinksByEventIds(bookmakerSlug: string, externalEventIds: Array<string | number>) {
+  const rows: ExistingBookmakerLinkRow[] = [];
+  const eventIds = [
+    ...new Map(
+      externalEventIds
+        .filter((eventId) => keyValue(eventId))
+        .map((eventId) => [keyValue(eventId), eventId])
+    ).values()
+  ];
+
+  for (const eventIdBatch of chunks(eventIds, SELECT_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from("bookmaker_event_links")
+      .select(
+        "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,updated_at"
+      )
+      .eq("bookmaker_slug", bookmakerSlug)
+      .in("external_event_id", eventIdBatch);
+
+    if (error) throw error;
+    rows.push(...((data ?? []) as unknown as ExistingBookmakerLinkRow[]));
+  }
+
+  return rows;
+}
+
 async function fetchExistingOdds(bookmakerSlug: string, fixtureIds: string[], marketCodes: string[]) {
   const rows: ExistingOddRow[] = [];
 
@@ -253,12 +279,22 @@ export class OddsRepository {
     options: { marketCodes?: string[]; cleanupFixtureIds?: string[]; replaceExistingOdds?: boolean } = {}
   ) {
     const saveStartedAt = new Date().toISOString();
-    const fixtureIds = [...new Set(options.cleanupFixtureIds?.length ? options.cleanupFixtureIds : links.map((link) => link.fixture_id))];
     const marketCodes = options.marketCodes?.length ? options.marketCodes : ["1X2"];
     const linksToSave = [
       ...new Map(links.map((link) => [linkKey(link), { ...link, updated_at: saveStartedAt }])).values()
     ];
     const oddsToSave = odds.map((odd) => ({ ...odd, updated_at: saveStartedAt }));
+    const existingLinksByEventId = linksToSave.length ? await fetchExistingLinksByEventIds(bookmakerSlug, linksToSave.map((link) => link.external_event_id)) : [];
+    const linksToSaveByKey = new Map(linksToSave.map((link) => [linkKey(link), link]));
+    const movedFixtureIds = existingLinksByEventId
+      .filter((link) => {
+        const nextLink = linksToSaveByKey.get(linkKey(link));
+        return nextLink && nextLink.fixture_id !== link.fixture_id;
+      })
+      .map((link) => link.fixture_id);
+    const fixtureIds = [
+      ...new Set([...(options.cleanupFixtureIds?.length ? options.cleanupFixtureIds : links.map((link) => link.fixture_id)), ...movedFixtureIds])
+    ];
 
     const existingLinks = fixtureIds.length ? await fetchExistingLinks(bookmakerSlug, fixtureIds) : [];
     const existingLinksByKey = new Map(existingLinks.map((row) => [linkKey(row), row]));
