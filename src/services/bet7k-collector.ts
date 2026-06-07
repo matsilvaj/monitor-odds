@@ -133,11 +133,17 @@ function isMoneylineMarket(market: Bet7kMarket) {
   return (isStandardMoneyline || isSuperOddsMoneyline) && market.IsLive !== true && market.IsRemoved !== true && market.IsSuspended !== true;
 }
 
-function paForMarket(market: Bet7kMarket): { category: PaCategory; confidence: number; reason: string } {
+function hasEventEarlyPayout(event: Bet7kEvent) {
+  const value = event.Settings?.EarlyPayout;
+  if (value === true) return true;
+  if (typeof value === "number") return Number.isFinite(value) && value > 0;
+  if (typeof value === "string") return !["", "0", "false", "null", "undefined"].includes(normalizeForMatching(value));
+  return false;
+}
+
+function paForMarket(market: Bet7kMarket, event: Bet7kEvent): { category: PaCategory; confidence: number; reason: string } {
   const type = market.MarketType?._id;
   const text = normalizeForMatching([market.Name, market.MarketType?.Name, market.MarketType?.LineTypeName].filter(Boolean).join(" "));
-  const raw = Array.isArray(market.raw) ? market.raw : [];
-  const earlyPayoutMarker = Number(raw[29]);
 
   if (type === "ML5000" || text.includes("super odds")) {
     return { category: "SEM_PA", confidence: 1, reason: "bet7k-super-odds" };
@@ -147,8 +153,8 @@ function paForMarket(market: Bet7kMarket): { category: PaCategory; confidence: n
     return { category: "COM_PA", confidence: 1, reason: "bet7k-explicit-early-payout-market" };
   }
 
-  if (type === "ML0" && Number.isFinite(earlyPayoutMarker) && earlyPayoutMarker > 0) {
-    return { category: "COM_PA", confidence: 0.95, reason: "bet7k-market-early-payout-marker" };
+  if (type === "ML0" && hasEventEarlyPayout(event)) {
+    return { category: "COM_PA", confidence: 0.98, reason: "bet7k-event-early-payout-setting" };
   }
 
   return { category: "SEM_PA", confidence: 1, reason: "bet7k-standard-1x2" };
@@ -222,7 +228,7 @@ function buildMoneylineOdds(
   const { homeTeam, awayTeam } = eventTeams(event);
 
   for (const market of markets.filter(isMoneylineMarket)) {
-    const pa = paForMarket(market);
+    const pa = paForMarket(market, event);
 
     for (const selectionItem of market.Selections ?? []) {
       const price = Number(selectionItem.DisplayOdds?.Decimal);
