@@ -5,7 +5,7 @@ import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-r
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
-import { normalizeForMatching, teamNameSimilarity } from "../domain/matching/text-similarity.js";
+import { normalizeForMatching, teamNameSimilarity, tokenSetSimilarity } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetmgmClient, type BetmgmEvent, type BetmgmGroup, type BetmgmMarket, type BetmgmOutcome } from "../providers/betmgm.js";
@@ -84,12 +84,55 @@ function flattenGroups(group: BetmgmGroup, path: string[] = []): FlatGroup[] {
   return [{ ...group, path: currentPath }, ...(group.groups ?? []).flatMap((child) => flattenGroups(child, currentPath))];
 }
 
-function selectFootballGroupIds(groups: BetmgmGroup[]) {
+function leagueAliases(leagueName: string) {
+  const normalized = normalizeForMatching(leagueName);
+  const aliases = new Set([normalized]);
+
+  if (/world\s+cup|copa\s+do\s+mundo|mundial/.test(normalized)) {
+    aliases.add("mundial");
+    aliases.add("copa do mundo");
+    aliases.add("world cup");
+  }
+
+  if (/brasileir[aã]o?\s+serie\s+b|brasileiro\s+serie\s+b|serie\s+b/.test(normalized)) {
+    aliases.add("brasileiro serie b");
+    aliases.add("brasileirao serie b");
+  }
+
+  if (/la\s+liga\s+2|segunda\s+divis[aã]o|segunda\s+division|hypermotion/.test(normalized)) {
+    aliases.add("la liga 2");
+    aliases.add("segunda divisao");
+    aliases.add("segunda division");
+    aliases.add("hypermotion");
+  }
+
+  return [...aliases].filter(Boolean);
+}
+
+function groupMatchesFixtureLeague(group: FlatGroup, fixture: CanonicalFixture) {
+  const league = fixtureLeague(fixture);
+  if (!league) return false;
+
+  const groupText = normalizeForMatching(group.path.join(" "));
+  return leagueAliases(league.name).some((alias) => {
+    const aliasText = normalizeForMatching(alias);
+    return Boolean(aliasText) && (groupText.includes(aliasText) || tokenSetSimilarity(aliasText, groupText) >= 0.68);
+  });
+}
+
+function selectFootballGroupIds(groups: BetmgmGroup[], fixtures: CanonicalFixture[]) {
   const football = groups.find((group) => normalizeForMatching(group.name) === "futebol");
   if (!football) return [];
 
+  const selected = flattenGroups(football)
+    .filter((group) => Number(group.eventCount ?? 0) > 0)
+    .filter((group) => fixtures.some((fixture) => groupMatchesFixtureLeague(group, fixture)))
+    .map((group) => group.id);
+
+  if (selected.length) return selected;
+
   return flattenGroups(football)
-    .filter((group) => !(group.groups ?? []).length && Number(group.eventCount ?? 0) > 0)
+    .filter((group) => Number(group.eventCount ?? 0) > 0)
     .map((group) => group.id);
 }
 
@@ -106,7 +149,7 @@ function eventTeams(event: BetmgmEvent) {
   const away = event.participants?.find((participant) => participant.position === "AWAY")?.name ?? null;
   if (home || away) return { homeTeam: home, awayTeam: away };
 
-  const [homeTeam, awayTeam] = String(event.name ?? "").split(/\s+-\s+|\s+vs\.?\s+/i);
+  const [homeTeam, awayTeam] = String(event.eventName ?? event.name ?? "").split(/\s+-\s+|\s+vs\.?\s+/i);
   return { homeTeam: homeTeam?.trim() || null, awayTeam: awayTeam?.trim() || null };
 }
 
@@ -151,8 +194,12 @@ function findBestMatch(event: BetmgmEvent, fixtures: CanonicalFixture[]) {
 
 function isMoneylineMarket(market: BetmgmMarket) {
   const type = String(market.type ?? "");
-  const name = String(market.name ?? "");
-  return (type === "standard-3-way" || type === "standard-3-way-early-payout") && /resultado\s+final/i.test(name) && market.betMarketStatus === "OPEN";
+  const name = normalizeForMatching(market.name);
+  const outcomes = market.outcomes ?? [];
+  const isThreeWayType = ["standard-3-way", "standard-3-way-early-payout", "overtime-3-way", "match-odds"].includes(type);
+  const isMoneylineName = /resultado\s+(final|da partida)|1x2|vencedor|match\s+odds/i.test(name);
+
+  return isThreeWayType && outcomes.length >= 3 && (isMoneylineName || type === "standard-3-way" || type === "standard-3-way-early-payout") && market.betMarketStatus === "OPEN";
 }
 
 function metadataValue(value: unknown, key: string): unknown {
@@ -176,6 +223,8 @@ function paForMarket(market: BetmgmMarket): { category: PaCategory; confidence: 
 
 function selectionFromOutcome(outcome: BetmgmOutcome, homeTeam: string | null, awayTeam: string | null): Selection | null {
   const name = normalizeForMatching(outcome.name);
+  if (name === "1" || name === "casa" || name === "home") return "HOME";
+  if (name === "2" || name === "fora" || name === "away") return "AWAY";
   if (name === "x" || name === "empate" || name === "draw") return "DRAW";
 
   const homeScore = homeTeam ? teamNameSimilarity(outcome.name, homeTeam) : 0;
@@ -198,7 +247,7 @@ function buildBookmakerLink(bookmaker: BetmgmBookmakerConfig, fixtureId: string,
     bookmaker_slug: bookmaker.slug,
     external_event_id: event.id,
     fixture_id: fixtureId,
-    bookmaker_event_name: event.name ?? [homeTeam, awayTeam].filter(Boolean).join(" vs "),
+    bookmaker_event_name: event.eventName ?? event.name ?? [homeTeam, awayTeam].filter(Boolean).join(" vs "),
     bookmaker_home_team: homeTeam,
     bookmaker_away_team: awayTeam,
     normalized_bookmaker_home_team: normalizeName(homeTeam),
@@ -283,14 +332,23 @@ export function createBetmgmCollector(bookmaker: BetmgmBookmakerConfig) {
 
     try {
       const groups = await client.getGroups();
-      const selectedGroupIds = selectFootballGroupIds(groups);
+      const selectedGroupIds = selectFootballGroupIds(groups, fixtures);
       summary.groupsSeen = groups.length;
       summary.groupsSelected = selectedGroupIds.length;
 
       const eventPages = await pMap(
-        chunks(selectedGroupIds, 50),
-        async (groupIds) => client.getEventsByGroupIds(groupIds),
-        { concurrency: 3 }
+        chunks(selectedGroupIds, 1),
+        async (groupIds) => {
+          try {
+            return await client.getEventsByGroupIds(groupIds);
+          } catch (error) {
+            summary.errors += 1;
+            summary.lastError = errorMessage(error);
+            await log(bookmaker, "warn", "betmgm group collection failed", { groupIds, error: serializeError(error) });
+            return [];
+          }
+        },
+        { concurrency: 4 }
       );
 
       const events = [...new Map(eventPages.flat().filter((event) => event.sportType === "FOOTBALL").map((event) => [event.id, event])).values()];
@@ -314,12 +372,22 @@ export function createBetmgmCollector(bookmaker: BetmgmBookmakerConfig) {
         }
       }
 
+      const details = await pMap(
+        chunks([...bestMatchByFixtureId.values()].map(({ event }) => event.id), 20),
+        async (eventIds) => client.getEventsByIds(eventIds),
+        { concurrency: 2 }
+      );
+      const detailById = new Map(details.flat().map((event) => [event.id, event]));
       const linksToSave: BookmakerLinkRow[] = [];
       const oddsToSave: OddRow[] = [];
 
       for (const { event, matched } of bestMatchByFixtureId.values()) {
-        linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
-        oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
+        const detailEvent = detailById.get(event.id) ?? event;
+        const detailMatch = findBestMatch(detailEvent, [matched.fixture]);
+        const finalMatch = detailMatch ?? matched;
+
+        linksToSave.push(buildBookmakerLink(bookmaker, finalMatch.fixture.id, detailEvent, finalMatch.score));
+        oddsToSave.push(...buildMoneylineOdds(bookmaker, finalMatch.fixture.id, detailEvent, finalMatch.orientation));
         summary.eventsCollected += 1;
         summary.eventsMatched += 1;
       }

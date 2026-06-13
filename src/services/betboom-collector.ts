@@ -117,6 +117,13 @@ function tournamentMatchesLeague(tournament: BetboomTournament, league: ReturnTy
 
   if (leagueCompact && tournamentCompact.includes(leagueCompact) && hasCountry) return true;
   if (leagueName.includes("la liga") && tournamentCompact.includes("laliga") && hasCountry) return true;
+  if (
+    hasCountry &&
+    (leagueName.includes("segunda division") || leagueName.includes("segunda divisao") || leagueName.includes("segunda división")) &&
+    (tournamentCompact.includes("laliga2") || tournamentText.includes("la liga 2") || tournamentText.includes("hypermotion") || tournamentText.includes("segunda"))
+  ) {
+    return true;
+  }
   if (hasCountry && nameScore >= 0.62) return true;
   if (leagueName.includes("libertadores") && tournamentText.includes("libertadores")) return true;
   if (leagueName.includes("europa league") && tournamentText.includes("europa league")) return true;

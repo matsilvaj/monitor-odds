@@ -22,7 +22,7 @@ export type EventMatchResult = {
 const MAX_TIME_DIFF_MS = 20 * 60 * 1000;
 const MIN_TEAM_SCORE = 0.65;
 const MIN_SIDE_TEAM_SCORE = 0.62;
-const VIRTUAL_EVENT_RE = /\b(?:e\s*soccer|esoccer|virtual|simulado|simulacao|srl|cyber|fifa|pes|ebasket|basketball\s*cyber|kings\s*league)\b/i;
+const VIRTUAL_EVENT_RE = /\b(?:e\s*soccer|esoccer|virtual|fantasy|simulado|simulacao|srl|cyber|pes|ebasket|basketball\s*cyber|kings\s*league)\b/i;
 const SAFE_PARTICIPANT_QUALIFIER_RE = /^(?:w|women|woman|f|fem|feminino|feminina|u\d{2}|sub\s*\d{2}|reserve|reserves|reserva|b|ii|iii|iv)$/;
 
 function timestamp(value: string | number | Date) {

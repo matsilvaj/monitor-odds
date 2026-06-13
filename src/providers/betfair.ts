@@ -83,8 +83,8 @@ type CardsResponse = {
   };
 };
 
-const SEARCH_DOCUMENT_ID = "SearchView#13b532dd425df596ca31f05a35aed9b2";
-const CARD_DOCUMENT_ID = "Card#2cb9a894754301e94e941b59a9fe938f";
+const SEARCH_DOCUMENT_ID = "SearchView#a2f3fa92545de5b1c4dd432e666608ab";
+const CARD_DOCUMENT_ID = "Card#e790c877715333c5873badebe1846e23";
 const EXPERIMENTS = [
   { id: "uki_safety_rti_10k_stakes", variant: "display" },
   { id: "cms-int-bf-br-player-widget-experiment", variant: "control" }
@@ -92,6 +92,7 @@ const EXPERIMENTS = [
 const MARKET_TEMPLATE_URNS = [
   "Z-KJShEAACIAkTdu",
   "ZxDkyRIAACAAf2za",
+  "ZxDiBBIAACIAf2f_",
   "aZxLFhAAACMAuJnT",
   "ZxDkzxIAACIAf2zo"
 ];
@@ -105,6 +106,24 @@ function preferences() {
 
 function isMoneylineMarketType(value: unknown) {
   return value === "MATCH_ODDS" || value === "FULL_TIME_RESULT_-_2_UP";
+}
+
+function isFootballSearchResult(result: BetfairSearchResult) {
+  if (!result || typeof result !== "object") return false;
+
+  const sport = result.sportevent?.sport;
+  const competitionSport = result.sportevent?.competition?.sport;
+  const sportText = `${sport?.name ?? ""} ${competitionSport?.name ?? ""}`.toLowerCase();
+
+  return (
+    result?.__typename === "EventView" &&
+    (
+      sport?.sportId === 1 ||
+      competitionSport?.sportId === 1 ||
+      sportText.includes("football") ||
+      sportText.includes("futebol")
+    )
+  );
 }
 
 function collectMoneylineMarkets(value: unknown, groupTitle: string | null, output: BetfairMarketWithContext[]) {
@@ -163,7 +182,7 @@ export class BetfairClient {
       throw error;
     });
 
-    return (data.data?.Search?.results ?? []).filter((result) => result?.__typename === "EventView" && result.sportevent?.sport?.sportId === 1);
+    return (data.data?.Search?.results ?? []).filter(isFootballSearchResult);
   }
 
   async getMatchOdds(eventId: number, eventUrl: string) {

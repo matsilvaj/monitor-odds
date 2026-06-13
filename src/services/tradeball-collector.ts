@@ -191,13 +191,20 @@ function compactEventRaw(event: TradeballEvent) {
   };
 }
 
+function safeBigintId(value: string | number | null | undefined) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  const safeDigits = digits.slice(-15);
+  const id = Number(safeDigits);
+  return Number.isFinite(id) && id > 0 ? id : 0;
+}
+
 function buildBookmakerLink(bookmaker: TradeballBookmakerConfig, fixtureId: string, event: TradeballEvent, confidenceScore: number): BookmakerLinkRow {
   const { homeTeam, awayTeam } = eventParticipants(event);
   const marketId = event.markets?.find(isMoneylineMarket)?.id ?? "";
 
   return {
     bookmaker_slug: bookmaker.slug,
-    external_event_id: event.id,
+    external_event_id: safeBigintId(event.id),
     fixture_id: fixtureId,
     bookmaker_event_name: event.name,
     bookmaker_home_team: homeTeam,
@@ -237,7 +244,7 @@ function buildMoneylineOdds(bookmaker: TradeballBookmakerConfig, fixtureId: stri
         raw_market_name: market.name ?? null,
         raw_label: runner.name ?? null,
         raw_odd_type: "tradeball-dball",
-        source_odd_id: runner.id,
+        source_odd_id: safeBigintId(runner.id),
         raw: { event: eventRaw, market, runner, classificationReason: pa.reason },
         updated_at: new Date().toISOString()
       });

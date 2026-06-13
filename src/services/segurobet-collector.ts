@@ -5,6 +5,7 @@ import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-r
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { nationalTeamAliases } from "../domain/matching/team-aliases.js";
 import { normalizeForMatching } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -127,7 +128,9 @@ function searchTermsForFixture(fixture: CanonicalFixture) {
     compactSearchTerm(fixture.home_team),
     compactSearchTerm(fixture.away_team),
     normalizeForMatching(fixture.home_team),
-    normalizeForMatching(fixture.away_team)
+    normalizeForMatching(fixture.away_team),
+    ...nationalTeamAliases(fixture.home_team).slice(0, 4).map(compactSearchTerm),
+    ...nationalTeamAliases(fixture.away_team).slice(0, 4).map(compactSearchTerm)
   ].filter((term, index, all): term is string => Boolean(term) && all.indexOf(term) === index);
 }
 

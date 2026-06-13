@@ -40,6 +40,7 @@ export type BetmgmMarket = {
 export type BetmgmEvent = {
   id: number;
   name?: string;
+  eventName?: string | null;
   leagueName?: string;
   sportType?: string;
   eventType?: string;
@@ -60,6 +61,15 @@ type EventsResponse = {
   data?: BetmgmEvent[];
 };
 
+const BETMGM_MARKET_TYPES = [
+  "standard",
+  "standard-ot",
+  "standard-3-way",
+  "standard-3-way-early-payout",
+  "overtime-3-way",
+  "match-odds"
+].join(",");
+
 export class BetmgmClient {
   private readonly headers: Record<string, string>;
 
@@ -77,7 +87,7 @@ export class BetmgmClient {
     const url = new URL("program/v1/api/groups", this.config.apiBaseUrl);
     url.searchParams.set("matchState", "PREMATCH,ONGOING");
     url.searchParams.set("marketStatus", "OPEN");
-    url.searchParams.set("marketTypes", "standard-3-way,standard-3-way-early-payout");
+    url.searchParams.set("marketTypes", BETMGM_MARKET_TYPES);
     url.searchParams.set("startTimeOffsetFrom", "-86400000");
     url.searchParams.set("openMarketsOnly", "true");
     url.searchParams.set("lang", "pt");
@@ -105,11 +115,38 @@ export class BetmgmClient {
     url.searchParams.set("groupIds", groupIds.join(","));
     url.searchParams.set("matchState", "PREMATCH,ONGOING");
     url.searchParams.set("startTimeOffsetFrom", "-86400000");
-    url.searchParams.set("marketTypes", "standard-3-way,standard-3-way-early-payout");
+    url.searchParams.set("marketStatus", "OPEN");
+    url.searchParams.set("marketTypes", BETMGM_MARKET_TYPES);
+    url.searchParams.set("openMarketsOnly", "true");
     url.searchParams.set("lang", "pt");
     url.searchParams.set("brand", "betmgm");
     url.searchParams.set("location", "BR");
     url.searchParams.set("limit", "1000");
+    url.searchParams.set("fields", "GROUPS,BETMARKETS");
+
+    const data = await httpClient<EventsResponse>({
+      url,
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 25_000,
+      maxRetries: 1
+    });
+
+    return data.data ?? [];
+  }
+
+  async getEventsByIds(eventIds: number[]) {
+    if (!eventIds.length) return [];
+
+    const url = new URL("program/v1/api/events", this.config.apiBaseUrl);
+    url.searchParams.set("ids", eventIds.join(","));
+    url.searchParams.set("marketTypes", BETMGM_MARKET_TYPES);
+    url.searchParams.set("marketStatus", "OPEN");
+    url.searchParams.set("openMarketsOnly", "true");
+    url.searchParams.set("lang", "pt");
+    url.searchParams.set("brand", "betmgm");
+    url.searchParams.set("location", "BR");
     url.searchParams.set("fields", "GROUPS,BETMARKETS");
 
     const data = await httpClient<EventsResponse>({

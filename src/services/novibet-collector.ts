@@ -5,6 +5,7 @@ import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-r
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { nationalTeamAliases } from "../domain/matching/team-aliases.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { NovibetClient, type NovibetBetItem, type NovibetEventDetails, type NovibetMarket, type NovibetSearchDocument } from "../providers/novibet.js";
@@ -246,6 +247,8 @@ function searchKeywords(fixture: CanonicalFixture) {
     compactSearchName(fixture.home_team),
     fixture.away_team,
     compactSearchName(fixture.away_team),
+    ...nationalTeamAliases(fixture.home_team).slice(0, 4),
+    ...nationalTeamAliases(fixture.away_team).slice(0, 4),
     fixture.name
   ];
 

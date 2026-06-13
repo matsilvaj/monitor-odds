@@ -7,6 +7,7 @@ import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
+import { nationalTeamAliases } from "../domain/matching/team-aliases.js";
 import { BetfairClient, type BetfairMarket, type BetfairMarketWithContext, type BetfairRunner, type BetfairSearchResult } from "../providers/betfair.js";
 import { errorMessage } from "../utils/errors.js";
 import { logCollectorMessage } from "./collector-log.js";
@@ -73,7 +74,15 @@ function compactSearchName(value: string | null | undefined) {
 }
 
 function searchKeywords(fixture: CanonicalFixture) {
-  const names = [fixture.home_team, compactSearchName(fixture.home_team), fixture.away_team, compactSearchName(fixture.away_team), fixture.name];
+  const names = [
+    fixture.home_team,
+    compactSearchName(fixture.home_team),
+    fixture.away_team,
+    compactSearchName(fixture.away_team),
+    ...nationalTeamAliases(fixture.home_team).slice(0, 4),
+    ...nationalTeamAliases(fixture.away_team).slice(0, 4),
+    fixture.name
+  ];
   const keywords = new Set<string>();
 
   for (const name of names) {

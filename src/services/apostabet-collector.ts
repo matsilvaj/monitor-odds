@@ -6,6 +6,7 @@ import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForO
 import { supabase } from "../db/supabase.js";
 import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeForMatching, teamNameSimilarity, tokenSetSimilarity } from "../domain/matching/text-similarity.js";
+import { nationalTeamAliases } from "../domain/matching/team-aliases.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { ApostabetClient, type ApostabetCategory, type ApostabetEvent, type ApostabetMarket, type ApostabetOutcome, type ApostabetTournament } from "../providers/apostabet.js";
@@ -116,7 +117,18 @@ function translatedCountryTokens(country: string | null | undefined) {
 }
 
 function searchKeywords(fixture: CanonicalFixture) {
-  return [...new Set([fixture.home_team, fixture.away_team, fixture.normalized_home_team, fixture.normalized_away_team].filter(Boolean).map(String))];
+  return [
+    ...new Set(
+      [
+        fixture.home_team,
+        fixture.away_team,
+        fixture.normalized_home_team,
+        fixture.normalized_away_team,
+        ...nationalTeamAliases(fixture.home_team),
+        ...nationalTeamAliases(fixture.away_team)
+      ].filter(Boolean).map(String)
+    )
+  ];
 }
 
 function countryScore(country: string | null | undefined, tournament: FlatTournament) {

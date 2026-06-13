@@ -72,6 +72,7 @@ type TradeballDballEvent = {
 };
 
 type TradeballDballResponse = {
+  total?: number;
   init?: TradeballDballEvent[];
 };
 
@@ -182,14 +183,13 @@ export class TradeballClient {
   }
 
   async getSoccerMoneylineEvents(start: Date, end: Date) {
-    const results = await Promise.allSettled([
-      this.getExchangeEvents(start, end),
-      this.getDballGuestEvents(start, end)
-    ]);
-    const exchangeEvents = results[0].status === "fulfilled" ? results[0].value : [];
-    const dballEvents = results[1].status === "fulfilled" ? results[1].value : [];
+    const dballEvents = await this.getDballGuestEvents(start, end).catch(() => []);
+    if (dballEvents.length) {
+      return [...new Map(dballEvents.map((event) => [event.id, event])).values()];
+    }
 
-    return [...new Map([...exchangeEvents, ...dballEvents].map((event) => [event.id, event])).values()];
+    const exchangeEvents = await this.getExchangeEvents(start, end).catch(() => []);
+    return [...new Map(exchangeEvents.map((event) => [event.id, event])).values()];
   }
 
   private async getExchangeEvents(start: Date, end: Date) {
@@ -232,21 +232,37 @@ export class TradeballClient {
   }
 
   private async getDballGuestEvents(start: Date, end: Date) {
-    const results = await Promise.allSettled([this.getDballGuestPage(), ...collectionDates(start, end).map((date) => this.getDballGuestPage(date))]);
+    const results = await Promise.allSettled([this.getDballGuestPages(), ...collectionDates(start, end).map((date) => this.getDballGuestPages(date))]);
     const pages = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
 
     return pages
+      .flat()
       .flatMap((page) => page.init ?? [])
       .map(dballEventToTradeballEvent)
       .filter((event): event is TradeballEvent => Boolean(event));
   }
 
-  private async getDballGuestPage(date?: string) {
+  private async getDballGuestPages(date?: string) {
+    const pages: TradeballDballResponse[] = [];
+
+    for (let page = 0; page < this.config.maxPages; page += 1) {
+      const start = page * this.config.perPage;
+      const pageData = await this.getDballGuestPage(date, start, this.config.perPage);
+      const pageEvents = pageData.init ?? [];
+      pages.push(pageData);
+
+      if (!pageEvents.length || start + pageEvents.length >= Number(pageData.total ?? 0)) break;
+    }
+
+    return pages;
+  }
+
+  private async getDballGuestPage(date?: string, start = 0, limit = this.config.perPage) {
     const url = new URL("api/feedDballGuest/list", this.config.dballBaseUrl);
     url.searchParams.set("page", "1");
     url.searchParams.set("filter", JSON.stringify({ line: 1, periodTypeId: 1, tradingTypeId: 2, marketId: 2, ...(date ? { date } : {}) }));
-    url.searchParams.set("start", "0");
-    url.searchParams.set("limit", "50");
+    url.searchParams.set("start", String(start));
+    url.searchParams.set("limit", String(limit));
     url.searchParams.set("sort", JSON.stringify([{ property: "created_at", direction: "desc" }]));
     url.searchParams.append("requiredDictionaries[]", "LeagueGroup");
     url.searchParams.set("version", "0");
