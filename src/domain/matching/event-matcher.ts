@@ -1,4 +1,4 @@
-import { matchingTokens, significantTokenSet, teamNameSimilarity, tokenSetSimilarity } from "./text-similarity.js";
+import { matchingTokens, normalizeForMatching, significantTokenSet, teamNameSimilarity, tokenSetSimilarity } from "./text-similarity.js";
 import { nationalTeamTokenGroups, tokenGroupsOverlap } from "./team-aliases.js";
 import type { Selection } from "../normalize.js";
 
@@ -22,11 +22,28 @@ export type EventMatchResult = {
 const MAX_TIME_DIFF_MS = 20 * 60 * 1000;
 const MIN_TEAM_SCORE = 0.65;
 const MIN_SIDE_TEAM_SCORE = 0.62;
+const VIRTUAL_EVENT_RE = /\b(?:e\s*soccer|esoccer|virtual|simulado|simulacao|srl|cyber|fifa|pes|ebasket|basketball\s*cyber|kings\s*league)\b/i;
+const SAFE_PARTICIPANT_QUALIFIER_RE = /^(?:w|women|woman|f|fem|feminino|feminina|u\d{2}|sub\s*\d{2}|reserve|reserves|reserva|b|ii|iii|iv)$/;
 
 function timestamp(value: string | number | Date) {
   if (value instanceof Date) return value.getTime();
   if (typeof value === "number") return value;
   return new Date(value).getTime();
+}
+
+function parentheticalQualifiers(value: unknown) {
+  return [...String(value ?? "").matchAll(/\(([^)]{1,40})\)/g)]
+    .map((match) => normalizeForMatching(match[1]))
+    .filter(Boolean);
+}
+
+export function hasSuspiciousParticipantQualifier(value: unknown) {
+  return parentheticalQualifiers(value).some((qualifier) => !SAFE_PARTICIPANT_QUALIFIER_RE.test(qualifier));
+}
+
+function looksLikeVirtualEvent(event: MatchableEvent) {
+  const text = normalizeForMatching(`${event.leagueName ?? ""} ${event.homeTeam ?? ""} ${event.awayTeam ?? ""}`);
+  return VIRTUAL_EVENT_RE.test(text) || hasSuspiciousParticipantQualifier(event.homeTeam) || hasSuspiciousParticipantQualifier(event.awayTeam);
 }
 
 function hasSharedSignificantToken(left: MatchableEvent, right: MatchableEvent) {
@@ -79,6 +96,10 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
 
   if (diffMs > MAX_TIME_DIFF_MS) {
     return { matched: false, score: 0, timeScore: 0, teamScore: 0, orientation: "NORMAL", reason: "time-rejected" };
+  }
+
+  if (!looksLikeVirtualEvent(canonical) && looksLikeVirtualEvent(bookmaker)) {
+    return { matched: false, score: 0, timeScore: 1 - diffMs / MAX_TIME_DIFF_MS, teamScore: 0, orientation: "NORMAL", reason: "virtual-event-rejected" };
   }
 
   if (!hasSharedSignificantToken(canonical, bookmaker) && !hasStrongLeagueSignal(canonical, bookmaker)) {

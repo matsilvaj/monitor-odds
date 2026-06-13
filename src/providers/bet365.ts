@@ -5,12 +5,16 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import type { Bet365BookmakerConfig } from "../config/bookmakers.js";
+import { hasSuspiciousParticipantQualifier } from "../domain/matching/event-matcher.js";
+import { nationalTeamAliases } from "../domain/matching/team-aliases.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 
 type Logger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
 
 const execFileAsync = promisify(execFile);
 const CDP_PORT_FILE = "monitor-odds-cdp-port.txt";
+const EVENT_MARKET_WAIT_ATTEMPTS = 10;
+const EVENT_MARKET_WAIT_MS = 1500;
 
 export type Bet365FixtureTarget = {
   id: string;
@@ -53,6 +57,8 @@ export type Bet365CollectedEvent = {
   externalEventId: number;
   sourceUrl: string;
   eventName: string;
+  bookmakerHomeTeam: string | null;
+  bookmakerAwayTeam: string | null;
   markets: Bet365CollectedMarket[];
   rawText: string;
 };
@@ -143,10 +149,25 @@ function tokensFromName(value: unknown) {
     .filter((token) => (token.length >= 3 || token.length === 2) && !ignored.has(token));
 }
 
-function hasEveryImportantToken(text: string, tokens: string[]) {
+function hasSomeImportantToken(text: string, tokens: string[]) {
   if (!tokens.length) return false;
   const important = tokens.slice(0, 3);
   return important.some((token) => text.includes(token));
+}
+
+function sameTokenSet(left: string[], right: string[]) {
+  if (!left.length || left.length !== right.length) return false;
+  const leftSorted = [...left].sort();
+  const rightSorted = [...right].sort();
+  return leftSorted.every((token, index) => token === rightSorted[index]);
+}
+
+function labelMatchesTeam(label: string, teamName: unknown) {
+  if (!teamName || hasSuspiciousParticipantQualifier(label)) return false;
+
+  const labelTokens = tokensFromName(label);
+  const aliases = [teamName, ...nationalTeamAliases(teamName)];
+  return aliases.some((alias) => sameTokenSet(labelTokens, tokensFromName(alias)));
 }
 
 function parseOdd(value: string) {
@@ -169,13 +190,13 @@ function hasMoneylineHeading(rawText: string) {
 function isMarketBoundary(line: string) {
   const normalized = normalizedLine(line);
   if (isMoneylineHeading(line)) return true;
-  return /^(?:double chance|chance dupla|total goals|gols mais menos|ambos marcam|both teams to score|resultado ambos marcam|resultado correto|correct score|marcadores|goalscorers|criar aposta|bet builder|cartoes|cards|escanteios|corners|half|tempo|player|jogador|specials|especiais|minutes|minutos|asian lines|odds asiaticas)\b/.test(
+  return /^(?:double chance|chance dupla|total goals|gols mais menos|ambos marcam|both teams to score|resultado ambos marcam|resultado correto|correct score|marcadores|goalscorers|aposta aumentada|apostas aumentadas|criar aposta|bet builder|cartoes|cards|escanteios|corners|half|tempo|player|jogador|specials|especiais|minutes|minutos|asian lines|odds asiaticas)\b/.test(
     normalized
   );
 }
 
 function isSelectionMarker(line: string) {
-  return /^(?:ca|pagamento antecipado|pague antecipado|acumuladores aumentados|precos ajustados|substituicao\+?|popular|principais|todos|\d+\s+aumentos?)$/.test(
+  return /^(?:ca|pagamento antecipado|pague antecipado|acumuladores aumentados|precos ajustados|aposta aumentada|apostas aumentadas|substituicao\+?|popular|principais|todos|\d+\s+aumentos?)$/.test(
     normalizedLine(line)
   );
 }
@@ -187,10 +208,80 @@ function selectionFromLabel(label: string, fixture: Bet365FixtureTarget): Select
   if (normalized === "1") return "HOME";
   if (normalized === "2") return "AWAY";
 
-  if (hasEveryImportantToken(normalized, tokensFromName(fixture.homeTeam))) return "HOME";
-  if (hasEveryImportantToken(normalized, tokensFromName(fixture.awayTeam))) return "AWAY";
+  if (labelMatchesTeam(label, fixture.homeTeam)) return "HOME";
+  if (labelMatchesTeam(label, fixture.awayTeam)) return "AWAY";
 
   return null;
+}
+
+function looksLikeHeaderTeamLine(line: string) {
+  const normalized = normalizedLine(line);
+  if (!normalized || isSelectionMarker(line) || isMarketBoundary(line)) return false;
+  if (ODD_RE.test(line) || /^\(?\d+\)?$/.test(line)) return false;
+  if (/^([01]?\d|2[0-3]):[0-5]\d$/.test(line)) return false;
+  if (/\b\d{1,2}\s+(?:jan|janeiro|feb|fev|mar|marco|abr|apr|may|mai|jun|jul|ago|aug|set|sep|out|oct|nov|dez|dec)\b/.test(normalized)) return false;
+  if (/^(?:todos os esportes|ao vivo|minhas apostas|casino|promocoes|registre se|login|popular|criar aposta|marcadores|chutes|resultado|escanteios|gols|outro|odds asiaticas|estatisticas do jogador)$/.test(normalized)) return false;
+  if (/^(?:v|vs|x|-)$/.test(normalized)) return false;
+  return line.length >= 2 && line.length <= 80 && /[A-Za-z\u00C0-\u024F]/.test(line);
+}
+
+function eventTeamsFromVisibleText(rawText: string) {
+  const lines = rawText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const headerLines = lines.slice(0, 120);
+
+  for (const line of headerLines) {
+    if (!looksLikeHeaderTeamLine(line)) continue;
+    const parts = line.split(/\s+(?:v|vs|x)\s+/i).map((part) => part.trim()).filter(Boolean);
+    if (parts.length === 2 && looksLikeHeaderTeamLine(parts[0]) && looksLikeHeaderTeamLine(parts[1])) {
+      return { homeTeam: parts[0], awayTeam: parts[1] };
+    }
+  }
+
+  for (let index = 1; index < headerLines.length - 1; index += 1) {
+    if (!/^(?:v|vs|x|-)$/.test(normalizedLine(headerLines[index]))) continue;
+
+    let homeTeam: string | null = null;
+    let awayTeam: string | null = null;
+
+    for (let cursor = index - 1; cursor >= Math.max(0, index - 8); cursor -= 1) {
+      if (looksLikeHeaderTeamLine(headerLines[cursor])) {
+        homeTeam = headerLines[cursor];
+        break;
+      }
+    }
+
+    for (let cursor = index + 1; cursor < Math.min(headerLines.length, index + 8); cursor += 1) {
+      if (looksLikeHeaderTeamLine(headerLines[cursor])) {
+        awayTeam = headerLines[cursor];
+        break;
+      }
+    }
+
+    if (homeTeam && awayTeam) return { homeTeam, awayTeam };
+  }
+
+  return null;
+}
+
+function eventTeamsMatchFixture(visibleTeams: { homeTeam: string; awayTeam: string } | null, fixture: Bet365FixtureTarget) {
+  return Boolean(
+    visibleTeams &&
+      labelMatchesTeam(visibleTeams.homeTeam, fixture.homeTeam) &&
+      labelMatchesTeam(visibleTeams.awayTeam, fixture.awayTeam)
+  );
+}
+
+function rawTextConfirmsFixture(rawText: string, fixture: Bet365FixtureTarget) {
+  const visibleTeams = eventTeamsFromVisibleText(rawText);
+  if (visibleTeams) return eventTeamsMatchFixture(visibleTeams, fixture);
+  if (hasSuspiciousParticipantQualifier(rawText)) return false;
+
+  const text = normalizeVisibleText(rawText);
+  return hasSomeImportantToken(text, tokensFromName(fixture.homeTeam)) && hasSomeImportantToken(text, tokensFromName(fixture.awayTeam));
 }
 
 function oddInLine(line: string) {
@@ -264,6 +355,14 @@ function parseBet365EventId(sourceUrl: string, fallbackKey: string) {
   const eventId = /\/E(\d+)(?:\/|$)/i.exec(sourceUrl)?.[1] ?? /[?&]event(?:Id)?=(\d+)/i.exec(sourceUrl)?.[1];
   const parsed = eventId ? Number(eventId) : NaN;
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : hashToPositiveInt(`${sourceUrl}:${fallbackKey}`);
+}
+
+function bet365MoneylineEventUrl(sourceUrl: string) {
+  if (!/\/AC\/B1\/C1\/D\d+\/E\d+/i.test(sourceUrl)) return sourceUrl;
+  if (/\/G40(?:\/|$)/i.test(sourceUrl)) return sourceUrl;
+  if (/\/G\d+(?=\/|$)/i.test(sourceUrl)) return sourceUrl.replace(/\/G\d+(?:\/.*)?$/i, "/G40/");
+  if (/\/F\d+\//i.test(sourceUrl)) return sourceUrl.replace(/\/F(\d+)\/.*$/i, "/F$1/G40/");
+  return sourceUrl.replace(/\/E(\d+)(?:\/.*)?$/i, "/E$1/F3/G40/");
 }
 
 function eventCandidateKey(event: Bet365LeagueEventCandidate) {
@@ -474,7 +573,7 @@ function errorMessage(error: unknown) {
 }
 
 function isRetryableNavigationError(error: unknown) {
-  return /ERR_NETWORK_CHANGED|ERR_ABORTED|ERR_TIMED_OUT|Timeout|Navigation failed|about:blank/i.test(errorMessage(error));
+  return /ERR_NETWORK_CHANGED|ERR_ABORTED|ERR_TIMED_OUT|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|Timeout|Navigation failed|about:blank/i.test(errorMessage(error));
 }
 
 export class Bet365BrowserClient {
@@ -872,7 +971,7 @@ export class Bet365BrowserClient {
       const opened = await this.openFixture(fixture);
       if (!opened) continue;
       await this.waitForUi();
-      if (await this.verifyCurrentEvent(fixture)) return true;
+      if (await this.waitForCurrentEventConfirmation(fixture)) return true;
 
       if (this.isEventUrl(page.url())) {
         await this.logger("warn", "página do evento abriu, mas os mercados ainda não apareceram na validação inicial", {
@@ -964,7 +1063,7 @@ export class Bet365BrowserClient {
         const opened = await this.openFixture(fixture);
         await this.waitForUi();
 
-        if (opened && (await this.verifyCurrentEvent(fixture))) return true;
+        if (opened && (await this.waitForCurrentEventConfirmation(fixture))) return true;
         if (this.isEventUrl(page.url())) {
           await this.logger("warn", "página do evento abriu pela busca, mas a validação inicial não confirmou os times", {
             fixtureId: fixture.id,
@@ -983,6 +1082,35 @@ export class Bet365BrowserClient {
       awayTeam: fixture.awayTeam
     });
     return false;
+  }
+
+  async openEventUrlForFixture(fixture: Bet365FixtureTarget, sourceUrl: string | null, label = "abrindo jogo da bet365 por URL do evento") {
+    if (!sourceUrl) return false;
+    const moneylineUrl = bet365MoneylineEventUrl(sourceUrl);
+
+    try {
+      await this.goToUrl(moneylineUrl, label);
+      if (await this.waitForCurrentEventConfirmation(fixture)) return true;
+
+      await this.logger("warn", "URL do evento da bet365 abriu, mas não confirmou os times esperados", {
+        fixtureId: fixture.id,
+        homeTeam: fixture.homeTeam,
+        awayTeam: fixture.awayTeam,
+        sourceUrl,
+        moneylineUrl,
+        currentUrl: this.currentUrl()
+      });
+      return false;
+    } catch (error) {
+      await this.logger("warn", "falha ao abrir URL direta do evento da bet365", {
+        fixtureId: fixture.id,
+        homeTeam: fixture.homeTeam,
+        awayTeam: fixture.awayTeam,
+        sourceUrl,
+        error: errorMessage(error)
+      });
+      return false;
+    }
   }
 
   async collectLeagueEvents(targetDateKeys: string[]) {
@@ -1069,8 +1197,14 @@ export class Bet365BrowserClient {
         });
 
         await this.waitForUi();
-        if (await this.verifyCurrentEvent(fixture)) return true;
+        if (await this.waitForCurrentEventConfirmation(fixture)) return true;
         if (page.url() !== beforeDomUrl && this.isEventUrl(page.url())) {
+          const moneylineUrl = bet365MoneylineEventUrl(page.url());
+          if (moneylineUrl !== page.url()) {
+            await this.goToUrl(moneylineUrl, "abrindo mercado principal do evento na bet365");
+            if (await this.waitForCurrentEventConfirmation(fixture)) return true;
+          }
+
           await this.logger("warn", "página do evento abriu, mas os mercados ainda não apareceram na validação inicial", {
             fixtureId: fixture.id,
             url: page.url()
@@ -1091,11 +1225,17 @@ export class Bet365BrowserClient {
         await page.mouse.click(target.x, target.y);
         await this.waitForUi();
 
-        if (page.url() !== beforeUrl && (await this.verifyCurrentEvent(fixture))) {
+        if (page.url() !== beforeUrl && (await this.waitForCurrentEventConfirmation(fixture))) {
           return true;
         }
 
         if (page.url() !== beforeUrl && this.isEventUrl(page.url())) {
+          const moneylineUrl = bet365MoneylineEventUrl(page.url());
+          if (moneylineUrl !== page.url()) {
+            await this.goToUrl(moneylineUrl, "abrindo mercado principal do evento na bet365");
+            if (await this.waitForCurrentEventConfirmation(fixture)) return true;
+          }
+
           await this.logger("warn", "página do evento abriu, mas os mercados ainda não apareceram na validação inicial", {
             fixtureId: fixture.id,
             url: page.url()
@@ -1106,7 +1246,7 @@ export class Bet365BrowserClient {
         const fallbackClicked = await this.clickText(fixture.homeTeam ?? homeTokens[0]);
         if (fallbackClicked) {
           await this.waitForUi();
-          if (await this.verifyCurrentEvent(fixture)) return true;
+          if (await this.waitForCurrentEventConfirmation(fixture)) return true;
         }
       }
 
@@ -1125,50 +1265,71 @@ export class Bet365BrowserClient {
 
   async verifyCurrentEvent(fixture: Bet365FixtureTarget) {
     const page = this.requirePage();
-    const text = normalizeVisibleText(await this.visibleText());
-    const hasTeams = hasEveryImportantToken(text, tokensFromName(fixture.homeTeam)) && hasEveryImportantToken(text, tokensFromName(fixture.awayTeam));
+    const rawText = await this.visibleText();
+    const text = normalizeVisibleText(rawText);
+    const hasTeams = rawTextConfirmsFixture(rawText, fixture);
     const hasEventSignal = /\/AC\//i.test(page.url()) || MONEYLINE_MARKET_RE.test(text);
     return hasTeams && hasEventSignal;
+  }
+
+  private async waitForCurrentEventConfirmation(fixture: Bet365FixtureTarget, attempts = 8, delayMs = 1000) {
+    const page = this.requirePage();
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      if (await this.verifyCurrentEvent(fixture)) return true;
+      if (attempt < attempts) await page.waitForTimeout(delayMs);
+    }
+
+    return false;
   }
 
   async pageHasFixturePair(fixtures: Bet365FixtureTarget[]) {
     if (!fixtures.length) return false;
     const text = normalizeVisibleText(await this.visibleText());
-    return fixtures.some((fixture) => hasEveryImportantToken(text, tokensFromName(fixture.homeTeam)) && hasEveryImportantToken(text, tokensFromName(fixture.awayTeam)));
+    return fixtures.some((fixture) => hasSomeImportantToken(text, tokensFromName(fixture.homeTeam)) && hasSomeImportantToken(text, tokensFromName(fixture.awayTeam)));
   }
 
   async collectCurrentEvent(fixture: Bet365FixtureTarget): Promise<Bet365CollectedEvent> {
     const page = this.requirePage();
     await this.waitForUi();
     let sourceUrl = page.url();
+    const moneylineUrl = bet365MoneylineEventUrl(sourceUrl);
 
-    if (this.isEventUrl(sourceUrl) && !/\/G40(?:\/|$)/i.test(sourceUrl)) {
-      const moneylineUrl = sourceUrl.replace(/\/G\d+(?=\/|$)/i, "/G40");
-      if (moneylineUrl !== sourceUrl) {
-        await this.logger("info", "ajustando página do evento da bet365 para mercado principal", {
-          fixtureId: fixture.id,
-          sourceUrl,
-          moneylineUrl
-        });
-        await this.goToUrl(moneylineUrl, "abrindo mercado principal do evento na bet365");
-        sourceUrl = page.url();
-      }
+    if (moneylineUrl !== sourceUrl) {
+      await this.logger("info", "ajustando página do evento da bet365 para mercado principal", {
+        fixtureId: fixture.id,
+        sourceUrl,
+        moneylineUrl
+      });
+      await this.goToUrl(moneylineUrl, "abrindo mercado principal do evento na bet365");
+      sourceUrl = page.url();
     }
 
     let rawText = await this.visibleText();
     let marketTexts = await this.marketGroupTexts();
     let reloadedEventPage = false;
 
-    for (let attempt = 0; attempt < 20 && !marketTexts.length && !hasMoneylineHeading(rawText); attempt += 1) {
-      if (!reloadedEventPage && attempt === 5 && this.isEventUrl(sourceUrl)) {
+    for (let attempt = 0; attempt < EVENT_MARKET_WAIT_ATTEMPTS && !marketTexts.length && !hasMoneylineHeading(rawText); attempt += 1) {
+      if (!reloadedEventPage && attempt === 4 && this.isEventUrl(sourceUrl)) {
         await this.logger("info", "recarregando URL do evento para aguardar mercados da bet365", { fixtureId: fixture.id, sourceUrl });
         await this.goToUrl(sourceUrl, "recarregando evento da bet365");
         reloadedEventPage = true;
       }
 
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(EVENT_MARKET_WAIT_MS);
       rawText = await this.visibleText();
       marketTexts = await this.marketGroupTexts();
+    }
+
+    if (!rawTextConfirmsFixture(rawText, fixture)) {
+      await this.logger("warn", "página do evento da bet365 não confirmou os times esperados", {
+        fixtureId: fixture.id,
+        homeTeam: fixture.homeTeam,
+        awayTeam: fixture.awayTeam,
+        sourceUrl,
+        textSample: rawText.slice(0, 700)
+      });
+      throw new Error("Bet365 não confirmou os times do evento aberto.");
     }
 
     const rawMarkets = [
@@ -1177,10 +1338,13 @@ export class Bet365BrowserClient {
     const markets = rawMarkets
       .map((text, index) => parseMoneylineMarket(text, fixture, index))
       .filter((market): market is Bet365CollectedMarket => Boolean(market));
+    const visibleTeams = eventTeamsFromVisibleText(rawText);
 
     await this.logger("info", "odds lidas na página do jogo", {
       fixtureId: fixture.id,
       sourceUrl,
+      bookmakerHomeTeam: visibleTeams?.homeTeam ?? null,
+      bookmakerAwayTeam: visibleTeams?.awayTeam ?? null,
       markets: markets.length,
       odds: markets.reduce((total, market) => total + market.selections.length, 0),
       categories: markets.map((market) => market.paCategory)
@@ -1189,7 +1353,9 @@ export class Bet365BrowserClient {
     return {
       externalEventId: parseBet365EventId(sourceUrl, fixture.id),
       sourceUrl,
-      eventName: [fixture.homeTeam, fixture.awayTeam].filter(Boolean).join(" x "),
+      eventName: [visibleTeams?.homeTeam ?? fixture.homeTeam, visibleTeams?.awayTeam ?? fixture.awayTeam].filter(Boolean).join(" x "),
+      bookmakerHomeTeam: visibleTeams?.homeTeam ?? null,
+      bookmakerAwayTeam: visibleTeams?.awayTeam ?? null,
       markets,
       rawText: rawText.slice(0, 2500)
     };
@@ -1316,7 +1482,7 @@ export class Bet365BrowserClient {
   private hasExpectedTeams(pageText: string, expectedTeamNames: string[]) {
     if (!expectedTeamNames.length) return false;
     const normalized = normalizeVisibleText(pageText);
-    return expectedTeamNames.some((teamName) => hasEveryImportantToken(normalized, tokensFromName(teamName)));
+    return expectedTeamNames.some((teamName) => hasSomeImportantToken(normalized, tokensFromName(teamName)));
   }
 
   private isEventUrl(url: string) {
