@@ -50,6 +50,7 @@ type BetnacionalEvent = {
   home: string | null;
   away: string | null;
   startsAt: string;
+  tournamentId: number | null;
   tournamentName: string | null;
   categoryName: string | null;
   odds: BetnacionalOdd[];
@@ -111,6 +112,7 @@ function groupEvents(odds: BetnacionalOdd[]) {
       home: odd.home ?? null,
       away: odd.away ?? null,
       startsAt: parseLocalDateTime(odd.date_start).toISOString(),
+      tournamentId: odd.tournament_id ?? odd.season_id ?? null,
       tournamentName: odd.tournament_name ?? null,
       categoryName: odd.category_name ?? null,
       odds: [odd]
@@ -128,6 +130,7 @@ function eventFromSearchResult(searchEvent: BetnacionalSearchEvent, odds: Betnac
     home: searchEvent.home ?? null,
     away: searchEvent.away ?? null,
     startsAt: parseSearchDateTime(searchEvent.date_start).toISOString(),
+    tournamentId: searchEvent.tournament_id ?? searchEvent.season_id ?? null,
     tournamentName: searchEvent.tournament_name ?? null,
     categoryName: searchEvent.category_name ?? null,
     odds: odds.map((odd) => ({
@@ -137,6 +140,7 @@ function eventFromSearchResult(searchEvent: BetnacionalSearchEvent, odds: Betnac
       away: searchEvent.away ?? odd.away,
       date_start: searchEvent.date_start ?? odd.date_start,
       tournament_name: searchEvent.tournament_name ?? odd.tournament_name,
+      tournament_id: searchEvent.tournament_id ?? searchEvent.season_id ?? odd.tournament_id,
       category_name: searchEvent.category_name ?? odd.category_name
     }))
   };
@@ -160,6 +164,12 @@ function eventFromSavedDetail(raw: Record<string, unknown>, eventId: number, det
     home,
     away,
     startsAt,
+    tournamentId:
+      typeof detailEvent?.tournament_id === "number"
+        ? detailEvent.tournament_id
+        : typeof raw.tournamentId === "number"
+          ? raw.tournamentId
+          : null,
     tournamentName: typeof detailEvent?.tournament_name === "string" ? detailEvent.tournament_name : typeof raw.tournamentName === "string" ? raw.tournamentName : null,
     categoryName: typeof detailEvent?.category_name === "string" ? detailEvent.category_name : typeof raw.categoryName === "string" ? raw.categoryName : null,
     odds: (detail.odds ?? []).map((odd) => ({
@@ -168,6 +178,7 @@ function eventFromSavedDetail(raw: Record<string, unknown>, eventId: number, det
       home: home ?? odd.home,
       away: away ?? odd.away,
       date_start: startsAt,
+      tournament_id: typeof detailEvent?.tournament_id === "number" ? detailEvent.tournament_id : odd.tournament_id,
       tournament_name: (typeof detailEvent?.tournament_name === "string" ? detailEvent.tournament_name : raw.tournamentName) as string | undefined,
       category_name: (typeof detailEvent?.category_name === "string" ? detailEvent.category_name : raw.categoryName) as string | undefined
     }))
@@ -232,15 +243,71 @@ function searchKeywords(fixture: CanonicalFixture) {
   return [...new Set(names.map((name) => String(name ?? "").split(/\s+/).filter(Boolean).slice(0, 3).join(" ")).filter(Boolean))];
 }
 
-function selectionFromOdd(odd: BetnacionalOdd): Selection | null {
+function selectionFromOdd(odd: BetnacionalOdd, event: BetnacionalEvent): Selection | null {
   if (odd.outcome_id === "1" || odd.outcome_code === "{$competitor1}") return "HOME";
   if (odd.outcome_id === "2" || odd.outcome_code === "draw") return "DRAW";
   if (odd.outcome_id === "3" || odd.outcome_code === "{$competitor2}") return "AWAY";
+
+  const outcomeName = normalizeName(odd.outcome_name ?? odd.outcome_code);
+  if (!outcomeName) return null;
+
+  if (outcomeName === "empate" || outcomeName === "draw") return "DRAW";
+
+  const home = normalizeName(event.home);
+  const away = normalizeName(event.away);
+  if (home && outcomeName === home) return "HOME";
+  if (away && outcomeName === away) return "AWAY";
+
   return null;
 }
 
-function isMoneylineOdd(odd: BetnacionalOdd) {
-  return odd.market_id === 1 && odd.market_code === "1x2" && odd.market_name === "Resultado Final" && !odd.specifier && odd.is_live !== 1;
+type MarketClassification = {
+  category: "COM_PA" | "SEM_PA";
+  confidence: number;
+  reason: string;
+  priority: number;
+};
+
+function classifyMoneylineOdd(odd: BetnacionalOdd): MarketClassification | null {
+  if (odd.is_live === 1) return null;
+  if (odd.market_status_id === 0) return null;
+
+  const marketName = normalizeName(odd.market_name);
+  const marketCode = normalizeName(odd.market_code);
+  const combined = `${marketName} ${marketCode}`.trim();
+
+  const isEarlyPayout =
+    odd.market_id === 99979617 ||
+    /pag antecipado/.test(combined) ||
+    /pagamento antecipado/.test(combined) ||
+    /full time result 2 up/.test(combined) ||
+    /2 up/.test(combined);
+
+  if (isEarlyPayout) {
+    return {
+      category: "COM_PA",
+      confidence: 1,
+      reason: "betnacional-resultado-final-pagamento-antecipado-2-plus",
+      priority: 100
+    };
+  }
+
+  const isStandardMoneyline =
+    odd.market_id === 999133 ||
+    marketCode === "win draw win" ||
+    marketName === "resultado da partida" ||
+    marketName === "resultado partida" ||
+    marketName === "resultado final" ||
+    (odd.market_id === 1 && odd.market_code === "1x2");
+
+  if (!isStandardMoneyline) return null;
+
+  return {
+    category: "SEM_PA",
+    confidence: 1,
+    reason: "betnacional-resultado-da-partida",
+    priority: odd.market_id === 999133 || marketCode === "win draw win" ? 90 : 80
+  };
 }
 
 function compactEventRaw(event: BetnacionalEvent) {
@@ -249,14 +316,15 @@ function compactEventRaw(event: BetnacionalEvent) {
     home: event.home,
     away: event.away,
     startsAt: event.startsAt,
+    tournamentId: event.tournamentId,
     tournamentName: event.tournamentName,
     categoryName: event.categoryName
   };
 }
 
 function sourceOddId(value: string) {
-  const [eventId, marketId, outcomeId] = value.split("_");
-  return Number(`${eventId}${String(marketId ?? "").padStart(4, "0")}${String(outcomeId ?? "").padStart(4, "0")}`.slice(0, 18));
+  const digits = value.replace(/\D/g, "");
+  return digits ? digits.slice(-18) : "0";
 }
 
 function buildBookmakerLink(bookmaker: BetnacionalBookmakerConfig, fixtureId: string, event: BetnacionalEvent, confidenceScore: number): BookmakerLinkRow {
@@ -278,33 +346,63 @@ function buildBookmakerLink(bookmaker: BetnacionalBookmakerConfig, fixtureId: st
 }
 
 function buildMoneylineOdds(bookmaker: BetnacionalBookmakerConfig, fixtureId: string, event: BetnacionalEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
-  const rows: OddRow[] = [];
+  const groupedRows = new Map<string, { classification: MarketClassification; rows: OddRow[] }>();
 
-  for (const odd of event.odds.filter(isMoneylineOdd)) {
-    const selection = selectionFromOdd(odd);
+  for (const odd of event.odds) {
+    const classification = classifyMoneylineOdd(odd);
+    if (!classification) continue;
+
+    const selection = selectionFromOdd(odd, event);
     const price = Number(odd.odd);
 
     if (!selection || !Number.isFinite(price) || price <= 0) continue;
 
-    rows.push({
+    const row: OddRow = {
       fixture_id: fixtureId,
       bookmaker_slug: bookmaker.slug,
       market_code: "1X2",
       market_name: "MoneyLine",
       selection: selectionForCanonicalOrientation(selection, orientation),
       price,
-      pa_category: "SEM_PA",
-      confidence_score: 1,
+      pa_category: classification.category,
+      confidence_score: classification.confidence,
       raw_market_name: odd.market_name ?? null,
       raw_label: odd.outcome_name ?? null,
       raw_odd_type: odd.outcome_id ?? odd.outcome_code ?? null,
       source_odd_id: sourceOddId(odd.id),
-      raw: { event: compactEventRaw(event), odd, classificationReason: "betnacional-standard-resultado-final" },
+      raw: { event: compactEventRaw(event), odd, classificationReason: classification.reason },
       updated_at: new Date().toISOString()
-    });
+    };
+
+    const groupKey = [classification.category, odd.market_id ?? "", odd.market_name ?? "", odd.market_code ?? "", odd.selection_market_id ?? ""].join(":");
+    const group = groupedRows.get(groupKey) ?? { classification, rows: [] };
+    group.rows.push(row);
+    groupedRows.set(groupKey, group);
   }
 
-  return rows;
+  const selectedRows: OddRow[] = [];
+  const bestGroupByCategory = new Map<string, { priority: number; rows: OddRow[] }>();
+
+  for (const { classification, rows } of groupedRows.values()) {
+    const bySelection = new Map<string, OddRow>();
+    for (const row of rows) {
+      if (!bySelection.has(row.selection)) bySelection.set(row.selection, row);
+    }
+
+    const completeRows = ["HOME", "DRAW", "AWAY"].map((selection) => bySelection.get(selection));
+    if (!completeRows.every((row): row is OddRow => Boolean(row))) continue;
+
+    const current = bestGroupByCategory.get(classification.category);
+    if (!current || classification.priority > current.priority) {
+      bestGroupByCategory.set(classification.category, { priority: classification.priority, rows: completeRows });
+    }
+  }
+
+  for (const group of bestGroupByCategory.values()) {
+    selectedRows.push(...group.rows);
+  }
+
+  return selectedRows;
 }
 
 export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig) {
@@ -476,11 +574,24 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
             }
 
             const fallbackEvent = eventFromSearchResult(searchResult, detail.odds ?? []);
-            if (!fallbackEvent) continue;
+            const hydratedEvent =
+              eventFromSavedDetail(
+                {
+                  home: searchResult.home,
+                  away: searchResult.away,
+                  startsAt: parseSearchDateTime(searchResult.date_start).toISOString(),
+                  tournamentId: searchResult.tournament_id ?? searchResult.season_id,
+                  tournamentName: searchResult.tournament_name,
+                  categoryName: searchResult.category_name
+                },
+                searchResult.event_id,
+                detail
+              ) ?? fallbackEvent;
+            if (!hydratedEvent) continue;
 
             const previous = bestMatchByFixtureId.get(fixture.id);
             if (!previous || result.score > previous.matched.score) {
-              bestMatchByFixtureId.set(fixture.id, { event: fallbackEvent, matched: { ...result, fixture } });
+              bestMatchByFixtureId.set(fixture.id, { event: hydratedEvent, matched: { ...result, fixture } });
             }
           }
 
@@ -489,8 +600,34 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
       }
 
       for (const { event, matched } of bestMatchByFixtureId.values()) {
-        linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
-        oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
+        let finalEvent = event;
+        try {
+          const detail = await client.getEventMoneylineOdds(event.eventId);
+          finalEvent = eventFromSavedDetail(compactEventRaw(event), event.eventId, detail) ?? event;
+        } catch (error) {
+          summary.errors += 1;
+          summary.lastError = errorMessage(error);
+          await log(bookmaker, "warn", "betnacional event detail hydration failed; using discovery odds", {
+            fixtureId: matched.fixture.id,
+            eventId: event.eventId,
+            error: serializeError(error)
+          });
+        }
+
+        const eventOdds = buildMoneylineOdds(bookmaker, matched.fixture.id, finalEvent, matched.orientation);
+        if (!eventOdds.length) {
+          summary.errors += 1;
+          summary.lastError = `betnacional event has no 1X2 odds: ${finalEvent.eventId}`;
+          await log(bookmaker, "warn", "betnacional event has no 1X2 odds", {
+            fixtureId: matched.fixture.id,
+            eventId: finalEvent.eventId,
+            event: compactEventRaw(finalEvent)
+          });
+          continue;
+        }
+
+        linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, finalEvent, matched.score));
+        oddsToSave.push(...eventOdds);
         summary.eventsCollected += 1;
         summary.eventsMatched += 1;
         summary.eventsCollectedByDiscovery += 1;

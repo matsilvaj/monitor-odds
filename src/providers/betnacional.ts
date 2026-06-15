@@ -25,6 +25,8 @@ export type BetnacionalOdd = {
   specifier?: string;
   specifier_value?: string;
   is_live?: number;
+  selection_market_id?: number;
+  season_id?: number;
   updated_at?: string;
   updated_at_ts?: number;
   [key: string]: unknown;
@@ -102,6 +104,7 @@ export class BetnacionalClient {
     url.searchParams.set("tournament_id", "");
     url.searchParams.set("markets", "1");
     url.searchParams.set("filter_time_event", filterTimeEvent);
+    url.searchParams.set("provider", "ramp");
 
     const data = await httpClient<EventsBySeasonsResponse>({
       url,
@@ -119,6 +122,7 @@ export class BetnacionalClient {
     const url = new URL("api/v1/search", this.config.searchBaseUrl);
     url.searchParams.set("q", query);
     url.searchParams.set("source", "sports");
+    url.searchParams.set("provider", "ramp");
 
     const data = await httpClient<SearchResponse>({
       url,
@@ -139,11 +143,12 @@ export class BetnacionalClient {
   }
 
   async getEventMoneylineOdds(eventId: number) {
-    const url = new URL(`api/event-odds/${eventId}`, this.config.apiBaseUrl);
+    const url = new URL(`api/event-odds/${eventId}/grouped`, this.config.apiBaseUrl);
     url.searchParams.set("languageId", "1");
-    url.searchParams.set("marketIds", "1");
+    url.searchParams.set("marketIds", "");
     url.searchParams.set("outcomeIds", "");
     url.searchParams.set("statusId", "0");
+    url.searchParams.set("provider", "ramp");
 
     return httpClient<EventOddsResponse>({
       url,
