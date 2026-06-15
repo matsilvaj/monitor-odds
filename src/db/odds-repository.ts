@@ -169,15 +169,31 @@ function filterInvalidMoneylineGroups(rows: OddRow[]) {
 
     const completeRows = ["HOME", "DRAW", "AWAY"].map((selection) => bySelection.get(selection));
     const complete = completeRows.every((row): row is OddRow => Boolean(row));
+    const homeEarlyPayoutRow = bySelection.get("HOME");
+    const awayEarlyPayoutRow = bySelection.get("AWAY");
+    const twoWayEarlyPayoutRows = [homeEarlyPayoutRow, awayEarlyPayoutRow].filter((row): row is OddRow => Boolean(row));
+    const isTwoWayEarlyPayout =
+      groupRows.every((row) => row.pa_category === "COM_PA") &&
+      Boolean(homeEarlyPayoutRow) &&
+      Boolean(awayEarlyPayoutRow) &&
+      !bySelection.get("DRAW");
     const hasOnlyExpectedRows = groupRows.every((row) => row.selection === "HOME" || row.selection === "DRAW" || row.selection === "AWAY");
 
-    if (!complete || !hasOnlyExpectedRows) {
+    if ((!complete && !isTwoWayEarlyPayout) || !hasOnlyExpectedRows) {
       for (const row of groupRows) invalidRows.add(row);
       console.warn(`[odds] grupo 1X2 incompleto ou duplicado ignorado: ${key}`);
       continue;
     }
 
-    const totalProbability = impliedProbability(completeRows);
+    if (isTwoWayEarlyPayout) {
+      for (const row of twoWayEarlyPayoutRows) {
+        if (row) selectedRows.add(row);
+      }
+      continue;
+    }
+
+    const validCompleteRows = completeRows.filter((row): row is OddRow => Boolean(row));
+    const totalProbability = impliedProbability(validCompleteRows);
     if (totalProbability < MIN_1X2_IMPLIED_PROBABILITY || totalProbability > MAX_1X2_IMPLIED_PROBABILITY) {
       for (const row of groupRows) invalidRows.add(row);
       console.warn(
@@ -186,7 +202,7 @@ function filterInvalidMoneylineGroups(rows: OddRow[]) {
       continue;
     }
 
-    for (const row of completeRows) selectedRows.add(row);
+    for (const row of validCompleteRows) selectedRows.add(row);
   }
 
   return rows.filter((row) => row.market_code !== "1X2" || selectedRows.has(row)).filter((row) => !invalidRows.has(row));
