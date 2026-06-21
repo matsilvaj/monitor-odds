@@ -1,7 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("monitorOdds", {
-  selectChrome: () => ipcRenderer.invoke("select-chrome"),
   startMonitor: () => ipcRenderer.invoke("start-monitor"),
   stopMonitor: () => ipcRenderer.invoke("stop-monitor"),
   checkUpdates: () => ipcRenderer.invoke("check-updates"),

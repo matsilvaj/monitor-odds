@@ -133,29 +133,6 @@ export type KtoBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
-export type Bet365BookmakerConfig = {
-  slug: string;
-  name: string;
-  enabled: boolean;
-  provider: "bet365";
-  baseUrl: string;
-  chromeProfileDir: string;
-  chromeExecutablePath?: string;
-  manualFallback: boolean;
-  navigationTimeoutMs: number;
-};
-
-export type MeridianbetBookmakerConfig = {
-  slug: string;
-  name: string;
-  enabled: boolean;
-  provider: "meridianbet";
-  baseUrl: string;
-  chromeProfileDir: string;
-  chromeExecutablePath?: string;
-  navigationTimeoutMs: number;
-};
-
 export type BetfairBookmakerConfig = {
   slug: string;
   name: string;
@@ -275,8 +252,6 @@ export type BookmakerConfig =
   | Bet7kBookmakerConfig
   | BetfastBookmakerConfig
   | KtoBookmakerConfig
-  | Bet365BookmakerConfig
-  | MeridianbetBookmakerConfig
   | BetfairBookmakerConfig
   | BetesporteBookmakerConfig
   | BetnacionalBookmakerConfig
@@ -484,27 +459,6 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     apiBaseUrl: "https://us.offering-api.kambicdn.com/offering/v2018/ktobr/",
     referer: "https://www.kto.bet.br/esportes/",
     engine: "fetch"
-  },
-  {
-    slug: "bet365",
-    name: "bet365",
-    enabled: true,
-    provider: "bet365",
-    baseUrl: env.BET365_BASE_URL,
-    chromeProfileDir: env.BET365_CHROME_PROFILE_DIR,
-    chromeExecutablePath: env.BET365_CHROME_EXECUTABLE,
-    manualFallback: env.BET365_MANUAL_FALLBACK,
-    navigationTimeoutMs: env.BET365_NAVIGATION_TIMEOUT_MS
-  },
-  {
-    slug: "meridianbet",
-    name: "MeridianBet",
-    enabled: true,
-    provider: "meridianbet",
-    baseUrl: env.MERIDIANBET_BASE_URL,
-    chromeProfileDir: env.MERIDIANBET_CHROME_PROFILE_DIR,
-    chromeExecutablePath: env.MERIDIANBET_CHROME_EXECUTABLE,
-    navigationTimeoutMs: env.MERIDIANBET_NAVIGATION_TIMEOUT_MS
   },
   {
     slug: "betfair",

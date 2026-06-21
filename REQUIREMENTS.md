@@ -7,7 +7,6 @@ Checklist para preparar este projeto em um PC novo sem adivinhacao.
 - Node.js 24.x
 - npm 11.x
 - Git
-- Google Chrome instalado, necessario para o collector da bet365
 
 Este repositorio foi validado com:
 
@@ -68,9 +67,7 @@ Para aplicar o schema, `SUPABASE_DB_PASSWORD` tambem pode ser usado quando a URL
 
 ## Overrides opcionais
 
-O codigo ja tem defaults para API-Football base URL/timezone/TTL, Altenar e bet365. So adicione essas variaveis ao `.env` quando precisar sobrescrever algo localmente.
-
-Para a bet365, o projeto tenta encontrar o Chrome instalado automaticamente. Se o Chrome estiver em um caminho fora do padrao, use `BET365_CHROME_EXECUTABLE` temporariamente no `.env` local.
+O codigo ja tem defaults para API-Football base URL/timezone/TTL e Altenar. So adicione essas variaveis ao `.env` quando precisar sobrescrever algo localmente.
 
 ## Comandos uteis
 
@@ -80,8 +77,6 @@ npm run sync:watch
 npm run sync:fixtures
 npm run sync:odds
 npm run sync
-npm run collect:bookmaker bet365
-npm run collect:bookmaker meridianbet
 npm run client:package
 npm run client:release
 ```

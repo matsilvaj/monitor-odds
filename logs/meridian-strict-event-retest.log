@@ -1,0 +1,116 @@
+
+> monitor-odds@1.0.0 collect:bookmaker
+> tsx src/jobs/collect-bookmaker.ts meridianbet today
+
+[sync] Jogos iniciados removidos: 0 | snapshots removidos: 0.
+[meridianbet] Iniciando coleta. Jogos alvo: 14 (Hoje: 5 | Amanhã: 9).
+[meridianbet] links de ligas da meridianbet carregados {"savedLinks":3,"seedLinks":3}
+[meridianbet] iniciando Chrome real via CDP para meridianbet {"profileDir":"C:\\Users\\Matheus\\Documents\\monitor-odds\\.browser\\meridianbet-cdp-profile","chromePath":"C:/Program Files/Google/Chrome/Application/chrome.exe","port":10292}
+[meridianbet] abrindo futebol da meridianbet {"url":"https://meridianbet.bet.br/ca/esportes/futebol"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] abrindo liga da meridianbet por URL {"leagueName":"World Cup","apiFootballLeagueId":1,"label":"Copa do Mundo 2026","source":"saved","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] navegando para URL de liga da meridianbet {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] procurando jogo na meridianbet {"fixtureId":"419b981f-63b9-458f-904e-807ecd312a0d","homeTeam":"Germany","awayTeam":"Ivory Coast","startsAt":"2026-06-20T20:00:00+00:00"}
+[meridianbet] jogo encontrado na meridianbet; abrindo página do evento {"fixtureId":"419b981f-63b9-458f-904e-807ecd312a0d","attempt":1,"targets":[{"kind":"event-preview-info","href":null,"text":"17:00 Hoje Alemanha Costa do Marfim 1.50 4.31 5.68 2.40 2.5 1.58 1.70 2.02 2.86 +3851"},{"kind":"event-preview-info","href":null,"text":"17:00 Hoje Alemanha Costa do Marfim 1.50 4.31 5.68 2.40 2.5 1.58 1.70 2.02 2.86 +3851"},{"kind":"event-preview-icon","href":null,"text":"17:00 Hoje Alemanha Costa do Marfim 1.50 4.31 5.68 2.40 2.5 1.58 1.70 2.02 2.86 +3851"},{"kind":"event-preview-icon","href":null,"text":"17:00 Hoje Alemanha Costa do Marfim 1.50 4.31 5.68 2.40 2.5 1.58 1.70 2.02 2.86 +3851"}]}
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"419b981f-63b9-458f-904e-807ecd312a0d","targetKind":"event-preview-info","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"419b981f-63b9-458f-904e-807ecd312a0d","targetKind":"event-preview-info","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"419b981f-63b9-458f-904e-807ecd312a0d","targetKind":"event-preview-icon","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"419b981f-63b9-458f-904e-807ecd312a0d","targetKind":"event-preview-icon","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] odds lidas na página do jogo da meridianbet {"fixtureId":"419b981f-63b9-458f-904e-807ecd312a0d","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026/alemanha-costa-do-marfim/18827518","orientation":"NORMAL","markets":2,"odds":6,"categories":["COM_PA","SEM_PA"]}
+[meridianbet] jogo da meridianbet salvo no banco {"fixtureId":"419b981f-63b9-458f-904e-807ecd312a0d","eventName":"Germany x Ivory Coast","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026/alemanha-costa-do-marfim/18827518","orientation":"NORMAL","oddsFound":6,"oddsUpserted":6}
+[meridianbet] voltando para a liga da meridianbet após coletar jogo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] procurando jogo na meridianbet {"fixtureId":"9931b26f-ac1b-4ff0-928c-fe5f5d347cfc","homeTeam":"Ecuador","awayTeam":"Curaçao","startsAt":"2026-06-21T00:00:00+00:00"}
+[meridianbet] jogo encontrado na meridianbet; abrindo página do evento {"fixtureId":"9931b26f-ac1b-4ff0-928c-fe5f5d347cfc","attempt":1,"targets":[{"kind":"event-preview-info","href":null,"text":"21:00 Hoje Equador Curacao 1.11 7.44 18.62 2.37 2.5 1.54 2.80 3.20 4.80 +3827"},{"kind":"event-preview-info","href":null,"text":"21:00 Hoje Equador Curacao 1.11 7.44 18.62 2.37 2.5 1.54 2.80 3.20 4.80 +3827"},{"kind":"event-preview-icon","href":null,"text":"21:00 Hoje Equador Curacao 1.11 7.44 18.62 2.37 2.5 1.54 2.80 3.20 4.80 +3827"},{"kind":"event-preview-icon","href":null,"text":"21:00 Hoje Equador Curacao 1.11 7.44 18.62 2.37 2.5 1.54 2.80 3.20 4.80 +3827"}]}
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"9931b26f-ac1b-4ff0-928c-fe5f5d347cfc","targetKind":"event-preview-info","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"9931b26f-ac1b-4ff0-928c-fe5f5d347cfc","targetKind":"event-preview-info","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"9931b26f-ac1b-4ff0-928c-fe5f5d347cfc","targetKind":"event-preview-icon","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"9931b26f-ac1b-4ff0-928c-fe5f5d347cfc","targetKind":"event-preview-icon","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] odds lidas na página do jogo da meridianbet {"fixtureId":"9931b26f-ac1b-4ff0-928c-fe5f5d347cfc","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026/equador-curacao/18827515","orientation":"NORMAL","markets":2,"odds":6,"categories":["COM_PA","SEM_PA"]}
+[meridianbet] jogo da meridianbet salvo no banco {"fixtureId":"9931b26f-ac1b-4ff0-928c-fe5f5d347cfc","eventName":"Ecuador x Curaçao","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026/equador-curacao/18827515","orientation":"NORMAL","oddsFound":6,"oddsUpserted":6}
+[meridianbet] voltando para a liga da meridianbet após coletar jogo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] abrindo liga da meridianbet por URL {"leagueName":"Brasileirao Serie B","apiFootballLeagueId":72,"label":"Serie B","source":"saved","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] navegando para URL de liga da meridianbet {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] procurando jogo na meridianbet {"fixtureId":"e37fee69-f8c0-482e-96a9-d154907cf91c","homeTeam":"Vila Nova","awayTeam":"Nautico Recife","startsAt":"2026-06-20T22:00:00+00:00"}
+[meridianbet] jogo encontrado na meridianbet; abrindo página do evento {"fixtureId":"e37fee69-f8c0-482e-96a9-d154907cf91c","attempt":1,"targets":[{"kind":"event-preview-info","href":null,"text":"19:00 Hoje Vila Nova FC GO Nautico PE 2.25 2.99 3.09 1.63 2.5 2.15 1.88 2.55 4.40 +1135"},{"kind":"event-preview-info","href":null,"text":"19:00 Hoje Vila Nova FC GO Nautico PE 2.25 2.99 3.09 1.63 2.5 2.15 1.88 2.55 4.40 +1135"},{"kind":"event-preview-icon","href":null,"text":"19:00 Hoje Vila Nova FC GO Nautico PE 2.25 2.99 3.09 1.63 2.5 2.15 1.88 2.55 4.40 +1135"},{"kind":"event-preview-icon","href":null,"text":"19:00 Hoje Vila Nova FC GO Nautico PE 2.25 2.99 3.09 1.63 2.5 2.15 1.88 2.55 4.40 +1135"}]}
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"e37fee69-f8c0-482e-96a9-d154907cf91c","targetKind":"event-preview-info","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"e37fee69-f8c0-482e-96a9-d154907cf91c","targetKind":"event-preview-info","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"e37fee69-f8c0-482e-96a9-d154907cf91c","targetKind":"event-preview-icon","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"e37fee69-f8c0-482e-96a9-d154907cf91c","targetKind":"event-preview-icon","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] odds lidas na página do jogo da meridianbet {"fixtureId":"e37fee69-f8c0-482e-96a9-d154907cf91c","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b/vila-nova-fc-go-nautico-pe/19122058","orientation":"NORMAL","markets":2,"odds":6,"categories":["COM_PA","SEM_PA"]}
+[meridianbet] jogo da meridianbet salvo no banco {"fixtureId":"e37fee69-f8c0-482e-96a9-d154907cf91c","eventName":"Vila Nova x Nautico Recife","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b/vila-nova-fc-go-nautico-pe/19122058","orientation":"NORMAL","oddsFound":6,"oddsUpserted":6}
+[meridianbet] voltando para a liga da meridianbet após coletar jogo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] procurando jogo na meridianbet {"fixtureId":"d027b286-d022-4381-a0ea-b222263acf6c","homeTeam":"Ceara","awayTeam":"Botafogo SP","startsAt":"2026-06-20T22:00:00+00:00"}
+[meridianbet] jogo encontrado na meridianbet; abrindo página do evento {"fixtureId":"d027b286-d022-4381-a0ea-b222263acf6c","attempt":1,"targets":[{"kind":"event-preview-info","href":null,"text":"19:00 Hoje Ceara SC CE Botafogo FC SP 1.86 3.14 4.11 1.53 2.5 2.35 2.12 2.95 5.45 +1133"},{"kind":"event-preview-info","href":null,"text":"19:00 Hoje Ceara SC CE Botafogo FC SP 1.86 3.14 4.11 1.53 2.5 2.35 2.12 2.95 5.45 +1133"},{"kind":"event-preview-icon","href":null,"text":"19:00 Hoje Ceara SC CE Botafogo FC SP 1.86 3.14 4.11 1.53 2.5 2.35 2.12 2.95 5.45 +1133"},{"kind":"event-preview-icon","href":null,"text":"19:00 Hoje Ceara SC CE Botafogo FC SP 1.86 3.14 4.11 1.53 2.5 2.35 2.12 2.95 5.45 +1133"}]}
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"d027b286-d022-4381-a0ea-b222263acf6c","targetKind":"event-preview-info","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"d027b286-d022-4381-a0ea-b222263acf6c","targetKind":"event-preview-info","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"d027b286-d022-4381-a0ea-b222263acf6c","targetKind":"event-preview-icon","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"d027b286-d022-4381-a0ea-b222263acf6c","targetKind":"event-preview-icon","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] odds lidas na página do jogo da meridianbet {"fixtureId":"d027b286-d022-4381-a0ea-b222263acf6c","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b/ceara-sc-ce-botafogo-fc-sp/19128027","orientation":"NORMAL","markets":2,"odds":6,"categories":["COM_PA","SEM_PA"]}
+[meridianbet] jogo da meridianbet salvo no banco {"fixtureId":"d027b286-d022-4381-a0ea-b222263acf6c","eventName":"Ceara x Botafogo SP","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b/ceara-sc-ce-botafogo-fc-sp/19128027","orientation":"NORMAL","oddsFound":6,"oddsUpserted":6}
+[meridianbet] voltando para a liga da meridianbet após coletar jogo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/brasil/s%C3%A9rie-b?leagueIds=90"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] abrindo liga da meridianbet por URL {"leagueName":"La Liga 2","apiFootballLeagueId":141,"label":"La Liga 2","source":"saved","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] navegando para URL de liga da meridianbet {"url":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] procurando jogo na meridianbet {"fixtureId":"5986a3c1-658c-4e6b-8525-17a23c505244","homeTeam":"Almeria","awayTeam":"Malaga","startsAt":"2026-06-20T19:00:00+00:00"}
+[meridianbet] jogo encontrado na meridianbet; abrindo página do evento {"fixtureId":"5986a3c1-658c-4e6b-8525-17a23c505244","attempt":1,"targets":[{"kind":"event-preview-info","href":null,"text":"16:00 Hoje UD Almeria Malaga CF 2.06 3.23 3.47 1.79 2.5 1.95 1.76 2.35 3.75 +2335"},{"kind":"event-preview-info","href":null,"text":"16:00 Hoje UD Almeria Malaga CF 2.06 3.23 3.47 1.79 2.5 1.95 1.76 2.35 3.75 +2335"},{"kind":"event-preview-icon","href":null,"text":"16:00 Hoje UD Almeria Malaga CF 2.06 3.23 3.47 1.79 2.5 1.95 1.76 2.35 3.75 +2335"},{"kind":"event-preview-icon","href":null,"text":"16:00 Hoje UD Almeria Malaga CF 2.06 3.23 3.47 1.79 2.5 1.95 1.76 2.35 3.75 +2335"}]}
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"5986a3c1-658c-4e6b-8525-17a23c505244","targetKind":"event-preview-info","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"5986a3c1-658c-4e6b-8525-17a23c505244","targetKind":"event-preview-info","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"5986a3c1-658c-4e6b-8525-17a23c505244","targetKind":"event-preview-icon","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] alvo da meridianbet clicado, mas nao abriu o evento esperado {"fixtureId":"5986a3c1-658c-4e6b-8525-17a23c505244","targetKind":"event-preview-icon","href":null,"currentUrl":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] voltando para a liga da meridianbet para tentar outro alvo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] odds lidas na página do jogo da meridianbet {"fixtureId":"5986a3c1-658c-4e6b-8525-17a23c505244","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2/ud-almeria-malaga-cf/19115930","orientation":"NORMAL","markets":2,"odds":6,"categories":["COM_PA","SEM_PA"]}
+[meridianbet] jogo da meridianbet salvo no banco {"fixtureId":"5986a3c1-658c-4e6b-8525-17a23c505244","eventName":"Almeria x Malaga","sourceUrl":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2/ud-almeria-malaga-cf/19115930","orientation":"NORMAL","oddsFound":6,"oddsUpserted":6}
+[meridianbet] voltando para a liga da meridianbet após coletar jogo {"url":"https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93"}
+[meridianbet] filtro TUDO da meridianbet não encontrado na barra de tempo
+[meridianbet] fechando Chrome da meridianbet
+[meridianbet] coleta da meridianbet finalizada {"trigger":"manual","targetDateKeys":["2026-06-20"],"skipped":false,"skipReason":null,"activeLeagues":51,"leaguesTargeted":3,"leaguesOpened":3,"leaguesSkipped":0,"fixturesAvailable":5,"fixturesTargeted":5,"eventsOpened":5,"eventsOpenedFromCache":0,"eventsCollected":5,"eventsWithoutOdds":0,"eventsSkippedStarted":0,"eventsUnmatched":0,"oddsFound":30,"oddsUpserted":30,"errors":0,"lastError":null}
+[meridianbet] Coleta finalizada em 4m 46s.
+[meridianbet] Jogos encontrados no banco: 7 jogos
+[meridianbet] Hoje: 5 jogos | 30 odds
+[meridianbet] Amanhã: 2 jogos | 12 odds
+[meridianbet] Nesta execução: 5 jogos coletados | 30 odds salvas | 0 pulados | 0 erros.

@@ -40,6 +40,7 @@ export type OddRow = {
   source_odd_id: string | number;
   raw: unknown;
   updated_at: string;
+  last_seen_at?: string;
 };
 
 type ExistingBookmakerLinkRow = Omit<BookmakerLinkRow, "raw"> & {
@@ -260,7 +261,7 @@ async function fetchExistingOdds(bookmakerSlug: string, fixtureIds: string[], ma
     const { data, error } = await supabase
       .from("odds")
       .select(
-        "id,fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,raw_odd_type,source_odd_id,updated_at"
+        "id,fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,raw_odd_type,source_odd_id,updated_at,last_seen_at"
       )
       .eq("bookmaker_slug", bookmakerSlug)
       .in("market_code", marketCodes)
@@ -287,6 +288,14 @@ async function deleteExistingOdds(bookmakerSlug: string, fixtureIds: string[], m
   }
 }
 
+async function touchSeenOdds(ids: string[], seenAt: string) {
+  for (const idBatch of chunks(ids, DELETE_ROW_BATCH_SIZE)) {
+    await withStatementTimeoutRetry("atualizacao de last_seen_at das odds", async () =>
+      await supabase.from("odds").update({ last_seen_at: seenAt }).in("id", idBatch)
+    );
+  }
+}
+
 export class OddsRepository {
   static async saveAll(
     bookmakerSlug: string,
@@ -299,7 +308,7 @@ export class OddsRepository {
     const linksToSave = [
       ...new Map(links.map((link) => [linkKey(link), { ...link, updated_at: saveStartedAt }])).values()
     ];
-    const oddsToSave = odds.map((odd) => ({ ...odd, updated_at: saveStartedAt }));
+    const oddsToSave = odds.map((odd) => ({ ...odd, updated_at: saveStartedAt, last_seen_at: saveStartedAt }));
     const existingLinksByEventId = linksToSave.length ? await fetchExistingLinksByEventIds(bookmakerSlug, linksToSave.map((link) => link.external_event_id)) : [];
     const linksToSaveByKey = new Map(linksToSave.map((link) => [linkKey(link), link]));
     const movedFixtureIds = existingLinksByEventId
@@ -346,6 +355,11 @@ export class OddsRepository {
       const existing = existingOddsByKey.get(oddKey(odd));
       return !existing || !sameOdd(existing, odd);
     });
+    const changedOddKeys = new Set(changedOdds.map(oddKey));
+    const seenUnchangedOddIds = uniqueOdds
+      .filter((odd) => !changedOddKeys.has(oddKey(odd)))
+      .map((odd) => existingOddsByKey.get(oddKey(odd))?.id)
+      .filter((id): id is string => Boolean(id));
     const staleOddIds = existingOdds.filter((odd) => !currentOddKeys.has(oddKey(odd))).map((odd) => odd.id);
 
     for (const oddBatch of chunks(changedOdds, DEFAULT_BATCH_SIZE)) {
@@ -355,6 +369,8 @@ export class OddsRepository {
         })
       );
     }
+
+    await touchSeenOdds(seenUnchangedOddIds, saveStartedAt);
 
     if (fixtureIds.length) {
       await deleteRowsById("odds", "limpeza de odds antigas", staleOddIds);

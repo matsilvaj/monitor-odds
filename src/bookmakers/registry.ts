@@ -2,7 +2,6 @@ import pMap from "p-map";
 import { BOOKMAKERS } from "../config/bookmakers.js";
 import { createAltenarCollector } from "../services/altenar-collector.js";
 import { createApostabetCollector } from "../services/apostabet-collector.js";
-import { createBet365Collector } from "../services/bet365-collector.js";
 import { createBet7kCollector } from "../services/bet7k-collector.js";
 import { createBetanoCollector } from "../services/betano-collector.js";
 import { createBetboomCollector } from "../services/betboom-collector.js";
@@ -13,7 +12,6 @@ import { createBetmgmCollector } from "../services/betmgm-collector.js";
 import { createBetnacionalCollector } from "../services/betnacional-collector.js";
 import { createCasaDeApostasCollector } from "../services/casadeapostas-collector.js";
 import { createKtoCollector } from "../services/kto-collector.js";
-import { createMeridianbetCollector } from "../services/meridianbet-collector.js";
 import { createNovibetCollector } from "../services/novibet-collector.js";
 import { createSegurobetCollector } from "../services/segurobet-collector.js";
 import { createSportingbetCollector } from "../services/sportingbet-collector.js";
@@ -138,22 +136,6 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
     };
   }
 
-  if (bookmaker.provider === "bet365") {
-    return {
-      slug: bookmaker.slug,
-      name: bookmaker.name,
-      collect: createBet365Collector(bookmaker)
-    };
-  }
-
-  if (bookmaker.provider === "meridianbet") {
-    return {
-      slug: bookmaker.slug,
-      name: bookmaker.name,
-      collect: createMeridianbetCollector(bookmaker)
-    };
-  }
-
   if (bookmaker.provider === "betfair") {
     return {
       slug: bookmaker.slug,
@@ -216,7 +198,7 @@ export type CollectAllBookmakersOptions = {
   cleanupStarted?: boolean;
 };
 
-const BROWSER_COLLECTOR_SLUGS = new Set(["bet365", "meridianbet"]);
+const BROWSER_COLLECTOR_SLUGS = new Set<string>();
 
 async function collectBookmakers(bookmakers: BookmakerCollector[], options: CollectAllBookmakersOptions = {}) {
   const concurrency = options.concurrency ?? 3;
@@ -323,9 +305,11 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
     console.log("[sync] Casas com Chrome real iniciadas em uma raia própria; as outras casas continuam em paralelo.");
   }
 
-  const fastResultsPromise = pMap(fastCollectors, collectOne, { concurrency });
-  const slowResultsPromise = Promise.all(slowCollectors.map((bookmaker) => collectOne(bookmaker)));
-  const [fastResults, slowResults] = await Promise.all([fastResultsPromise, slowResultsPromise]);
+  const fastResults = await pMap(fastCollectors, collectOne, { concurrency });
+  const slowResults: BookmakerCollectorResult[] = [];
+  for (const bookmaker of slowCollectors) {
+    slowResults.push(await collectOne(bookmaker));
+  }
 
   return [...fastResults, ...slowResults];
 }
@@ -348,6 +332,6 @@ export async function collectBrowserBookmakers(options: CollectAllBookmakersOpti
     console.log("[sync] Casas com Chrome real iniciadas em uma raia própria.");
   }
 
-  return collectBookmakers(browserCollectors, { ...options, concurrency: browserCollectors.length || 1 });
+  return collectBookmakers(browserCollectors, { ...options, concurrency: 1 });
 }
 

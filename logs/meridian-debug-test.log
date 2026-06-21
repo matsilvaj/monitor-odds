@@ -1,0 +1,21 @@
+
+> monitor-odds@1.0.0 collect:bookmaker
+> tsx src/jobs/collect-bookmaker.ts meridianbet today
+
+[sync] Jogos iniciados removidos: 0 | snapshots removidos: 0.
+[meridianbet] Iniciando coleta. Jogos alvo: 15 (Hoje: 6 | Amanhã: 9).
+[meridianbet] links de ligas da meridianbet carregados {"savedLinks":3,"seedLinks":3}
+[meridianbet] iniciando Chrome real via CDP para meridianbet {"profileDir":"C:\\Users\\Matheus\\Documents\\monitor-odds\\.browser\\meridianbet-cdp-profile","chromePath":"C:/Program Files/Google/Chrome/Application/chrome.exe","port":10061}
+[meridianbet] coleta da meridianbet falhou {"error":{"name":"Error","message":"browserContext.newPage: Target page, context or browser has been closed","stack":"browserContext.newPage: Target page, context or browser has been closed\n    at MeridianbetBrowserClient.start (C:\\Users\\Matheus\\Documents\\monitor-odds\\src\\providers\\meridianbet.ts:491:36)\n    at async Object.collectMeridianbet (C:\\Users\\Matheus\\Documents\\monitor-odds\\src\\services\\meridianbet-collector.ts:591:7)\n    at async <anonymous> (C:\\Users\\Matheus\\Documents\\monitor-odds\\src\\jobs\\collect-bookmaker.ts:67:23)"}}
+[meridianbet] fechando Chrome da meridianbet
+Warning: Detected unsettled top-level await at C:\Users\Matheus\Documents\monitor-odds\src\jobs\collect-bookmaker.ts:67
+      const summary = await bookmaker.collect(options);
+                      ^
+
+
+
+npm notice
+npm notice New minor version of npm available! 11.11.0 -> 11.17.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.17.0
+npm notice To update run: npm install -g npm@11.17.0
+npm notice

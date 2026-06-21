@@ -1,0 +1,22 @@
+
+> monitor-odds@1.0.0 collect:bookmaker
+> tsx src/jobs/collect-bookmaker.ts bet365 today
+
+[sync] Jogos iniciados removidos: 0 | snapshots removidos: 0.
+[bet365] Iniciando coleta. Jogos alvo: 15 (Hoje: 6 | Amanhã: 9).
+[bet365] Atalhos de liga: 3 salvos | 3 conhecidos.
+[bet365] Abrindo Chrome real...
+[bet365] Perfil principal indisponivel; mantendo apenas o perfil real.
+[bet365] Erro: coleta da bet365 falhou | Chrome CDP não respondeu na porta 9663.
+[bet365] Coleta finalizada: 0 jogos coletados | 0 odds salvas | 1 erros.
+[bet365] Coleta finalizada em 52s.
+[bet365] Jogos encontrados no banco: 6 jogos
+[bet365] Hoje: 6 jogos | 21 odds
+[bet365] Amanhã: 0 jogos | 0 odds
+[bet365] Nesta execução: 0 jogos coletados | 0 odds salvas | 0 pulados | 1 erros.
+[bet365] Último erro: Chrome CDP não respondeu na porta 9663
+npm notice
+npm notice New minor version of npm available! 11.11.0 -> 11.17.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.17.0
+npm notice To update run: npm install -g npm@11.17.0
+npm notice

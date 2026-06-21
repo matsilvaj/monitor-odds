@@ -66,8 +66,8 @@ export class SuperbetClient {
       headers: this.headers,
       referer: this.config.referer,
       engine: this.config.engine,
-      timeoutMs: 5000,
-      maxRetries: 0
+      timeoutMs: 15000,
+      maxRetries: 2
     });
 
     return {
@@ -90,8 +90,8 @@ export class SuperbetClient {
       headers: this.headers,
       referer: this.config.referer,
       engine: this.config.engine,
-      timeoutMs: 5000,
-      maxRetries: 0
+      timeoutMs: 20000,
+      maxRetries: 2
     });
     return Array.isArray(payload.data) ? payload.data : [];
   }

@@ -55,8 +55,7 @@ h2 {
   margin-bottom: 12px;
 }
 
-#app-version,
-#chrome-path {
+#app-version {
   margin-top: 6px;
   color: var(--muted);
   font-size: 13px;

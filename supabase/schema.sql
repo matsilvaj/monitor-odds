@@ -142,16 +142,28 @@ create table if not exists odds (
   raw_odd_type text,
   source_odd_id bigint,
   raw jsonb not null default '{}'::jsonb,
+  last_seen_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (fixture_id, bookmaker_slug, market_code, selection, pa_category, source_odd_id)
 );
+
+alter table odds add column if not exists last_seen_at timestamptz not null default now();
+update odds
+set last_seen_at = coalesce(last_seen_at, updated_at, now());
 
 create or replace function set_database_updated_at()
 returns trigger
 language plpgsql
 as $$
 begin
+  if TG_OP = 'UPDATE'
+     and TG_TABLE_NAME = 'odds'
+     and (to_jsonb(new) - 'updated_at' - 'last_seen_at') = (to_jsonb(old) - 'updated_at' - 'last_seen_at') then
+    new.updated_at = old.updated_at;
+    return new;
+  end if;
+
   new.updated_at = now();
   return new;
 end;
@@ -294,7 +306,7 @@ with upcoming_fixtures as (
 upcoming_odds as (
   select
     o.fixture_id,
-    o.updated_at as odds_version
+    greatest(o.updated_at, o.last_seen_at) as odds_version
   from odds o
   join upcoming_fixtures uf on uf.id = o.fixture_id
 )
@@ -302,6 +314,7 @@ select
   (select max(fixture_version) from upcoming_fixtures) as fixtures_version,
   (select max(odds_version) from upcoming_odds) as odds_version,
   (select max(odds_version) from upcoming_odds) as latest_odd_updated_at,
+  (select max(odds_version) from upcoming_odds) as latest_odd_seen_at,
   (select count(*) from upcoming_fixtures) as upcoming_fixture_count,
   (select count(*) from upcoming_odds) as odd_count
 ;
@@ -336,6 +349,7 @@ as
 select
   f.id as fixture_id,
   max(o.updated_at) as latest_odd_updated_at,
+  max(o.last_seen_at) as latest_odd_seen_at,
   jsonb_agg(
     jsonb_build_object(
       'bookmaker_slug', o.bookmaker_slug,
@@ -344,7 +358,6 @@ select
         bel.source_url,
         case o.bookmaker_slug
           when 'apostabet' then 'https://aposta.bet.br/'
-          when 'bet365' then 'https://www.bet365.bet.br/'
           when 'bet7k' then 'https://7k.bet.br/'
           when 'betano' then 'https://www.betano.bet.br/'
           when 'betboom' then 'https://betboom.bet.br/'
@@ -362,7 +375,6 @@ select
           when 'jogodeouro' then 'https://jogodeouro.bet.br/'
           when 'kto' then 'https://www.kto.bet.br/'
           when 'lotogreen' then 'https://lotogreen.bet.br/'
-          when 'meridianbet' then 'https://meridianbet.bet.br/'
           when 'novibet' then 'https://www.novibet.bet.br/'
           when 'segurobet' then 'https://www.seguro.bet.br/'
           when 'sportingbet' then 'https://www.sportingbet.bet.br/'
@@ -381,7 +393,8 @@ select
       'price', o.price,
       'pa_category', o.pa_category,
       'confidence_score', o.confidence_score,
-      'odd_updated_at', o.updated_at
+      'odd_updated_at', o.updated_at,
+      'odd_last_seen_at', o.last_seen_at
     )
     order by o.bookmaker_slug, o.market_code, o.pa_category, o.selection
   ) as odds
@@ -396,7 +409,6 @@ left join lateral (
       when source_url ~* '/api/' then null
       when bookmaker_slug in ('bet7k', 'betvip') and source_url ~* '/esportes/evento/' then null
       when bookmaker_slug = 'sportybet' and source_url ~* '/br/sport/football/?$' then null
-      when bookmaker_slug = 'meridianbet' and source_url !~ '/[0-9]+/?$' then null
       else source_url
     end as source_url
   from bookmaker_event_links
@@ -555,7 +567,8 @@ grant select (
   price,
   pa_category,
   confidence_score,
-  updated_at
+  updated_at,
+  last_seen_at
 ) on odds to anon, authenticated;
 grant select (date_key, source, status, fixtures_seen, synced_at) on fixture_sync_runs to anon, authenticated;
 grant select on public.public_odds_fixtures to anon, authenticated;

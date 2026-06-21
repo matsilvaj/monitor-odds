@@ -1,6 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, Menu } from "electron";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,18 +15,11 @@ const launcherRoot = path.resolve(currentDir, "..");
 const projectRoot = path.resolve(launcherRoot, "..");
 const userDataDir = app.getPath("userData");
 const configPath = path.join(userDataDir, "config.json");
-const bookmakerNames = {
-  bet365: "Bet365",
-  meridianbet: "MeridianBet"
-};
-const browserCollectorSlugs = ["bet365", "meridianbet"];
+const bookmakerNames = {};
+const browserCollectorSlugs = [];
 const pendingRequestPollIntervalMs = 30_000;
 const updateCheckIntervalMs = 30 * 60 * 1000;
 const monitorShutdownTimeoutMs = 12_000;
-const browserProfileDefaults = {
-  bet365: ".browser/bet365-cdp-profile",
-  meridianbet: ".browser/meridianbet-cdp-profile"
-};
 
 let mainWindow = null;
 let monitorProcess = null;
@@ -104,7 +96,6 @@ async function sendState() {
   const state = {
     status,
     appVersion: app.getVersion(),
-    chromeExecutablePath: config.chromeExecutablePath ?? null,
     pendingRequests,
     bookmakerIssues,
     updateState
@@ -283,28 +274,6 @@ function appendLog(message) {
   send("log", text);
 }
 
-async function selectChromeExecutable() {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Selecionar arquivo chrome.exe",
-    properties: ["openFile"],
-    filters: [{ name: "Chrome", extensions: ["exe"] }]
-  });
-
-  if (result.canceled || !result.filePaths[0]) return null;
-
-  const selectedPath = result.filePaths[0];
-  const config = await loadConfig();
-  await saveConfig({ ...config, chromeExecutablePath: selectedPath });
-  await sendState();
-  return selectedPath;
-}
-
-async function ensureChromeExecutable() {
-  const config = await loadConfig();
-  if (config.chromeExecutablePath && existsSync(config.chromeExecutablePath)) return config.chromeExecutablePath;
-  return selectChromeExecutable();
-}
-
 function monitorRunConfig() {
   if (app.isPackaged) {
     const monitorDir = path.join(process.resourcesPath, "monitor");
@@ -327,7 +296,7 @@ function monitorRunConfig() {
 }
 
 async function resetBrowserCollectionState() {
-  if (!supabase) return;
+  if (!supabase || browserCollectorSlugs.length === 0) return;
 
   const now = new Date().toISOString();
   const { error } = await supabase.from("bookmaker_collection_state").upsert(
@@ -343,60 +312,16 @@ async function resetBrowserCollectionState() {
   if (error) appendLog(`Não consegui limpar o estado das coletas de navegador: ${error.message}`);
 }
 
-function resolveMonitorPath(value, fallbackValue) {
-  const run = monitorRunConfig();
-  const rawPath = String(value ?? fallbackValue);
-  return path.resolve(run.cwd, rawPath);
-}
-
-function browserProfileMarkers() {
-  return [
-    resolveMonitorPath(monitorEnv.BET365_CHROME_PROFILE_DIR, browserProfileDefaults.bet365),
-    `${resolveMonitorPath(monitorEnv.BET365_CHROME_PROFILE_DIR, browserProfileDefaults.bet365)}-run-`,
-    resolveMonitorPath(monitorEnv.MERIDIANBET_CHROME_PROFILE_DIR, browserProfileDefaults.meridianbet),
-    `${resolveMonitorPath(monitorEnv.MERIDIANBET_CHROME_PROFILE_DIR, browserProfileDefaults.meridianbet)}-run-`
-  ];
-}
-
-async function closeBrowserCollectorProcesses() {
-  if (process.platform !== "win32") return;
-
-  const markers = browserProfileMarkers();
-  const markerList = markers.map((marker) => `'${marker.replace(/'/g, "''")}'`).join(",");
-  const command =
-    `$markers = @(${markerList}); ` +
-    "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" | " +
-    "Where-Object { " +
-    "$cmd = $_.CommandLine; " +
-    "$matched = $false; " +
-    "foreach ($marker in $markers) { if ($cmd -and $cmd.IndexOf($marker, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $matched = $true; break } } " +
-    "$matched " +
-    "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
-
-  await new Promise((resolve) => {
-    const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
-      windowsHide: true,
-      stdio: "ignore"
-    });
-    child.on("error", resolve);
-    child.on("exit", resolve);
-  });
-}
-
 async function startMonitor() {
   if (monitorProcess) return { ok: true };
 
-  const chromeExecutablePath = await ensureChromeExecutable();
-  if (!chromeExecutablePath) return { ok: false, error: "Selecione o arquivo chrome.exe para iniciar." };
   await resetBrowserCollectionState();
 
   const run = monitorRunConfig();
   const env = {
     ...process.env,
     ...monitorEnv,
-    ...run.extraEnv,
-    BET365_CHROME_EXECUTABLE: chromeExecutablePath,
-    MERIDIANBET_CHROME_EXECUTABLE: chromeExecutablePath
+    ...run.extraEnv
   };
 
   status = "iniciando";
@@ -428,7 +353,6 @@ async function startMonitor() {
     appendLog(`Monitor encerrado${code === null ? "." : ` com código ${code}.`}`);
     monitorProcess = null;
     await resetBrowserCollectionState();
-    await closeBrowserCollectorProcesses();
     await sendState();
   });
 
@@ -509,7 +433,6 @@ function waitForProcessExit(processToStop, timeoutMs) {
 async function stopMonitorProcess({ updateStateAfterStop = true } = {}) {
   if (!monitorProcess) {
     status = "parado";
-    await closeBrowserCollectorProcesses();
     await resetBrowserCollectionState();
     if (updateStateAfterStop) await sendState();
     return;
@@ -527,7 +450,6 @@ async function stopMonitorProcess({ updateStateAfterStop = true } = {}) {
   const exited = gracefulRequested ? await waitForProcessExit(processToStop, monitorShutdownTimeoutMs) : false;
   if (!exited) await killProcessTree(processToStop);
 
-  await closeBrowserCollectorProcesses();
   await resetBrowserCollectionState();
   status = "parado";
   if (updateStateAfterStop) await sendState();
@@ -777,10 +699,8 @@ app.on("before-quit", () => {
   if (pollTimer) clearInterval(pollTimer);
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (monitorProcess) void killProcessTree(monitorProcess);
-  void closeBrowserCollectorProcesses();
 });
 
-ipcMain.handle("select-chrome", selectChromeExecutable);
 ipcMain.handle("start-monitor", startMonitor);
 ipcMain.handle("stop-monitor", stopMonitor);
 ipcMain.handle("get-state", sendState);

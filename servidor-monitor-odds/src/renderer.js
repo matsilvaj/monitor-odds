@@ -1,9 +1,7 @@
 const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
-const chromeButton = document.querySelector("#chrome-button");
 const updateButton = document.querySelector("#update-button");
 const appVersion = document.querySelector("#app-version");
-const chromePath = document.querySelector("#chrome-path");
 const statusPill = document.querySelector("#status-pill");
 const updateStatus = document.querySelector("#update-status");
 const pendingList = document.querySelector("#pending-list");
@@ -33,7 +31,6 @@ function applyState(state) {
   if (!state) return;
   setStatus(state.status);
   appVersion.textContent = state.appVersion ? `Versão atual: ${state.appVersion}` : "Versão atual: --";
-  chromePath.textContent = state.chromeExecutablePath ? `Chrome: ${state.chromeExecutablePath}` : "Chrome: não configurado";
   if (Array.isArray(state.pendingRequests)) pendingRequests = state.pendingRequests;
   if (Array.isArray(state.bookmakerIssues)) bookmakerIssues = state.bookmakerIssues;
   applyUpdateState(state.updateState);
@@ -162,10 +159,6 @@ startButton.addEventListener("click", async () => {
 
 stopButton.addEventListener("click", () => {
   window.monitorOdds.stopMonitor();
-});
-
-chromeButton.addEventListener("click", () => {
-  window.monitorOdds.selectChrome();
 });
 
 updateButton.addEventListener("click", async () => {
