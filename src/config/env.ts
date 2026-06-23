@@ -26,6 +26,17 @@ const envSchema = z.object({
   MERIDIANBET_CHROME_EXECUTABLE: optionalNonEmptyString(),
   MERIDIANBET_NAVIGATION_TIMEOUT_MS: z.coerce.number().int().min(5000).default(45_000),
   MERIDIANBET_MONITOR_TABS: z.coerce.number().int().min(1).max(8).default(5),
+  BET365_BASE_URL: z.string().url().default("https://www.bet365.bet.br/"),
+  BET365_CHROME_PROFILE_DIR: z.string().default(".browser/bet365-profile"),
+  BET365_CHROME_EXECUTABLE: optionalNonEmptyString(),
+  BET365_NAVIGATION_WAIT_MS: z.coerce.number().int().min(5000).default(12_000),
+  BET365_EVENT_WAIT_MS: z.coerce.number().int().min(1000).default(6_000),
+  BET365_DEBUG_PORT: z.coerce.number().int().min(1024).max(65535).default(9223),
+  BET365_ENABLED: z.coerce.boolean().default(false),
+  BET365_COMPETITION_URL: optionalNonEmptyString(),
+  BET365_TARGET_LEAGUE_SLUG: z.string().default("world-cup"),
+  BET365_FIXTURE_LIMIT: z.coerce.number().int().min(1).max(25).default(25),
+  BET365_EVENT_TEXT_FILE: optionalNonEmptyString(),
 });
 
 export const env = envSchema.parse({

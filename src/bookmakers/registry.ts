@@ -3,6 +3,7 @@ import { BOOKMAKERS } from "../config/bookmakers.js";
 import { createAltenarCollector } from "../services/altenar-collector.js";
 import { createApostabetCollector } from "../services/apostabet-collector.js";
 import { createBet7kCollector } from "../services/bet7k-collector.js";
+import { createBet365Collector } from "../services/bet365-collector.js";
 import { createBetanoCollector } from "../services/betano-collector.js";
 import { createBetboomCollector } from "../services/betboom-collector.js";
 import { createBetesporteCollector } from "../services/betesporte-collector.js";
@@ -31,8 +32,9 @@ import {
 } from "../services/sync-report.js";
 import { errorMessage } from "../utils/errors.js";
 import type { BookmakerCollector, BookmakerCollectorResult } from "./types.js";
+import type { BookmakerConfig } from "../config/bookmakers.js";
 
-export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((bookmaker) => bookmaker.enabled).map((bookmaker) => {
+function createBookmakerCollector(bookmaker: BookmakerConfig): BookmakerCollector {
   if (bookmaker.provider === "altenar") {
     return {
       slug: bookmaker.slug,
@@ -145,6 +147,14 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
     };
   }
 
+  if (bookmaker.provider === "bet365") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createBet365Collector(bookmaker)
+    };
+  }
+
   if (bookmaker.provider === "betfair") {
     return {
       slug: bookmaker.slug,
@@ -198,7 +208,16 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
     name: bookmaker.name,
     collect: createVaidebetCollector(bookmaker)
   };
-});
+}
+
+export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((bookmaker) => bookmaker.enabled).map(createBookmakerCollector);
+
+export function findBookmakerCollectorForManualRun(slug: string) {
+  const bookmaker = BOOKMAKERS.find((item) => item.slug === slug);
+  if (!bookmaker) return null;
+  if (!bookmaker.enabled && bookmaker.provider !== "bet365") return null;
+  return createBookmakerCollector(bookmaker);
+}
 
 export type CollectAllBookmakersOptions = {
   concurrency?: number;
@@ -207,7 +226,7 @@ export type CollectAllBookmakersOptions = {
   cleanupStarted?: boolean;
 };
 
-const BROWSER_COLLECTOR_SLUGS = new Set<string>(["meridianbet"]);
+const BROWSER_COLLECTOR_SLUGS = new Set<string>(["meridianbet", "bet365"]);
 
 async function collectBookmakers(bookmakers: BookmakerCollector[], options: CollectAllBookmakersOptions = {}) {
   const concurrency = options.concurrency ?? 3;

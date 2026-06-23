@@ -145,6 +145,23 @@ export type MeridianbetBookmakerConfig = {
   monitorTabs: number;
 };
 
+export type Bet365BookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "bet365";
+  baseUrl: string;
+  chromeProfileDir: string;
+  chromeExecutablePath?: string;
+  navigationWaitMs: number;
+  eventWaitMs: number;
+  debugPort: number;
+  competitionUrl?: string;
+  targetLeagueSlug: string;
+  fixtureLimit: number;
+  eventTextFile?: string;
+};
+
 export type BetfairBookmakerConfig = {
   slug: string;
   name: string;
@@ -265,6 +282,7 @@ export type BookmakerConfig =
   | BetfastBookmakerConfig
   | KtoBookmakerConfig
   | MeridianbetBookmakerConfig
+  | Bet365BookmakerConfig
   | BetfairBookmakerConfig
   | BetesporteBookmakerConfig
   | BetnacionalBookmakerConfig
@@ -483,6 +501,22 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     chromeExecutablePath: env.MERIDIANBET_CHROME_EXECUTABLE,
     navigationTimeoutMs: env.MERIDIANBET_NAVIGATION_TIMEOUT_MS,
     monitorTabs: env.MERIDIANBET_MONITOR_TABS
+  },
+  {
+    slug: "bet365",
+    name: "Bet365",
+    enabled: env.BET365_ENABLED,
+    provider: "bet365",
+    baseUrl: env.BET365_BASE_URL,
+    chromeProfileDir: env.BET365_CHROME_PROFILE_DIR,
+    chromeExecutablePath: env.BET365_CHROME_EXECUTABLE,
+    navigationWaitMs: env.BET365_NAVIGATION_WAIT_MS,
+    eventWaitMs: env.BET365_EVENT_WAIT_MS,
+    debugPort: env.BET365_DEBUG_PORT,
+    competitionUrl: env.BET365_COMPETITION_URL,
+    targetLeagueSlug: env.BET365_TARGET_LEAGUE_SLUG,
+    fixtureLimit: env.BET365_FIXTURE_LIMIT,
+    eventTextFile: env.BET365_EVENT_TEXT_FILE
   },
   {
     slug: "betfair",

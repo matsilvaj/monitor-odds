@@ -1,4 +1,4 @@
-import { BOOKMAKER_COLLECTORS } from "../bookmakers/registry.js";
+import { BOOKMAKER_COLLECTORS, findBookmakerCollectorForManualRun } from "../bookmakers/registry.js";
 import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import { cleanupStartedFixtures, formatStartedFixtureCleanupSummary } from "../services/fixture-cleanup.js";
 import { formatBookmakerResultLines, formatBookmakerStartLine, getBookmakerOddsReport, getFixtureReport } from "../services/sync-report.js";
@@ -48,10 +48,10 @@ if (!slug) {
   console.error("Informe a casa: npm run collect:bookmaker esportiva");
   process.exitCode = 1;
 } else {
-  const bookmaker = BOOKMAKER_COLLECTORS.find((item) => item.slug === slug);
+  const bookmaker = BOOKMAKER_COLLECTORS.find((item) => item.slug === slug) ?? findBookmakerCollectorForManualRun(slug);
 
   if (!bookmaker) {
-    console.error(`Casa nao configurada ou desativada: ${slug}`);
+    console.error(`Casa nao configurada ou desativada para coleta manual: ${slug}`);
     process.exitCode = 1;
   } else {
     try {
