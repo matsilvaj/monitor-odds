@@ -12,6 +12,7 @@ import { createBetmgmCollector } from "../services/betmgm-collector.js";
 import { createBetnacionalCollector } from "../services/betnacional-collector.js";
 import { createCasaDeApostasCollector } from "../services/casadeapostas-collector.js";
 import { createKtoCollector } from "../services/kto-collector.js";
+import { createMeridianbetCollector } from "../services/meridianbet-collector.js";
 import { createNovibetCollector } from "../services/novibet-collector.js";
 import { createSegurobetCollector } from "../services/segurobet-collector.js";
 import { createSportingbetCollector } from "../services/sportingbet-collector.js";
@@ -136,6 +137,14 @@ export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((boo
     };
   }
 
+  if (bookmaker.provider === "meridianbet") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createMeridianbetCollector(bookmaker)
+    };
+  }
+
   if (bookmaker.provider === "betfair") {
     return {
       slug: bookmaker.slug,
@@ -198,7 +207,7 @@ export type CollectAllBookmakersOptions = {
   cleanupStarted?: boolean;
 };
 
-const BROWSER_COLLECTOR_SLUGS = new Set<string>();
+const BROWSER_COLLECTOR_SLUGS = new Set<string>(["meridianbet"]);
 
 async function collectBookmakers(bookmakers: BookmakerCollector[], options: CollectAllBookmakersOptions = {}) {
   const concurrency = options.concurrency ?? 3;

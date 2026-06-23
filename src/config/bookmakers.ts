@@ -133,6 +133,18 @@ export type KtoBookmakerConfig = {
   engine: BookmakerHttpEngine;
 };
 
+export type MeridianbetBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "meridianbet";
+  baseUrl: string;
+  chromeProfileDir: string;
+  chromeExecutablePath?: string;
+  navigationTimeoutMs: number;
+  monitorTabs: number;
+};
+
 export type BetfairBookmakerConfig = {
   slug: string;
   name: string;
@@ -252,6 +264,7 @@ export type BookmakerConfig =
   | Bet7kBookmakerConfig
   | BetfastBookmakerConfig
   | KtoBookmakerConfig
+  | MeridianbetBookmakerConfig
   | BetfairBookmakerConfig
   | BetesporteBookmakerConfig
   | BetnacionalBookmakerConfig
@@ -459,6 +472,17 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     apiBaseUrl: "https://us.offering-api.kambicdn.com/offering/v2018/ktobr/",
     referer: "https://www.kto.bet.br/esportes/",
     engine: "fetch"
+  },
+  {
+    slug: "meridianbet",
+    name: "MeridianBet",
+    enabled: true,
+    provider: "meridianbet",
+    baseUrl: env.MERIDIANBET_BASE_URL,
+    chromeProfileDir: env.MERIDIANBET_CHROME_PROFILE_DIR,
+    chromeExecutablePath: env.MERIDIANBET_CHROME_EXECUTABLE,
+    navigationTimeoutMs: env.MERIDIANBET_NAVIGATION_TIMEOUT_MS,
+    monitorTabs: env.MERIDIANBET_MONITOR_TABS
   },
   {
     slug: "betfair",
