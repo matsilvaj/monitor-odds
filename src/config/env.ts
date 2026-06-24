@@ -34,8 +34,10 @@ const envSchema = z.object({
   BET365_DEBUG_PORT: z.coerce.number().int().min(1024).max(65535).default(9223),
   BET365_ENABLED: z.coerce.boolean().default(false),
   BET365_COMPETITION_URL: optionalNonEmptyString(),
-  BET365_TARGET_LEAGUE_SLUG: z.string().default("world-cup"),
-  BET365_FIXTURE_LIMIT: z.coerce.number().int().min(1).max(25).default(25),
+  BET365_TARGET_LEAGUE_SLUG: optionalNonEmptyString(),
+  BET365_TARGET_LEAGUE_SLUGS: z.string().default("world-cup"),
+  BET365_FIXTURE_LIMIT: z.coerce.number().int().min(1).max(25).optional(),
+  BET365_FIXTURE_LIMIT_PER_LEAGUE: z.coerce.number().int().min(1).max(25).default(25),
   BET365_EVENT_TEXT_FILE: optionalNonEmptyString(),
 });
 
