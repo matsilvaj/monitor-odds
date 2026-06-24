@@ -23,6 +23,16 @@ export type Bet365Market = {
   selections: Bet365Selection[];
 };
 
+export type Bet365DomMarket = {
+  marketName: string;
+  paCategory: PaCategory;
+  rawText: string;
+  selections: Array<{
+    label: string;
+    price: number;
+  }>;
+};
+
 export type Bet365Event = {
   externalEventId: number;
   sourceUrl: string;
@@ -47,4 +57,3 @@ export type CollectResult =
   | { ok: false; reason: "nav-error" | "parse-error" | "timeout" };
 
 export type Logger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
-
