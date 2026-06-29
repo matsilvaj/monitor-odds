@@ -1,0 +1,31 @@
+2026-06-24 18:51:39.281: [INFO] OnDoneLoading sync enabled: 0
+2026-06-24 18:51:39.322: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 0
+2026-06-24 18:51:41.870: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 0
+2026-06-24 18:51:41.872: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3
+2026-06-24 18:51:41.875: [INFO] Primary account changed.
+2026-06-24 18:51:41.875: [INFO] OnPrimaryAccountChanged PrimaryAccountChangeEvent::Type::kSet
+2026-06-24 18:51:41.894: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3
+2026-06-24 18:51:43.867: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3
+2026-06-24 18:51:43.868: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3
+2026-06-24 18:51:43.868: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3
+2026-06-24 18:51:43.875: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3
+2026-06-24 18:51:43.875: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3
+2026-06-24 18:51:43.876: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3
+2026-06-24 18:51:43.877: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 5
+2026-06-24 18:51:43.877: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 5
+2026-06-24 18:51:44.348: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 5
+2026-06-24 18:51:44.354: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 5
+2026-06-24 18:51:44.879: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 5
+2026-06-24 18:51:44.880: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 6
+2026-06-24 18:51:45.173: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 6
+2026-06-24 18:51:45.173: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 6
+2026-06-24 18:51:45.174: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 6
+2026-06-24 18:51:45.175: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 6
+2026-06-24 18:51:45.967: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 6
+2026-06-24 18:51:45.968: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 6
+2026-06-24 18:51:46.179: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 6
+2026-06-24 18:51:50.153: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 5
+2026-06-24 18:51:50.154: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 5
+2026-06-24 18:51:50.156: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 5
+2026-06-24 18:51:50.157: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 5
+2026-06-24 18:51:50.203: [INFO] VisibilityChanged: 0

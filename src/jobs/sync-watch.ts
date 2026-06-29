@@ -1,4 +1,4 @@
-import { collectFastBookmakers } from "../bookmakers/registry.js";
+import { collectAllBookmakers } from "../bookmakers/registry.js";
 import { syncApiFootballFixtures, type SyncApiFootballFixturesOptions } from "../services/api-football-sync.js";
 import { formatFixtureSyncSummary } from "../services/sync-report.js";
 import { installProcessErrorHandlers } from "../utils/process-errors.js";
@@ -103,7 +103,7 @@ async function runBookmakerLoop() {
     console.log(`[sync] Ciclo das casas iniciado às ${startedAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`);
 
     try {
-      await collectFastBookmakers({ concurrency: 3, logProgress: true, trigger: "watch" });
+      await collectAllBookmakers({ concurrency: 3, logProgress: true, trigger: "watch" });
     } catch (error) {
       console.error("[sync] Falha no ciclo das casas.", error);
     }

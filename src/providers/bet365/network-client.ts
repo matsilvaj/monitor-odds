@@ -7,6 +7,7 @@ export type Bet365NetworkCapture = {
   payloads: string[];
   domMarkets: Bet365DomMarket[];
   clickedTeam: string | null;
+  pageText: string;
 };
 
 export type Bet365ClickTarget = {
@@ -181,7 +182,7 @@ export class Bet365NetworkClient {
           markets: markets.length,
           categories: markets.map((market) => market.paCategory)
         });
-        return markets;
+        return { markets, rawText };
       }
       await this.page.waitForTimeout(500);
     }
@@ -190,7 +191,7 @@ export class Bet365NetworkClient {
       textChars: rawText.length,
       preview: rawText.slice(0, 600)
     });
-    return [];
+    return { markets: [], rawText };
   }
 
   async collectEventOdds(url: string, waitMs: number, target?: Bet365ClickTarget | null): Promise<Bet365NetworkCapture> {
@@ -198,6 +199,7 @@ export class Bet365NetworkClient {
 
     const payloads: string[] = [];
     let domMarkets: Bet365DomMarket[] = [];
+    let pageText = "";
     let clickedTeam: string | null = null;
     const onWebSocket = (ws: WebSocket) => {
       ws.on("framereceived", (frame) => {
@@ -212,17 +214,21 @@ export class Bet365NetworkClient {
       if (target) clickedTeam = await this.clickEventByTeam(target);
       await this.page.waitForTimeout(waitMs);
       try {
-        domMarkets = await this.readVisibleMoneylineMarkets(target);
+        const domRead = await this.readVisibleMoneylineMarkets(target);
+        domMarkets = domRead.markets;
+        pageText = domRead.rawText;
       } catch (error) {
         await this.logger?.("warn", "leitura DOM da bet365 falhou", {
           error: error instanceof Error ? error.message : String(error)
         });
+        pageText = await this.page.locator("body").innerText({ timeout: 2_000 }).catch(() => "");
       }
       return {
         sourceUrl: this.page.url(),
         payloads,
         domMarkets,
-        clickedTeam
+        clickedTeam,
+        pageText
       };
     } finally {
       this.page.off("websocket", onWebSocket);

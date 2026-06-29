@@ -3,7 +3,7 @@ import { env } from "./env.js";
 export type BookmakerHttpEngine = "fetch" | "got-scraping";
 
 function bet365TargetLeagueSlugs() {
-  return (process.env.BET365_TARGET_LEAGUE_SLUGS || process.env.BET365_TARGET_LEAGUE_SLUG || "world-cup")
+  return (process.env.BET365_TARGET_LEAGUE_SLUGS || process.env.BET365_TARGET_LEAGUE_SLUG || "")
     .split(",")
     .map((slug) => slug.trim())
     .filter(Boolean);
@@ -167,6 +167,7 @@ export type Bet365BookmakerConfig = {
   navigationWaitMs: number;
   eventWaitMs: number;
   debugPort: number;
+  monitorTabs: number;
   competitionUrl?: string;
   targetLeagueSlugs: string[];
   fixtureLimitPerLeague: number;
@@ -524,6 +525,7 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     navigationWaitMs: env.BET365_NAVIGATION_WAIT_MS,
     eventWaitMs: env.BET365_EVENT_WAIT_MS,
     debugPort: env.BET365_DEBUG_PORT,
+    monitorTabs: env.BET365_MONITOR_TABS,
     competitionUrl: env.BET365_COMPETITION_URL,
     targetLeagueSlugs: bet365TargetLeagueSlugs(),
     fixtureLimitPerLeague: bet365FixtureLimitPerLeague(),

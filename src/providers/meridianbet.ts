@@ -416,7 +416,7 @@ export class MeridianbetBrowserClient {
 
     await page.getByText("PRINCIPAL", { exact: true }).first().click({ timeout: 1500 }).catch(() => undefined);
     await page.waitForTimeout(500);
-    const sourceUrl = page.url();
+    const sourceUrl = (await this.eventSourceUrlFromPage(page, fixture)) ?? page.url();
     const rawText = await this.visibleText(page);
     const displayOrder = eventDisplayOrder(sourceUrl, fixture);
     const rawMarkets = [
@@ -451,6 +451,60 @@ export class MeridianbetBrowserClient {
     await page.waitForLoadState("domcontentloaded", { timeout: this.config.navigationTimeoutMs }).catch(() => undefined);
     await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => undefined);
     await page.waitForTimeout(900);
+  }
+
+  private async eventSourceUrlFromPage(page: Page, fixture: MeridianFixtureTarget) {
+    if (isMeridianEventPageUrl(page.url())) return page.url();
+
+    const homeTokenGroups = nationalTeamTokenGroups(fixture.homeTeam);
+    const awayTokenGroups = nationalTeamTokenGroups(fixture.awayTeam);
+    const payload = JSON.stringify({ homeTokenGroups, awayTokenGroups });
+    const script = String.raw`
+(() => {
+  const { homeTokenGroups: pageHomeTokenGroups, awayTokenGroups: pageAwayTokenGroups } = ${payload};
+  const norm = (value) => String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const hasToken = (text, tokens) => tokens.slice(0, 4).some((token) => text.includes(token));
+  const hasTokenGroup = (text, tokenGroups) => tokenGroups.some((tokens) => hasToken(text, tokens));
+  const toEventUrl = (href) => {
+    if (!href) return null;
+    try {
+      const url = new URL(href, window.location.href);
+      return /\/\d+\/?$/.test(url.pathname) ? url.href : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const candidates = [];
+  for (const anchor of [...document.querySelectorAll("a[href]")]) {
+    const href = toEventUrl(anchor.getAttribute("href"));
+    if (!href) continue;
+
+    const rect = anchor.getBoundingClientRect();
+    const hrefText = norm(decodeURIComponent(href));
+    const container = anchor.closest("section,article,dialog,[role='dialog'],.modal,.c-modal,.event-details,.c-event-details,div");
+    const containerText = norm(container?.innerText || container?.textContent || "");
+    const hrefMatchesTeams = hasTokenGroup(hrefText, pageHomeTokenGroups) && hasTokenGroup(hrefText, pageAwayTokenGroups);
+    const containerMatchesTeams = hasTokenGroup(containerText, pageHomeTokenGroups) && hasTokenGroup(containerText, pageAwayTokenGroups);
+    if (!hrefMatchesTeams && !containerMatchesTeams) continue;
+
+    candidates.push({
+      href,
+      score: (hrefMatchesTeams ? 0 : 50) + (containerMatchesTeams ? 0 : 10) + Math.max(0, Math.round(rect.top))
+    });
+  }
+
+  candidates.sort((left, right) => left.score - right.score);
+  return candidates[0]?.href ?? null;
+})()
+`;
+
+    return (await page.evaluate(script).catch(() => null)) as string | null;
   }
 
   private async waitForEventPage(page: Page, fixture: MeridianFixtureTarget) {

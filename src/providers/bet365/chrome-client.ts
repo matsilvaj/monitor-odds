@@ -59,9 +59,16 @@ export class ChromeClient {
     await mkdir(profileDir, { recursive: true });
     const chromePath = findChromeExecutable(this.config.chromeExecutablePath);
     if (!chromePath) throw new Error("chrome.exe nao encontrado. Configure BET365_CHROME_EXECUTABLE no .env.");
+    const initialUrl = this.config.baseUrl || competitionUrl;
 
     if (!(await waitForDevtools(this.config.debugPort, 1_000))) {
-      await this.logger?.("info", "abrindo Chrome normal para bet365", { profileDir, chromePath, url: competitionUrl, debugPort: this.config.debugPort });
+      await this.logger?.("info", "abrindo Chrome normal para bet365", {
+        profileDir,
+        chromePath,
+        url: initialUrl,
+        requestedUrl: competitionUrl,
+        debugPort: this.config.debugPort
+      });
       this.chromeProcess = spawn(
         chromePath,
         [
@@ -72,7 +79,7 @@ export class ChromeClient {
           "--no-default-browser-check",
           "--start-maximized",
           "--new-window",
-          competitionUrl
+          initialUrl
         ],
         {
           detached: true,
