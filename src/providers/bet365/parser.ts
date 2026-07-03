@@ -1,4 +1,5 @@
 import type { PaCategory, Selection } from "../../domain/normalize.js";
+import { teamNameSearchPatterns } from "../../domain/matching/text-similarity.js";
 import type { Bet365DomMarket, Bet365Event, Bet365FixtureTarget, Bet365Market } from "./types.js";
 
 export type Bet365Node = {
@@ -24,10 +25,6 @@ function normalizeText(value: unknown) {
     .trim();
 }
 
-function compactSpaces(value: string) {
-  return value.replace(/\s+/g, " ").trim();
-}
-
 function hashToPositiveInt(value: string) {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -35,6 +32,10 @@ function hashToPositiveInt(value: string) {
     hash = Math.imul(hash, 16777619);
   }
   return Math.abs(hash >>> 0);
+}
+
+function stableEventId(_sourceUrl: string, fixture: Bet365FixtureTarget): number {
+  return hashToPositiveInt(`bet365:${fixture.id}`);
 }
 
 function cleanNodeType(value: string) {
@@ -83,12 +84,11 @@ export function fractionalToDecimal(value: string): number {
 }
 
 function isTargetEventName(eventName: string, fixture: Bet365FixtureTarget) {
-  const event = normalizeText(eventName);
-  const home = normalizeText(fixture.homeTeam);
-  const away = normalizeText(fixture.awayTeam);
-  if (home && away) return event.includes(home) && event.includes(away);
-  if (home) return event.includes(home);
-  if (away) return event.includes(away);
+  if (fixture.homeTeam && fixture.awayTeam) {
+    return teamNameSearchPatterns(fixture.homeTeam).some((pattern) => pattern.test(eventName)) && teamNameSearchPatterns(fixture.awayTeam).some((pattern) => pattern.test(eventName));
+  }
+  if (fixture.homeTeam) return teamNameSearchPatterns(fixture.homeTeam).some((pattern) => pattern.test(eventName));
+  if (fixture.awayTeam) return teamNameSearchPatterns(fixture.awayTeam).some((pattern) => pattern.test(eventName));
   return true;
 }
 
@@ -120,10 +120,9 @@ function isDrawLabel(label: string) {
 }
 
 function selectionForLabel(label: string, fixture: Bet365FixtureTarget, fallbackIndex: number): Selection {
-  const normalized = normalizeText(label);
   if (isDrawLabel(label)) return "DRAW";
-  if (fixture.homeTeam && normalized.includes(normalizeText(fixture.homeTeam))) return "HOME";
-  if (fixture.awayTeam && normalized.includes(normalizeText(fixture.awayTeam))) return "AWAY";
+  if (fixture.homeTeam && teamNameSearchPatterns(fixture.homeTeam).some((pattern) => pattern.test(label))) return "HOME";
+  if (fixture.awayTeam && teamNameSearchPatterns(fixture.awayTeam).some((pattern) => pattern.test(label))) return "AWAY";
   return fallbackIndex === 0 ? "HOME" : fallbackIndex === 1 ? "DRAW" : "AWAY";
 }
 
@@ -250,10 +249,9 @@ export function buildBet365Event(fixture: Bet365FixtureTarget, sourceUrl: string
   const normalizedPayloads = Array.isArray(payloads) ? payloads : [payloads];
   const markets = parseBet365MoneylinePayloads(normalizedPayloads, fixture);
   const rawText = normalizedPayloads.join("\n");
-  const sourceKey = `${fixture.id}:${sourceUrl}:${compactSpaces(rawText).slice(0, 250)}`;
 
   return {
-    externalEventId: hashToPositiveInt(sourceKey),
+    externalEventId: stableEventId(sourceUrl, fixture),
     sourceUrl,
     eventName: [fixture.homeTeam, fixture.awayTeam].filter(Boolean).join(" x "),
     bookmakerHomeTeam: fixture.homeTeam,
@@ -284,10 +282,9 @@ export function buildBet365EventFromDomMarkets(fixture: Bet365FixtureTarget, sou
     .filter((market): market is Bet365Market => Boolean(market));
 
   const rawText = domMarkets.map((market) => market.rawText).join("\n");
-  const sourceKey = `${fixture.id}:${sourceUrl}:${compactSpaces(rawText).slice(0, 250)}`;
 
   return {
-    externalEventId: hashToPositiveInt(sourceKey),
+    externalEventId: stableEventId(sourceUrl, fixture),
     sourceUrl,
     eventName: [fixture.homeTeam, fixture.awayTeam].filter(Boolean).join(" x "),
     bookmakerHomeTeam: fixture.homeTeam,
