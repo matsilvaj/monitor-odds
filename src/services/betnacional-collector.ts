@@ -339,7 +339,7 @@ function buildBookmakerLink(bookmaker: BetnacionalBookmakerConfig, fixtureId: st
     normalized_bookmaker_away_team: normalizeName(event.away),
     starts_at: event.startsAt,
     match_confidence_score: confidenceScore,
-    source_url: new URL(`event/1/0/${event.eventId}`, bookmaker.baseUrl).href,
+    source_url: new URL(`event/1/1/${event.eventId}`, bookmaker.baseUrl).href,
     raw: compactEventRaw(event),
     updated_at: new Date().toISOString()
   };

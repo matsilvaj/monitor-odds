@@ -147,13 +147,13 @@ export class BetnacionalClient {
     url.searchParams.set("languageId", "1");
     url.searchParams.set("marketIds", "");
     url.searchParams.set("outcomeIds", "");
-    url.searchParams.set("statusId", "0");
+    url.searchParams.set("statusId", "1");
     url.searchParams.set("provider", "ramp");
 
     return httpClient<EventOddsResponse>({
       url,
       headers: this.headers,
-      referer: new URL(`event/1/0/${eventId}`, this.config.baseUrl).href,
+      referer: new URL(`event/1/1/${eventId}`, this.config.baseUrl).href,
       engine: this.config.engine,
       timeoutMs: 15_000,
       maxRetries: 1

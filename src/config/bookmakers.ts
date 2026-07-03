@@ -398,13 +398,11 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     slug: "vaidebet",
     name: "VaiDeBet",
     enabled: true,
-    provider: "vaidebet",
-    baseUrl: "https://vaidebet.bet.br/",
-    deltaApiBaseUrl: "https://delta-sb.ngbras.com/",
+    provider: "altenar",
+    integration: "vaidebet",
+    baseUrl: env.ALTENAR_BASE_URL,
+    origin: "https://vaidebet.bet.br",
     referer: "https://vaidebet.bet.br/",
-    routeSegment: "d",
-    languageId: 23,
-    brand: "vaidebet",
     engine: "fetch"
   },
   {

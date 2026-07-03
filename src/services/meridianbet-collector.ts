@@ -107,6 +107,10 @@ function formatConsoleLine(level: "info" | "warn" | "error", message: string, co
   if (message === "links de ligas da meridianbet carregados") return `[meridianbet] Atalhos de liga: ${contextValue(context, "savedLinks")} salvos | ${contextValue(context, "hardcodedLinks")} fixos.`;
   if (message === "iniciando carrossel de abas da meridianbet") return `[meridianbet] Monitorando URLs salvas em ${contextValue(context, "tabs")} abas: ${contextValue(context, "events")} jogos.`;
   if (message === "abrindo liga da meridianbet por URL") return `[meridianbet] Abrindo liga por URL: ${contextValue(context, "leagueName")}.`;
+  if (message === "verificacao da meridianbet detectada; aguardando liberar pagina") return "[meridianbet] Verificacao detectada; aguardando liberar pagina.";
+  if (message === "verificacao da meridianbet concluida") return "[meridianbet] Verificacao concluida.";
+  if (message === "verificacao da meridianbet nao liberou dentro do tempo esperado") return "[meridianbet] Verificacao nao liberou dentro do tempo esperado.";
+  if (message === "falha ao coletar jogo da meridianbet por URL cacheada; tentando pela liga") return "[meridianbet] URL cacheada falhou; tentando pela liga.";
   if (message === "filtro TUDO da meridianbet clicado") return `[meridianbet] Filtro TUDO clicado.`;
   if (message === "filtro TUDO da meridianbet não encontrado na barra de tempo") return "[meridianbet] Filtro TUDO não encontrado.";
   if (message === "jogo da meridianbet salvo no banco") return `[meridianbet] Odds salvas: ${fixtureName(context)} | ${contextValue(context, "oddsUpserted")} odds.`;
@@ -441,10 +445,9 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
                   summary.oddsUpserted += persisted.oddsUpserted;
                   processedFixtureIds.add(item.fixture.id);
                 } catch (error) {
-                  summary.errors += 1;
-                  summary.lastError = errorMessage(error);
-                  await logger("error", "falha ao coletar jogo da meridianbet por URL cacheada", {
+                  await logger("warn", "falha ao coletar jogo da meridianbet por URL cacheada; tentando pela liga", {
                     fixtureId: item.fixture.id,
+                    cachedUrl: item.url,
                     error: serializeError(error)
                   });
                 }
@@ -467,7 +470,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
 
           const savedUrl = cachedLeagueLinkByApiId.get(league.api_football_league_id)?.source_url;
           const hardcoded = MERIDIAN_LEAGUES[league.api_football_league_id];
-          const leagueUrl = savedUrl ?? hardcoded?.url ?? null;
+          const leagueUrl = hardcoded?.url ?? savedUrl ?? null;
           if (!leagueUrl) {
             await emitLeagueUrlError(bookmaker, league, null, "league-not-found", logger);
             summary.leaguesSkipped += 1;
@@ -489,7 +492,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           }
 
           summary.leaguesOpened += 1;
-          await saveLeagueLink(bookmaker, league, discoveryPage.url(), hardcoded?.name ?? league.name, savedUrl ? "saved" : "hardcoded");
+          await saveLeagueLink(bookmaker, league, discoveryPage.url(), hardcoded?.name ?? league.name, hardcoded?.url ? "hardcoded" : "saved");
 
           for (const fixture of leagueFixtures) {
             try {

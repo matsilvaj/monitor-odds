@@ -281,6 +281,7 @@ const MANUAL_ALIAS_GROUPS = [
   ["Atletico MG", "Atletico Mineiro", "Atlético Mineiro"],
   ["Atletico GO", "Atletico Goianiense", "Atlético Goianiense", "AC Goianiense"],
   ["America MG", "America Mineiro", "América Mineiro"],
+  ["CRB", "CR Brasil", "CR Brasil AL", "Clube de Regatas Brasil", "Clube de Regatas Brasil AL"],
   ["Nautico Recife", "Nautico PE", "Nautico", "Náutico"],
   ["Novorizontino", "Gremio Novorizontino", "Grêmio Novorizontino"],
   ["Gremio", "Grêmio"],

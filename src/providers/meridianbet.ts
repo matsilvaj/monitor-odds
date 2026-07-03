@@ -449,8 +449,76 @@ export class MeridianbetBrowserClient {
 
   private async waitForUi(page: Page) {
     await page.waitForLoadState("domcontentloaded", { timeout: this.config.navigationTimeoutMs }).catch(() => undefined);
+    await this.waitForVerificationIfNeeded(page);
     await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => undefined);
     await page.waitForTimeout(900);
+  }
+
+  private async waitForVerificationIfNeeded(page: Page) {
+    const timeoutMs = Math.max(this.config.navigationTimeoutMs, 45_000);
+    const startedAt = Date.now();
+    let detected = false;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const state = await page
+        .evaluate(() => {
+          const normalize = (value: unknown) =>
+            String(value ?? "")
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .toLowerCase()
+              .replace(/\s+/g, " ")
+              .trim();
+          const text = normalize(document.body?.innerText || document.body?.textContent || "");
+          const title = normalize(document.title);
+          const hasCloudflareNode = Boolean(
+            document.querySelector("[id^='cf-'], .cf-browser-verification, .cf-challenge, [class*='challenge'], [class*='cloudflare']")
+          );
+          const looksLikeVerification =
+            hasCloudflareNode ||
+            title.includes("just a moment") ||
+            text.includes("checking your browser") ||
+            text.includes("verificando se") ||
+            text.includes("verificacao") ||
+            (text.includes("cloudflare") && (text.includes("seguranca") || text.includes("security") || text.includes("verification")));
+          const looksReady =
+            text.includes("meridianbet") ||
+            text.includes("futebol") ||
+            text.includes("esportes") ||
+            text.includes("entrar") ||
+            text.includes("cadastre");
+
+          return { looksLikeVerification, looksReady, textLength: text.length, title, url: window.location.href };
+        })
+        .catch(() => ({ looksLikeVerification: false, looksReady: false, textLength: 0, title: "", url: page.url() }));
+
+      if (state.looksLikeVerification || (detected && !state.looksReady && state.textLength < 80)) {
+        if (!detected) {
+          detected = true;
+          await this.logger("info", "verificacao da meridianbet detectada; aguardando liberar pagina", {
+            url: state.url,
+            title: state.title
+          });
+        }
+        await page.waitForTimeout(1500);
+        continue;
+      }
+
+      if (detected) {
+        await this.logger("info", "verificacao da meridianbet concluida", {
+          elapsedMs: Date.now() - startedAt,
+          url: state.url
+        });
+      }
+      return;
+    }
+
+    if (detected) {
+      await this.logger("warn", "verificacao da meridianbet nao liberou dentro do tempo esperado", {
+        elapsedMs: Date.now() - startedAt,
+        url: page.url()
+      });
+    }
   }
 
   private async eventSourceUrlFromPage(page: Page, fixture: MeridianFixtureTarget) {
