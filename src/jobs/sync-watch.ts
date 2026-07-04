@@ -1,4 +1,4 @@
-import { collectAllBookmakers } from "../bookmakers/registry.js";
+import { BOOKMAKER_COLLECTORS, collectBookmakerBySlug, collectFastBookmakers } from "../bookmakers/registry.js";
 import { syncApiFootballFixtures, type SyncApiFootballFixturesOptions } from "../services/api-football-sync.js";
 import { formatFixtureSyncSummary } from "../services/sync-report.js";
 import { installProcessErrorHandlers } from "../utils/process-errors.js";
@@ -97,23 +97,64 @@ await runFixtureSync("inicial").catch((error) => {
 });
 scheduleMidnightFixtureSync();
 
-async function runBookmakerLoop() {
+type WatchLoop = {
+  label: string;
+  collect: () => Promise<unknown>;
+};
+
+function hasEnabledBookmaker(slug: string) {
+  return BOOKMAKER_COLLECTORS.some((bookmaker) => bookmaker.slug === slug);
+}
+
+async function runBookmakerLoop(loop: WatchLoop) {
   while (!shutdownRequested) {
     const startedAt = new Date();
-    console.log(`[sync] Ciclo das casas iniciado às ${startedAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`);
+    console.log(
+      `[sync:${loop.label}] Ciclo iniciado as ${startedAt.toLocaleTimeString("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      })}.`
+    );
 
     try {
-      await collectAllBookmakers({ concurrency: 3, logProgress: true, trigger: "watch" });
+      await loop.collect();
     } catch (error) {
-      console.error("[sync] Falha no ciclo das casas.", error);
+      console.error(`[sync:${loop.label}] Falha no ciclo.`, error);
     }
 
     if (shutdownRequested) break;
 
-    console.log("[sync] Ciclo das casas finalizado. Próximo ciclo em 2s.");
+    console.log(`[sync:${loop.label}] Ciclo finalizado. Proximo ciclo em 2s.`);
     await sleep(WATCH_LOOP_PAUSE_MS);
   }
 }
 
-await runBookmakerLoop();
+const watchLoops: WatchLoop[] = [
+  {
+    label: "rapidas",
+    collect: () => collectFastBookmakers({ concurrency: 3, logProgress: true, trigger: "watch" })
+  }
+];
+
+if (hasEnabledBookmaker("bet365")) {
+  watchLoops.push({
+    label: "bet365",
+    collect: () => collectBookmakerBySlug("bet365", { concurrency: 1, logProgress: true, trigger: "watch" })
+  });
+} else {
+  console.log("[sync:bet365] Casa desabilitada; loop nao iniciado.");
+}
+
+if (hasEnabledBookmaker("meridianbet")) {
+  watchLoops.push({
+    label: "meridianbet",
+    collect: () => collectBookmakerBySlug("meridianbet", { concurrency: 1, logProgress: true, trigger: "watch" })
+  });
+} else {
+  console.log("[sync:meridianbet] Casa desabilitada; loop nao iniciado.");
+}
+
+console.log(`[sync] Loops independentes iniciados: ${watchLoops.map((loop) => loop.label).join(", ")}.`);
+await Promise.all(watchLoops.map((loop) => runBookmakerLoop(loop)));
 console.log("[sync] Monitor encerrado com segurança.");
