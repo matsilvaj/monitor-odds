@@ -1,3 +1,4 @@
 build/monitor-env.json
+build/node.exe
 dist/
 node_modules/

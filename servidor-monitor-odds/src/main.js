@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu } from "electron";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -284,9 +285,7 @@ function resolveUserDataPath(configuredPath) {
 }
 
 function packagedMonitorExtraEnv() {
-  const extraEnv = {
-    ELECTRON_RUN_AS_NODE: "1"
-  };
+  const extraEnv = {};
 
   for (const [key, defaultPath] of Object.entries(packagedBrowserProfileDefaults)) {
     const configuredPath = typeof monitorEnv[key] === "string" && monitorEnv[key].trim() ? monitorEnv[key].trim() : defaultPath;
@@ -299,11 +298,16 @@ function packagedMonitorExtraEnv() {
 function monitorRunConfig() {
   if (app.isPackaged) {
     const monitorDir = path.join(process.resourcesPath, "monitor");
+    const nodePath = path.join(monitorDir, process.platform === "win32" ? "node.exe" : "node");
+    const usePackagedNode = existsSync(nodePath);
     return {
-      command: process.execPath,
+      command: usePackagedNode ? nodePath : process.execPath,
       args: [path.join(monitorDir, "dist", "jobs", "sync-watch.js")],
       cwd: monitorDir,
-      extraEnv: packagedMonitorExtraEnv()
+      extraEnv: {
+        ...packagedMonitorExtraEnv(),
+        ...(usePackagedNode ? {} : { ELECTRON_RUN_AS_NODE: "1" })
+      }
     };
   }
 
