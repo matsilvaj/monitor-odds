@@ -13,7 +13,10 @@ const EXCLUDED_ENV_KEYS = new Set(["GH_TOKEN", "GITHUB_TOKEN", "GITHUB_RELEASE_T
 
 const rawEnv = await readFile(envPath, "utf8");
 const parsedEnv = parse(rawEnv);
-const bundledEnv = Object.fromEntries(Object.entries(parsedEnv).filter(([key]) => !EXCLUDED_ENV_KEYS.has(key)));
+const bundledEnv = {
+  ...Object.fromEntries(Object.entries(parsedEnv).filter(([key]) => !EXCLUDED_ENV_KEYS.has(key))),
+  MONITOR_PROJECT_ROOT: projectRoot
+};
 
 await mkdir(path.dirname(outputPath), { recursive: true });
 await writeFile(outputPath, JSON.stringify(bundledEnv, null, 2), "utf8");

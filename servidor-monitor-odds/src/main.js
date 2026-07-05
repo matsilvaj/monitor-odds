@@ -279,17 +279,27 @@ function appendLog(message) {
   send("log", text);
 }
 
-function resolveUserDataPath(configuredPath) {
+function packagedProfileBaseDir() {
+  const projectRootFromEnv = typeof monitorEnv.MONITOR_PROJECT_ROOT === "string" ? monitorEnv.MONITOR_PROJECT_ROOT.trim() : "";
+  if (projectRootFromEnv && existsSync(projectRootFromEnv)) return projectRootFromEnv;
+  return userDataDir;
+}
+
+function resolveBrowserProfilePath(configuredPath) {
   if (!configuredPath) return configuredPath;
-  return path.isAbsolute(configuredPath) ? configuredPath : path.join(userDataDir, configuredPath);
+  return path.isAbsolute(configuredPath) ? configuredPath : path.join(app.isPackaged ? packagedProfileBaseDir() : projectRoot, configuredPath);
+}
+
+function configuredBrowserProfilePath(key, defaultPath) {
+  const configuredPath = typeof monitorEnv[key] === "string" && monitorEnv[key].trim() ? monitorEnv[key].trim() : defaultPath;
+  return resolveBrowserProfilePath(configuredPath);
 }
 
 function packagedMonitorExtraEnv() {
   const extraEnv = {};
 
   for (const [key, defaultPath] of Object.entries(packagedBrowserProfileDefaults)) {
-    const configuredPath = typeof monitorEnv[key] === "string" && monitorEnv[key].trim() ? monitorEnv[key].trim() : defaultPath;
-    extraEnv[key] = resolveUserDataPath(configuredPath);
+    extraEnv[key] = configuredBrowserProfilePath(key, defaultPath);
   }
 
   return extraEnv;
@@ -339,6 +349,7 @@ async function resetBrowserCollectionState() {
 async function startMonitor() {
   if (monitorProcess) return { ok: true };
 
+  await killBrowserCollectorProcesses();
   await resetBrowserCollectionState();
 
   const run = monitorRunConfig();
@@ -409,6 +420,45 @@ async function killProcessTree(processToKill) {
   });
 }
 
+function powershellString(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function browserCollectorProcessPatterns() {
+  return [
+    configuredBrowserProfilePath("BET365_CHROME_PROFILE_DIR", packagedBrowserProfileDefaults.BET365_CHROME_PROFILE_DIR),
+    configuredBrowserProfilePath("MERIDIANBET_CHROME_PROFILE_DIR", packagedBrowserProfileDefaults.MERIDIANBET_CHROME_PROFILE_DIR)
+  ].filter(Boolean);
+}
+
+async function killBrowserCollectorProcesses() {
+  const patterns = browserCollectorProcessPatterns();
+  if (!patterns.length || process.platform !== "win32") return;
+
+  const script = `
+$patterns = @(${patterns.map(powershellString).join(",")})
+Get-CimInstance Win32_Process |
+  Where-Object {
+    $cmd = $_.CommandLine
+    if (-not $cmd) { return $false }
+    foreach ($pattern in $patterns) {
+      if ($cmd.IndexOf($pattern, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    }
+    return $false
+  } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+`;
+
+  await new Promise((resolve) => {
+    const killer = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
+      windowsHide: true,
+      stdio: "ignore"
+    });
+    killer.on("error", resolve);
+    killer.on("exit", resolve);
+  });
+}
+
 async function stopMonitorForShutdown() {
   await stopMonitorProcess({ updateStateAfterStop: false });
 }
@@ -457,6 +507,7 @@ function waitForProcessExit(processToStop, timeoutMs) {
 async function stopMonitorProcess({ updateStateAfterStop = true } = {}) {
   if (!monitorProcess) {
     status = "parado";
+    await killBrowserCollectorProcesses();
     await resetBrowserCollectionState();
     if (updateStateAfterStop) await sendState();
     return;
@@ -474,6 +525,7 @@ async function stopMonitorProcess({ updateStateAfterStop = true } = {}) {
   const exited = gracefulRequested ? await waitForProcessExit(processToStop, monitorShutdownTimeoutMs) : false;
   if (!exited) await killProcessTree(processToStop);
 
+  await killBrowserCollectorProcesses();
   await resetBrowserCollectionState();
   status = "parado";
   if (updateStateAfterStop) await sendState();
