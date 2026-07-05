@@ -285,6 +285,19 @@ function packagedProfileBaseDir() {
   return userDataDir;
 }
 
+function packagedProjectRuntimeDir() {
+  const projectRootFromEnv = typeof monitorEnv.MONITOR_PROJECT_ROOT === "string" ? monitorEnv.MONITOR_PROJECT_ROOT.trim() : "";
+  if (!projectRootFromEnv) return null;
+
+  const requiredPaths = [
+    path.join(projectRootFromEnv, "dist", "jobs", "sync-watch.js"),
+    path.join(projectRootFromEnv, "node_modules"),
+    path.join(projectRootFromEnv, "package.json")
+  ];
+
+  return requiredPaths.every((requiredPath) => existsSync(requiredPath)) ? projectRootFromEnv : null;
+}
+
 function resolveBrowserProfilePath(configuredPath) {
   if (!configuredPath) return configuredPath;
   return path.isAbsolute(configuredPath) ? configuredPath : path.join(app.isPackaged ? packagedProfileBaseDir() : projectRoot, configuredPath);
@@ -307,13 +320,15 @@ function packagedMonitorExtraEnv() {
 
 function monitorRunConfig() {
   if (app.isPackaged) {
-    const monitorDir = path.join(process.resourcesPath, "monitor");
-    const nodePath = path.join(monitorDir, process.platform === "win32" ? "node.exe" : "node");
+    const bundledMonitorDir = path.join(process.resourcesPath, "monitor");
+    const monitorDir = packagedProjectRuntimeDir() ?? bundledMonitorDir;
+    const nodePath = path.join(bundledMonitorDir, process.platform === "win32" ? "node.exe" : "node");
     const usePackagedNode = existsSync(nodePath);
     return {
       command: usePackagedNode ? nodePath : process.execPath,
       args: [path.join(monitorDir, "dist", "jobs", "sync-watch.js")],
       cwd: monitorDir,
+      runtimeLabel: monitorDir === bundledMonitorDir ? "pacote instalado" : "projeto local",
       extraEnv: {
         ...packagedMonitorExtraEnv(),
         ...(usePackagedNode ? {} : { ELECTRON_RUN_AS_NODE: "1" })
@@ -325,6 +340,7 @@ function monitorRunConfig() {
     command: process.platform === "win32" ? "npm.cmd" : "npm",
     args: ["run", "sync:watch"],
     cwd: projectRoot,
+    runtimeLabel: "projeto local",
     extraEnv: {}
   };
 }
@@ -349,7 +365,6 @@ async function resetBrowserCollectionState() {
 async function startMonitor() {
   if (monitorProcess) return { ok: true };
 
-  await killBrowserCollectorProcesses();
   await resetBrowserCollectionState();
 
   const run = monitorRunConfig();
@@ -362,6 +377,7 @@ async function startMonitor() {
   status = "iniciando";
   await sendState();
   appendLog("Iniciando monitor...");
+  appendLog(`Runtime do monitor: ${run.runtimeLabel} (${run.cwd})`);
 
   monitorProcess = spawn(run.command, run.args, {
     cwd: run.cwd,
