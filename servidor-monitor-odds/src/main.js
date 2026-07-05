@@ -16,7 +16,11 @@ const projectRoot = path.resolve(launcherRoot, "..");
 const userDataDir = app.getPath("userData");
 const configPath = path.join(userDataDir, "config.json");
 const bookmakerNames = {};
-const browserCollectorSlugs = [];
+const browserCollectorSlugs = ["bet365", "meridianbet"];
+const packagedBrowserProfileDefaults = {
+  BET365_CHROME_PROFILE_DIR: ".browser/bet365-profile",
+  MERIDIANBET_CHROME_PROFILE_DIR: ".browser/meridianbet-cdp-profile"
+};
 const pendingRequestPollIntervalMs = 30_000;
 const updateCheckIntervalMs = 30 * 60 * 1000;
 const monitorShutdownTimeoutMs = 12_000;
@@ -274,6 +278,24 @@ function appendLog(message) {
   send("log", text);
 }
 
+function resolveUserDataPath(configuredPath) {
+  if (!configuredPath) return configuredPath;
+  return path.isAbsolute(configuredPath) ? configuredPath : path.join(userDataDir, configuredPath);
+}
+
+function packagedMonitorExtraEnv() {
+  const extraEnv = {
+    ELECTRON_RUN_AS_NODE: "1"
+  };
+
+  for (const [key, defaultPath] of Object.entries(packagedBrowserProfileDefaults)) {
+    const configuredPath = typeof monitorEnv[key] === "string" && monitorEnv[key].trim() ? monitorEnv[key].trim() : defaultPath;
+    extraEnv[key] = resolveUserDataPath(configuredPath);
+  }
+
+  return extraEnv;
+}
+
 function monitorRunConfig() {
   if (app.isPackaged) {
     const monitorDir = path.join(process.resourcesPath, "monitor");
@@ -281,9 +303,7 @@ function monitorRunConfig() {
       command: process.execPath,
       args: [path.join(monitorDir, "dist", "jobs", "sync-watch.js")],
       cwd: monitorDir,
-      extraEnv: {
-        ELECTRON_RUN_AS_NODE: "1"
-      }
+      extraEnv: packagedMonitorExtraEnv()
     };
   }
 
