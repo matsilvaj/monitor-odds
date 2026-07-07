@@ -274,9 +274,8 @@ export class MeridianbetBrowserClient {
     this.chromeProcess = spawn(
       chromePath,
       [`--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, "--no-first-run", "--no-default-browser-check", "--new-window", "about:blank"],
-      { detached: true, stdio: "ignore" }
+      { stdio: "ignore" }
     );
-    this.chromeProcess.unref();
 
     await waitForCdp(port, this.config.navigationTimeoutMs);
     this.browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);

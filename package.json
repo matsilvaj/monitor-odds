@@ -21,6 +21,7 @@
     "collect:bookmaker": "tsx src/jobs/collect-bookmaker.ts",
     "sync:all": "tsx src/jobs/sync-all.ts",
     "sync:watch": "tsx src/jobs/sync-watch.ts",
+    "sync:watch:worker": "tsx src/jobs/sync-watch-worker.ts",
     "client:dev": "npm --prefix servidor-monitor-odds run dev",
     "client:package": "npm --prefix servidor-monitor-odds run package",
     "client:release": "npm --prefix servidor-monitor-odds run release",

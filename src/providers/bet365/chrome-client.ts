@@ -86,11 +86,9 @@ export class ChromeClient {
           initialUrl
         ],
         {
-          detached: true,
           stdio: "ignore"
         }
       );
-      this.chromeProcess.unref();
       await sleep(this.config.navigationWaitMs);
     }
 
