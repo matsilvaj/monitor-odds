@@ -4,7 +4,7 @@ import type { Bet7kBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeForMatching, teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -95,31 +95,17 @@ function isNearCanonicalFixtureWindow(event: Bet7kEvent, fixtures: CanonicalFixt
 
 function findBestMatch(event: Bet7kEvent, fixtures: CanonicalFixture[]) {
   const { homeTeam, awayTeam } = eventTeams(event);
-  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
-
-  for (const fixture of fixtures) {
-    const result = matchEvents(
-      {
-        id: fixture.id,
-        startsAt: fixture.starts_at,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team,
-        leagueName: fixtureLeague(fixture)?.name ?? null
-      },
-      {
-        id: event._id,
-        startsAt: event.StartEventDate ?? "",
-        homeTeam,
-        awayTeam,
-        leagueName: event.LeagueName ?? null
-      }
-    );
-
-    if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { ...result, fixture };
-  }
-
-  return best;
+  return findBestCanonicalEventMatch(
+    fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
+    {
+      id: event._id,
+      startsAt: event.StartEventDate ?? "",
+      homeTeam,
+      awayTeam,
+      leagueName: event.LeagueName ?? null
+    },
+    { context: "league-scoped" }
+  );
 }
 
 function isMoneylineMarket(market: Bet7kMarket) {

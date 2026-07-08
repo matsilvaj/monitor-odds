@@ -4,7 +4,7 @@ import type { BetesporteBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetesporteClient, type BetesporteEvent, type BetesporteMarket, type BetesporteOption } from "../providers/betesporte.js";
@@ -101,31 +101,17 @@ function isNearCanonicalFixtureWindow(event: BetesporteEvent, fixtures: Canonica
 }
 
 function findBestMatch(event: BetesporteEvent, fixtures: CanonicalFixture[]) {
-  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
-
-  for (const fixture of fixtures) {
-    const result = matchEvents(
-      {
-        id: fixture.id,
-        startsAt: fixture.starts_at,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team,
-        leagueName: fixtureLeague(fixture)?.name ?? null
-      },
-      {
-        id: event.id,
-        startsAt: event.date ?? "",
-        homeTeam: event.homeTeamName ?? null,
-        awayTeam: event.awayTeamName ?? null,
-        leagueName: event.tournamentName ?? null
-      }
-    );
-
-    if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { ...result, fixture };
-  }
-
-  return best;
+  return findBestCanonicalEventMatch(
+    fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
+    {
+      id: event.id,
+      startsAt: event.date ?? "",
+      homeTeam: event.homeTeamName ?? null,
+      awayTeam: event.awayTeamName ?? null,
+      leagueName: event.tournamentName ?? null
+    },
+    { context: "league-scoped" }
+  );
 }
 
 function uniqueEvents(events: BetesporteEvent[]) {

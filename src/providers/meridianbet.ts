@@ -51,6 +51,7 @@ type ClickTarget = {
   x: number;
   y: number;
   priority: number;
+  matchKind: "PAIR" | "SINGLE";
 };
 
 const PRICE_RE = /^(?:[1-9]\d{0,2}|0)(?:[.,]\d{1,3})?$/;
@@ -131,6 +132,34 @@ function parseMeridianEventId(sourceUrl: string, fallbackKey: string) {
   const eventId = /\/(\d+)(?:[/?#]|$)/.exec(sourceUrl)?.[1] ?? /[?&](?:event|eventId|matchId)=(\d+)/i.exec(sourceUrl)?.[1];
   const parsed = eventId ? Number(eventId) : NaN;
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : hashToPositiveInt(`${sourceUrl}:${fallbackKey}`);
+}
+
+function fixtureTextEvidence(rawText: string, fixture: MeridianFixtureTarget) {
+  const text = normalizeVisibleText(rawText);
+  const home = nationalTeamTokenGroups(fixture.homeTeam);
+  const away = nationalTeamTokenGroups(fixture.awayTeam);
+  const hasHome = tokenGroupMatchesText(text, home);
+  const hasAway = tokenGroupMatchesText(text, away);
+
+  return {
+    hasHome,
+    hasAway,
+    hasBoth: hasHome && hasAway,
+    hasAny: hasHome || hasAway
+  };
+}
+
+function looksLikeUsableLeagueText(rawText: string) {
+  const text = normalizeVisibleText(rawText);
+  return (
+    text.includes("meridianbet") ||
+    text.includes("resultado final") ||
+    text.includes("uma hora") ||
+    text.includes("tres horas") ||
+    text.includes("tudo") ||
+    text.includes("principal") ||
+    text.includes("futebol")
+  );
 }
 
 export function isMeridianEventPageUrl(sourceUrl: string | null | undefined) {
@@ -277,9 +306,15 @@ export class MeridianbetBrowserClient {
       { stdio: "ignore" }
     );
 
-    await waitForCdp(port, this.config.navigationTimeoutMs);
-    this.browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-    this.context = this.browser.contexts()[0] ?? null;
+    try {
+      await waitForCdp(port, this.config.navigationTimeoutMs);
+      this.browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+      this.context = this.browser.contexts()[0] ?? null;
+    } catch (error) {
+      this.chromeProcess.kill();
+      this.chromeProcess = null;
+      throw error;
+    }
     if (!this.context) throw new Error("Chrome CDP iniciou sem contexto de navegação");
   }
 
@@ -352,11 +387,10 @@ export class MeridianbetBrowserClient {
     await page.waitForTimeout(600);
 
     for (let attempt = 0; attempt < 18; attempt += 1) {
-      const text = normalizeVisibleText(await this.visibleText(page));
+      const text = await this.visibleText(page);
       const found = fixtures.some((fixture) => {
-        const home = nationalTeamTokenGroups(fixture.homeTeam);
-        const away = nationalTeamTokenGroups(fixture.awayTeam);
-        return tokenGroupMatchesText(text, home) && tokenGroupMatchesText(text, away);
+        const evidence = fixtureTextEvidence(text, fixture);
+        return evidence.hasBoth || evidence.hasAny;
       });
       if (found) return true;
 
@@ -370,10 +404,22 @@ export class MeridianbetBrowserClient {
     return false;
   }
 
+  async pageLooksLikeLeague(page: Page) {
+    const rawText = await this.visibleText(page);
+    if (looksLikeUsableLeagueText(rawText)) return true;
+
+    try {
+      const url = new URL(page.url());
+      return /meridianbet/i.test(url.hostname);
+    } catch {
+      return false;
+    }
+  }
+
   async openFixture(page: Page, fixture: MeridianFixtureTarget) {
     const homeTokenGroups = nationalTeamTokenGroups(fixture.homeTeam);
     const awayTokenGroups = nationalTeamTokenGroups(fixture.awayTeam);
-    if (!homeTokenGroups.length || !awayTokenGroups.length) return false;
+    if (!homeTokenGroups.length && !awayTokenGroups.length) return false;
 
     await page.keyboard.press("Home").catch(() => undefined);
     await page.waitForTimeout(700);
@@ -383,6 +429,7 @@ export class MeridianbetBrowserClient {
         await this.logger("info", "jogo encontrado na meridianbet; abrindo página do evento", {
           fixtureId: fixture.id,
           attempt: attempt + 1,
+          matchKind: target.matchKind,
           targetText: target.text.slice(0, 180),
           href: target.href
         });
@@ -403,8 +450,8 @@ export class MeridianbetBrowserClient {
   async verifyCurrentEvent(page: Page, fixture: MeridianFixtureTarget) {
     const rawText = await this.visibleText(page);
     const text = normalizeVisibleText(rawText);
-    const hasTeams = tokenGroupMatchesText(text, nationalTeamTokenGroups(fixture.homeTeam)) && tokenGroupMatchesText(text, nationalTeamTokenGroups(fixture.awayTeam));
-    return hasTeams && (isMeridianEventPageUrl(page.url()) || text.includes("resultado final"));
+    const evidence = fixtureTextEvidence(rawText, fixture);
+    return evidence.hasAny && (isMeridianEventPageUrl(page.url()) || text.includes("resultado final"));
   }
 
   async collectCurrentEvent(page: Page, fixture: MeridianFixtureTarget): Promise<MeridianCollectedEvent> {
@@ -556,13 +603,23 @@ export class MeridianbetBrowserClient {
     const hrefText = norm(decodeURIComponent(href));
     const container = anchor.closest("section,article,dialog,[role='dialog'],.modal,.c-modal,.event-details,.c-event-details,div");
     const containerText = norm(container?.innerText || container?.textContent || "");
-    const hrefMatchesTeams = hasTokenGroup(hrefText, pageHomeTokenGroups) && hasTokenGroup(hrefText, pageAwayTokenGroups);
-    const containerMatchesTeams = hasTokenGroup(containerText, pageHomeTokenGroups) && hasTokenGroup(containerText, pageAwayTokenGroups);
-    if (!hrefMatchesTeams && !containerMatchesTeams) continue;
+    const hrefHome = hasTokenGroup(hrefText, pageHomeTokenGroups);
+    const hrefAway = hasTokenGroup(hrefText, pageAwayTokenGroups);
+    const containerHome = hasTokenGroup(containerText, pageHomeTokenGroups);
+    const containerAway = hasTokenGroup(containerText, pageAwayTokenGroups);
+    const hrefMatchesTeams = hrefHome && hrefAway;
+    const containerMatchesTeams = containerHome && containerAway;
+    const hrefMatchesOneTeam = hrefHome || hrefAway;
+    const containerMatchesOneTeam = containerHome || containerAway;
+    if (!hrefMatchesTeams && !containerMatchesTeams && !hrefMatchesOneTeam && !containerMatchesOneTeam) continue;
 
     candidates.push({
       href,
-      score: (hrefMatchesTeams ? 0 : 50) + (containerMatchesTeams ? 0 : 10) + Math.max(0, Math.round(rect.top))
+      score:
+        (hrefMatchesTeams || containerMatchesTeams ? 0 : 80) +
+        (hrefMatchesTeams ? 0 : 30) +
+        (containerMatchesTeams ? 0 : 10) +
+        Math.max(0, Math.round(rect.top))
     });
   }
 
@@ -590,7 +647,9 @@ export class MeridianbetBrowserClient {
           const hasToken = (text: string, tokens: string[]) => tokens.slice(0, 4).some((token) => text.includes(token));
           const hasTokenGroup = (text: string, tokenGroups: string[][]) => tokenGroups.some((tokens) => hasToken(text, tokens));
           const text = norm(document.body?.innerText || document.body?.textContent || "");
-          return hasTokenGroup(text, pageHomeTokenGroups) && hasTokenGroup(text, pageAwayTokenGroups) && (/\d+$/.test(window.location.pathname) || text.includes("resultado final"));
+          const hasHome = hasTokenGroup(text, pageHomeTokenGroups);
+          const hasAway = hasTokenGroup(text, pageAwayTokenGroups);
+          return (hasHome || hasAway) && (/\d+$/.test(window.location.pathname) || text.includes("resultado final"));
         },
         { homeTokenGroups, awayTokenGroups },
         { timeout: Math.min(this.config.navigationTimeoutMs, 8000) }
@@ -841,8 +900,11 @@ export class MeridianbetBrowserClient {
     if (rect.width < 260 || rect.height < 32 || rect.height > 220) continue;
     const text = (row.textContent || "").replace(/\s+/g, " ").trim();
     const normalized = norm(text);
-    if (!hasTokenGroup(normalized, pageHomeTokenGroups) || !hasTokenGroup(normalized, pageAwayTokenGroups)) continue;
+    const hasHome = hasTokenGroup(normalized, pageHomeTokenGroups);
+    const hasAway = hasTokenGroup(normalized, pageAwayTokenGroups);
+    if (!hasHome && !hasAway) continue;
     if (/bilhete|valor apostado|registrar|entrar|missoes/i.test(normalized)) continue;
+    const matchKind = hasHome && hasAway ? "PAIR" : "SINGLE";
 
     const push = (target, href, priority) => {
       if (!isVisible(target)) return;
@@ -852,7 +914,8 @@ export class MeridianbetBrowserClient {
         href,
         x: targetRect.left + targetRect.width / 2,
         y: targetRect.top + targetRect.height / 2,
-        priority
+        priority: priority + (matchKind === "PAIR" ? 0 : 100),
+        matchKind
       });
     };
 
@@ -864,7 +927,13 @@ export class MeridianbetBrowserClient {
     push(row, null, 50);
   }
   candidates.sort((left, right) => left.priority - right.priority || left.y - right.y);
-  return candidates[0] ?? null;
+  const best = candidates[0];
+  if (!best) return null;
+  if (best.matchKind === "PAIR") return best;
+
+  const runnerUp = candidates.find((candidate) => candidate !== best && candidate.matchKind === "SINGLE");
+  if (runnerUp && Math.abs(runnerUp.priority - best.priority) < 40) return null;
+  return best;
 })()
 `;
     return page.evaluate(script) as Promise<ClickTarget | null>;

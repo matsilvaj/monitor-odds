@@ -3,7 +3,7 @@ import type { SportingbetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import { normalizeName } from "../domain/text.js";
@@ -68,27 +68,17 @@ function teamNames(fixture: SportingbetFixture) {
 
 function matchFixture(event: SportingbetFixture, fixtures: CanonicalFixture[]) {
   const { homeTeam, awayTeam } = teamNames(event);
-  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
-  for (const fixture of fixtures) {
-    const result = matchEvents(
-      {
-        id: fixture.id,
-        startsAt: fixture.starts_at,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team
-      },
-      {
-        id: event.id,
-        startsAt: event.startDate,
-        homeTeam,
-        awayTeam
-      }
-    );
-
-    if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { ...result, fixture };
-  }
-
+  const best = findBestCanonicalEventMatch(
+    fixtures,
+    {
+      id: event.id,
+      startsAt: event.startDate,
+      homeTeam,
+      awayTeam,
+      leagueName: null
+    },
+    { context: "league-scoped" }
+  );
   if (!best) return null;
   return { ...best, homeTeam, awayTeam };
 }

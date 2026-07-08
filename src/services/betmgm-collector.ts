@@ -4,7 +4,7 @@ import type { BetmgmBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeForMatching, teamNameSimilarity, tokenSetSimilarity } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -124,16 +124,11 @@ function selectFootballGroupIds(groups: BetmgmGroup[], fixtures: CanonicalFixtur
   const football = groups.find((group) => normalizeForMatching(group.name) === "futebol");
   if (!football) return [];
 
-  const selected = flattenGroups(football)
-    .filter((group) => Number(group.eventCount ?? 0) > 0)
-    .filter((group) => fixtures.some((fixture) => groupMatchesFixtureLeague(group, fixture)))
-    .map((group) => group.id);
+  const footballGroups = flattenGroups(football).filter((group) => Number(group.eventCount ?? 0) > 0);
+  const selected = footballGroups.filter((group) => fixtures.some((fixture) => groupMatchesFixtureLeague(group, fixture))).map((group) => group.id);
 
-  if (selected.length) return selected;
-
-  return flattenGroups(football)
-    .filter((group) => Number(group.eventCount ?? 0) > 0)
-    .map((group) => group.id);
+  if (selected.length === footballGroups.length) return selected;
+  return footballGroups.map((group) => group.id);
 }
 
 function chunks<T>(items: T[], size: number) {
@@ -165,31 +160,17 @@ function isNearCanonicalFixtureWindow(event: BetmgmEvent, fixtures: CanonicalFix
 
 function findBestMatch(event: BetmgmEvent, fixtures: CanonicalFixture[]) {
   const { homeTeam, awayTeam } = eventTeams(event);
-  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
-
-  for (const fixture of fixtures) {
-    const result = matchEvents(
-      {
-        id: fixture.id,
-        startsAt: fixture.starts_at,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team,
-        leagueName: fixtureLeague(fixture)?.name ?? null
-      },
-      {
-        id: event.id,
-        startsAt: event.startTime ?? "",
-        homeTeam,
-        awayTeam,
-        leagueName: event.leagueName ?? null
-      }
-    );
-
-    if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { ...result, fixture };
-  }
-
-  return best;
+  return findBestCanonicalEventMatch(
+    fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
+    {
+      id: event.id,
+      startsAt: event.startTime ?? "",
+      homeTeam,
+      awayTeam,
+      leagueName: event.leagueName ?? null
+    },
+    { context: "league-scoped" }
+  );
 }
 
 function isMoneylineMarket(market: BetmgmMarket) {

@@ -4,7 +4,7 @@ import type { BetnacionalBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetnacionalClient, type BetnacionalOdd, type BetnacionalSearchEvent } from "../providers/betnacional.js";
@@ -195,32 +195,18 @@ function isNearCanonicalFixtureWindow(event: BetnacionalEvent, fixtures: Canonic
   });
 }
 
-function findBestMatch(event: BetnacionalEvent, fixtures: CanonicalFixture[]) {
-  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
-
-  for (const fixture of fixtures) {
-    const result = matchEvents(
-      {
-        id: fixture.id,
-        startsAt: fixture.starts_at,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team,
-        leagueName: fixtureLeague(fixture)?.name ?? null
-      },
-      {
-        id: event.eventId,
-        startsAt: event.startsAt,
-        homeTeam: event.home,
-        awayTeam: event.away,
-        leagueName: event.tournamentName
-      }
-    );
-
-    if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { ...result, fixture };
-  }
-
-  return best;
+function findBestMatch(event: BetnacionalEvent, fixtures: CanonicalFixture[]): (EventMatchResult & { fixture: CanonicalFixture }) | null {
+  return findBestCanonicalEventMatch(
+    fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
+    {
+      id: event.eventId,
+      startsAt: event.startsAt,
+      homeTeam: event.home,
+      awayTeam: event.away,
+      leagueName: event.tournamentName
+    },
+    { context: "league-scoped" }
+  );
 }
 
 function compactSearchName(value: string | null | undefined) {

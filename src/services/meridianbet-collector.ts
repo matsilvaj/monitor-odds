@@ -346,6 +346,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
       activeLeagues: 0,
       leaguesTargeted: 0,
       leaguesOpened: 0,
+      leaguesOpenedWithoutTarget: 0,
       leaguesSkipped: 0,
       fixturesAvailable: 0,
       fixturesTargeted: 0,
@@ -486,8 +487,21 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           await client.goToUrl(discoveryPage, leagueUrl, "navegando para URL de liga da meridianbet");
           await client.selectAllPeriod(discoveryPage);
           if (!(await client.pageHasAnyFixture(discoveryPage, leagueFixtures.map((fixture) => fixtureTargetFromCanonical(fixture))))) {
-            await emitLeagueUrlError(bookmaker, league, savedUrl ?? leagueUrl, savedUrl ? "saved-url-failed" : "league-not-found", logger);
-            summary.leaguesSkipped += 1;
+            if (!(await client.pageLooksLikeLeague(discoveryPage))) {
+              await emitLeagueUrlError(bookmaker, league, savedUrl ?? leagueUrl, savedUrl ? "saved-url-failed" : "league-not-found", logger);
+              summary.leaguesSkipped += 1;
+              continue;
+            }
+
+            summary.leaguesOpened += 1;
+            summary.leaguesOpenedWithoutTarget += 1;
+            summary.eventsUnmatched += leagueFixtures.length;
+            await logger("warn", "liga da meridianbet abriu, mas nenhum evento alvo foi encontrado", {
+              leagueName: league.name,
+              apiFootballLeagueId: league.api_football_league_id,
+              sourceUrl: discoveryPage.url(),
+              fixtures: leagueFixtures.length
+            });
             continue;
           }
 

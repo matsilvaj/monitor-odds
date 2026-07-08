@@ -4,7 +4,7 @@ import type { VaidebetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import { normalizeName } from "../domain/text.js";
@@ -15,7 +15,6 @@ import { logCollectorMessage } from "./collector-log.js";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const STRICT_TIME_WINDOW_MINUTES = 20;
 const RELAXED_DELTA_TIME_WINDOW_MINUTES = 120;
-const RELAXED_DELTA_MIN_TEAM_SCORE = 0.94;
 
 function serializeError(error: unknown) {
   if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
@@ -99,64 +98,21 @@ function fixtureLeague(fixture: CanonicalFixture) {
 }
 
 function findBestMatch(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
-  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
   const leagueName = event.sourceLeagueName ?? event.sourceSeasonName ?? null;
-
-  for (const fixture of fixtures) {
-    const result = matchEvents(
-      {
-        id: fixture.id,
-        startsAt: fixture.starts_at,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team,
-        leagueName: fixtureLeague(fixture)?.name ?? null
-      },
-      {
-        id: event.fId,
-        startsAt: event.fsd,
-        homeTeam: event.hcN ?? null,
-        awayTeam: event.acN ?? null,
-        leagueName
-      }
-    );
-
-    if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { ...result, fixture };
-  }
-
-  if (!best) {
-    for (const fixture of fixtures) {
-      const fixtureStart = new Date(fixture.starts_at).getTime();
-      const eventStart = Number(event.fsd);
-      const diffMs = Math.abs(fixtureStart - eventStart);
-      if (!Number.isFinite(fixtureStart) || !Number.isFinite(eventStart) || diffMs > RELAXED_DELTA_TIME_WINDOW_MINUTES * 60 * 1000) continue;
-
-      const normalHomeScore = teamNameSimilarity(fixture.home_team, event.hcN);
-      const normalAwayScore = teamNameSimilarity(fixture.away_team, event.acN);
-      const invertedHomeScore = teamNameSimilarity(fixture.home_team, event.acN);
-      const invertedAwayScore = teamNameSimilarity(fixture.away_team, event.hcN);
-      const normalScore = (normalHomeScore + normalAwayScore) / 2;
-      const invertedScore = (invertedHomeScore + invertedAwayScore) / 2;
-      const orientation = normalScore >= invertedScore ? "NORMAL" : "INVERTED";
-      const teamScore = Math.max(normalScore, invertedScore);
-      const sideScores = orientation === "NORMAL" ? [normalHomeScore, normalAwayScore] : [invertedHomeScore, invertedAwayScore];
-      if (teamScore < RELAXED_DELTA_MIN_TEAM_SCORE || Math.min(...sideScores) < 0.88) continue;
-
-      const timeScore = Math.max(0, 1 - diffMs / (RELAXED_DELTA_TIME_WINDOW_MINUTES * 60 * 1000));
-      const score = teamScore * 0.9 + timeScore * 0.1;
-      if (!best || score > best.score) {
-        best = {
-          matched: true,
-          score,
-          timeScore,
-          teamScore,
-          orientation,
-          reason: "vaidebet-relaxed-time",
-          fixture
-        };
-      }
+  const best = findBestCanonicalEventMatch(
+    fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
+    {
+      id: event.fId,
+      startsAt: event.fsd,
+      homeTeam: event.hcN ?? null,
+      awayTeam: event.acN ?? null,
+      leagueName
+    },
+    {
+      context: "league-scoped",
+      maxTimeDiffMs: RELAXED_DELTA_TIME_WINDOW_MINUTES * 60 * 1000
     }
-  }
+  );
 
   if (!best) return null;
   return { ...best, homeTeam: event.hcN ?? null, awayTeam: event.acN ?? null };

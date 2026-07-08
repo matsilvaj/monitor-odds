@@ -318,7 +318,12 @@ export class OddsRepository {
       })
       .map((link) => link.fixture_id);
     const fixtureIds = [
-      ...new Set([...(options.cleanupFixtureIds?.length ? options.cleanupFixtureIds : links.map((link) => link.fixture_id)), ...movedFixtureIds])
+      ...new Set([
+        ...(options.cleanupFixtureIds?.length ? options.cleanupFixtureIds : links.map((link) => link.fixture_id)),
+        ...linksToSave.map((link) => link.fixture_id),
+        ...oddsToSave.map((odd) => odd.fixture_id),
+        ...movedFixtureIds
+      ])
     ];
 
     const existingLinks = fixtureIds.length ? await fetchExistingLinks(bookmakerSlug, fixtureIds) : [];
@@ -340,15 +345,29 @@ export class OddsRepository {
 
     const uniqueOdds = filterInvalidMoneylineGroups([
       ...new Map(
-        oddsToSave.map((row) => [`${row.fixture_id}:${row.bookmaker_slug}:${row.market_code}:${row.selection}:${row.pa_category}:${row.source_odd_id}`, row])
+        oddsToSave.map((row) => [oddKey(row), row])
       ).values()
     ]);
 
-    if (options.replaceExistingOdds && fixtureIds.length) {
+    const replaceExistingOdds = options.replaceExistingOdds ?? true;
+
+    if (replaceExistingOdds && fixtureIds.length) {
       await deleteExistingOdds(bookmakerSlug, fixtureIds, marketCodes);
     }
 
-    const existingOdds = !options.replaceExistingOdds && fixtureIds.length ? await fetchExistingOdds(bookmakerSlug, fixtureIds, marketCodes) : [];
+    if (replaceExistingOdds) {
+      for (const oddBatch of chunks(uniqueOdds, DEFAULT_BATCH_SIZE)) {
+        await withStatementTimeoutRetry("insert de odds", async () => await supabase.from("odds").insert(oddBatch));
+      }
+
+      if (fixtureIds.length) {
+        await deleteRowsById("bookmaker_event_links", "limpeza de links antigos", staleLinkIds);
+      }
+
+      return uniqueOdds.length;
+    }
+
+    const existingOdds = fixtureIds.length ? await fetchExistingOdds(bookmakerSlug, fixtureIds, marketCodes) : [];
     const existingOddsByKey = new Map(existingOdds.map((row) => [oddKey(row), row]));
     const currentOddKeys = new Set(uniqueOdds.map(oddKey));
     const changedOdds = uniqueOdds.filter((odd) => {

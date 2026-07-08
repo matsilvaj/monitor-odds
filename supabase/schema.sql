@@ -302,6 +302,12 @@ with upcoming_fixtures as (
   join leagues l on l.id = f.league_id
   where f.starts_at > now()
     and l.enabled = true
+    and exists (
+      select 1
+      from odds o
+      where o.fixture_id = f.id
+        and o.market_code = '1X2'
+    )
 ),
 upcoming_odds as (
   select
@@ -341,7 +347,13 @@ select
 from fixtures f
 join leagues l on l.id = f.league_id
 where f.starts_at > now()
-  and l.enabled = true;
+  and l.enabled = true
+  and exists (
+    select 1
+    from odds o
+    where o.fixture_id = f.id
+      and o.market_code = '1X2'
+  );
 
 create view public.public_odds_snapshot
 with (security_invoker = true)
@@ -372,6 +384,7 @@ select
           when 'esportesdasorte' then 'https://esportesdasorte.bet.br/'
           when 'esportiva' then 'https://esportiva.bet.br/'
           when 'estrelabet' then 'https://www.estrelabet.bet.br/'
+          when 'exchange' then 'https://tradeball.fulltbet.bet.br/'
           when 'jogodeouro' then 'https://jogodeouro.bet.br/'
           when 'kto' then 'https://www.kto.bet.br/'
           when 'lotogreen' then 'https://lotogreen.bet.br/'

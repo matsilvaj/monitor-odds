@@ -3,7 +3,7 @@ import type { TradeballBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeForMatching } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -44,12 +44,21 @@ type CanonicalFixture = {
   starts_at: string;
 };
 
+const EXCHANGE_BOOKMAKER_SLUG = "exchange";
+const EXCHANGE_BOOKMAKER_NAME = "Exchange";
+
 async function log(bookmaker: TradeballBookmakerConfig, level: "info" | "warn" | "error", message: string, context: Record<string, unknown> = {}) {
   logCollectorMessage(bookmaker.slug, level, message, context);
 }
 
 async function ensureBaseRows(bookmaker: TradeballBookmakerConfig) {
-  const { error } = await supabase.from("bookmakers").upsert({ slug: bookmaker.slug, name: bookmaker.name }, { onConflict: "slug" });
+  const { error } = await supabase.from("bookmakers").upsert(
+    [
+      { slug: bookmaker.slug, name: bookmaker.name },
+      { slug: EXCHANGE_BOOKMAKER_SLUG, name: EXCHANGE_BOOKMAKER_NAME }
+    ],
+    { onConflict: "slug" }
+  );
   if (error) throw error;
 }
 
@@ -116,31 +125,17 @@ function isNearCanonicalFixtureWindow(event: TradeballEvent, fixtures: Canonical
 
 function findBestMatch(event: TradeballEvent, fixtures: CanonicalFixture[]) {
   const { homeTeam, awayTeam } = eventParticipants(event);
-  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
-
-  for (const fixture of fixtures) {
-    const result = matchEvents(
-      {
-        id: fixture.id,
-        startsAt: fixture.starts_at,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team,
-        leagueName: fixtureLeague(fixture)?.name ?? null
-      },
-      {
-        id: event.id,
-        startsAt: event.start,
-        homeTeam,
-        awayTeam,
-        leagueName: eventLeagueName(event)
-      }
-    );
-
-    if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { ...result, fixture };
-  }
-
-  return best;
+  return findBestCanonicalEventMatch(
+    fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
+    {
+      id: event.id,
+      startsAt: event.start,
+      homeTeam,
+      awayTeam,
+      leagueName: eventLeagueName(event)
+    },
+    { context: "league-scoped" }
+  );
 }
 
 function isMoneylineMarket(market: TradeballMarket) {
@@ -181,6 +176,7 @@ function backPrice(runner: TradeballRunner) {
 function compactEventRaw(event: TradeballEvent) {
   return {
     id: event.id,
+    source: eventSource(event),
     name: event.name,
     start: event.start,
     status: event.status,
@@ -198,12 +194,28 @@ function safeBigintId(value: string | number | null | undefined) {
   return Number.isFinite(id) && id > 0 ? id : 0;
 }
 
+function eventSource(event: TradeballEvent): "tradeball" | "exchange" {
+  return event.source === "exchange" || !event.rawDball ? "exchange" : "tradeball";
+}
+
+function bookmakerSlugForEvent(bookmaker: TradeballBookmakerConfig, event: TradeballEvent) {
+  return eventSource(event) === "exchange" ? EXCHANGE_BOOKMAKER_SLUG : bookmaker.slug;
+}
+
+function sourceUrlForEvent(bookmaker: TradeballBookmakerConfig, event: TradeballEvent, marketId: string) {
+  if (eventSource(event) === "exchange") {
+    return new URL(`#event=${event.id}&market=${marketId}`, bookmaker.dballBaseUrl).href;
+  }
+
+  return new URL(`dballTradingFeed#event=${event.id}&market=${marketId}`, bookmaker.dballBaseUrl).href;
+}
+
 function buildBookmakerLink(bookmaker: TradeballBookmakerConfig, fixtureId: string, event: TradeballEvent, confidenceScore: number): BookmakerLinkRow {
   const { homeTeam, awayTeam } = eventParticipants(event);
   const marketId = event.markets?.find(isMoneylineMarket)?.id ?? "";
 
   return {
-    bookmaker_slug: bookmaker.slug,
+    bookmaker_slug: bookmakerSlugForEvent(bookmaker, event),
     external_event_id: safeBigintId(event.id),
     fixture_id: fixtureId,
     bookmaker_event_name: event.name,
@@ -213,7 +225,7 @@ function buildBookmakerLink(bookmaker: TradeballBookmakerConfig, fixtureId: stri
     normalized_bookmaker_away_team: normalizeName(awayTeam),
     starts_at: new Date(event.start).toISOString(),
     match_confidence_score: confidenceScore,
-    source_url: new URL(`dballTradingFeed#event=${event.id}&market=${marketId}`, bookmaker.dballBaseUrl).href,
+    source_url: sourceUrlForEvent(bookmaker, event, marketId),
     raw: compactEventRaw(event),
     updated_at: new Date().toISOString()
   };
@@ -222,6 +234,8 @@ function buildBookmakerLink(bookmaker: TradeballBookmakerConfig, fixtureId: stri
 function buildMoneylineOdds(bookmaker: TradeballBookmakerConfig, fixtureId: string, event: TradeballEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
   const rows: OddRow[] = [];
   const eventRaw = compactEventRaw(event);
+  const bookmakerSlug = bookmakerSlugForEvent(bookmaker, event);
+  const source = eventSource(event);
 
   for (const market of event.markets?.filter(isMoneylineMarket) ?? []) {
     const pa = paForMarket(market);
@@ -234,7 +248,7 @@ function buildMoneylineOdds(bookmaker: TradeballBookmakerConfig, fixtureId: stri
 
       rows.push({
         fixture_id: fixtureId,
-        bookmaker_slug: bookmaker.slug,
+        bookmaker_slug: bookmakerSlug,
         market_code: "1X2",
         market_name: "MoneyLine",
         selection: selectionForCanonicalOrientation(selection, orientation),
@@ -243,9 +257,9 @@ function buildMoneylineOdds(bookmaker: TradeballBookmakerConfig, fixtureId: stri
         confidence_score: pa.confidence,
         raw_market_name: market.name ?? null,
         raw_label: runner.name ?? null,
-        raw_odd_type: "tradeball-dball",
+        raw_odd_type: source === "exchange" ? "tradeball-exchange" : "tradeball-dball",
         source_odd_id: safeBigintId(runner.id),
-        raw: { event: eventRaw, market, runner, classificationReason: pa.reason },
+        raw: { event: eventRaw, market, runner, classificationReason: pa.reason, source },
         updated_at: new Date().toISOString()
       });
     }
@@ -262,6 +276,8 @@ export function createTradeballCollector(bookmaker: TradeballBookmakerConfig) {
       eventsInWindow: 0,
       eventsCollected: 0,
       eventsMatched: 0,
+      tradeballEventsMatched: 0,
+      exchangeEventsMatched: 0,
       eventsUnmatched: 0,
       oddsUpserted: 0,
       errors: 0,
@@ -294,7 +310,7 @@ export function createTradeballCollector(bookmaker: TradeballBookmakerConfig) {
       const targetEvents = events.filter((event) => event.status === "open" && event["in-running-flag"] !== true && isNearCanonicalFixtureWindow(event, fixtures));
       summary.eventsInWindow = targetEvents.length;
 
-      const bestMatchByFixtureId = new Map<string, { event: TradeballEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+      const bestMatchByFixtureAndSource = new Map<string, { event: TradeballEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
 
       for (const event of targetEvents) {
         const matched = findBestMatch(event, fixtures);
@@ -303,26 +319,41 @@ export function createTradeballCollector(bookmaker: TradeballBookmakerConfig) {
           continue;
         }
 
-        const previous = bestMatchByFixtureId.get(matched.fixture.id);
+        const source = bookmakerSlugForEvent(bookmaker, event);
+        const key = `${matched.fixture.id}:${source}`;
+        const previous = bestMatchByFixtureAndSource.get(key);
         if (!previous || matched.score > previous.matched.score) {
-          bestMatchByFixtureId.set(matched.fixture.id, { event, matched });
+          bestMatchByFixtureAndSource.set(key, { event, matched });
         }
       }
 
-      const linksToSave: BookmakerLinkRow[] = [];
-      const oddsToSave: OddRow[] = [];
+      const byBookmaker = new Map<string, { links: BookmakerLinkRow[]; odds: OddRow[] }>();
+      const groupFor = (slug: string) => {
+        const existing = byBookmaker.get(slug);
+        if (existing) return existing;
+        const created = { links: [] as BookmakerLinkRow[], odds: [] as OddRow[] };
+        byBookmaker.set(slug, created);
+        return created;
+      };
 
-      for (const { event, matched } of bestMatchByFixtureId.values()) {
-        linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
-        oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
+      for (const { event, matched } of bestMatchByFixtureAndSource.values()) {
+        const slug = bookmakerSlugForEvent(bookmaker, event);
+        const group = groupFor(slug);
+        group.links.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
+        group.odds.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
         summary.eventsCollected += 1;
         summary.eventsMatched += 1;
+        if (slug === EXCHANGE_BOOKMAKER_SLUG) summary.exchangeEventsMatched += 1;
+        else summary.tradeballEventsMatched += 1;
       }
 
-      summary.eventsUnmatched += fixtures.length - bestMatchByFixtureId.size;
-      summary.oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, linksToSave, oddsToSave, {
-        cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, linksToSave, summary.errors)
-      });
+      summary.eventsUnmatched += Math.max(0, fixtures.length - new Set([...bestMatchByFixtureAndSource.values()].map(({ matched }) => matched.fixture.id)).size);
+
+      for (const [slug, group] of byBookmaker) {
+        summary.oddsUpserted += await OddsRepository.saveAll(slug, group.links, group.odds, {
+          cleanupFixtureIds: cleanupFixtureIdsForRun(fixtures, group.links, summary.errors)
+        });
+      }
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);

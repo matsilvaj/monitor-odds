@@ -54,6 +54,9 @@ export type AltenarClientConfig = {
   origin: string;
   referer: string;
   engine: BookmakerHttpEngine;
+  listDeviceType?: "1" | "2";
+  detailDeviceType?: "1" | "2";
+  acceptHeader?: string;
 };
 
 export class AltenarClient {
@@ -61,10 +64,24 @@ export class AltenarClient {
 
   constructor(private readonly config: AltenarClientConfig) {
     this.headers = {
-      accept: "application/json",
+      accept: config.acceptHeader ?? "application/json",
+      "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
       origin: config.origin,
-      referer: config.referer
+      referer: config.referer,
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "cross-site",
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
     };
+  }
+
+  private get listDeviceType() {
+    return this.config.listDeviceType ?? "2";
+  }
+
+  private get detailDeviceType() {
+    return this.config.detailDeviceType ?? "1";
   }
 
   async getEvents(champId: number) {
@@ -72,7 +89,7 @@ export class AltenarClient {
       culture: "pt-BR",
       timezoneOffset: "180",
       integration: this.config.integration,
-      deviceType: "2",
+      deviceType: this.listDeviceType,
       numFormat: "en-GB",
       countryCode: "BR",
       eventCount: "0",
@@ -94,7 +111,7 @@ export class AltenarClient {
       culture: "pt-BR",
       timezoneOffset: "180",
       integration: this.config.integration,
-      deviceType: "2",
+      deviceType: this.listDeviceType,
       numFormat: "en-GB",
       countryCode: "BR",
       eventCount: "0",
@@ -117,7 +134,7 @@ export class AltenarClient {
       culture: "pt-BR",
       timezoneOffset: "180",
       integration: this.config.integration,
-      deviceType: "1",
+      deviceType: this.detailDeviceType,
       numFormat: "en-GB",
       countryCode: "BR",
       eventId: String(eventId),

@@ -3,7 +3,7 @@ import type { SportybetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeForMatching, teamNameSimilarity, tokenSetSimilarity } from "../domain/matching/text-similarity.js";
 import { normalizeName } from "../domain/text.js";
@@ -101,29 +101,17 @@ function eventLeagueName(event: SportybetEvent) {
 function matchFixture(event: SportybetEvent, fixtures: CanonicalFixture[]) {
   const homeTeam = event.homeTeamName ?? null;
   const awayTeam = event.awayTeamName ?? null;
-  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
-  for (const fixture of fixtures) {
-    const result = matchEvents(
-      {
-        id: fixture.id,
-        startsAt: fixture.starts_at,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team,
-        leagueName: fixtureLeague(fixture)?.name ?? null
-      },
-      {
-        id: event.eventId,
-        startsAt: event.estimateStartTime,
-        homeTeam,
-        awayTeam,
-        leagueName: eventLeagueName(event)
-      }
-    );
-
-    if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { ...result, fixture };
-  }
-
+  const best = findBestCanonicalEventMatch(
+    fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
+    {
+      id: event.eventId,
+      startsAt: event.estimateStartTime,
+      homeTeam,
+      awayTeam,
+      leagueName: eventLeagueName(event)
+    },
+    { context: "league-scoped" }
+  );
   if (!best) return null;
   return { ...best, homeTeam, awayTeam };
 }

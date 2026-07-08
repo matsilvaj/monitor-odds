@@ -55,6 +55,7 @@ export type TradeballEvent = {
   "in-running-flag"?: boolean;
   "sport-id"?: string;
   "meta-tags"?: TradeballMetaTag[];
+  source?: "tradeball" | "exchange";
   [key: string]: unknown;
 };
 
@@ -165,6 +166,7 @@ function dballEventToTradeballEvent(event: TradeballDballEvent): TradeballEvent 
         ]
       }
     ],
+    source: "tradeball",
     rawDball: event
   };
 }
@@ -183,13 +185,15 @@ export class TradeballClient {
   }
 
   async getSoccerMoneylineEvents(start: Date, end: Date) {
-    const dballEvents = await this.getDballGuestEvents(start, end).catch(() => []);
-    if (dballEvents.length) {
-      return [...new Map(dballEvents.map((event) => [event.id, event])).values()];
-    }
+    const [dballEvents, exchangeEvents] = await Promise.all([
+      this.getDballGuestEvents(start, end).catch(() => []),
+      this.getExchangeEvents(start, end).catch(() => [])
+    ]);
 
-    const exchangeEvents = await this.getExchangeEvents(start, end).catch(() => []);
-    return [...new Map(exchangeEvents.map((event) => [event.id, event])).values()];
+    return [
+      ...new Map(dballEvents.map((event) => [`tradeball:${event.id}`, { ...event, source: "tradeball" as const }])).values(),
+      ...new Map(exchangeEvents.map((event) => [`exchange:${event.id}`, { ...event, source: "exchange" as const }])).values()
+    ];
   }
 
   private async getExchangeEvents(start: Date, end: Date) {
@@ -222,7 +226,7 @@ export class TradeballClient {
         maxRetries: 2
       });
 
-      const pageEvents = pageData.events ?? [];
+      const pageEvents = (pageData.events ?? []).map((event) => ({ ...event, source: "exchange" as const }));
       events.push(...pageEvents);
 
       if (pageEvents.length < perPage || events.length >= (pageData.total ?? 0)) break;

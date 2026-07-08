@@ -2,13 +2,14 @@ import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import pMap from "p-map";
 import type { AltenarBookmakerConfig } from "../config/bookmakers.js";
 import { env } from "../config/env.js";
+import { MVP_LEAGUES } from "../config/leagues.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
-import { AltenarClient, type AltenarEventDetails, type AltenarMarket, type AltenarOdd } from "../providers/altenar.js";
+import { AltenarClient, type AltenarEvent, type AltenarEventDetails, type AltenarMarket, type AltenarOdd } from "../providers/altenar.js";
 import { errorMessage } from "../utils/errors.js";
 import { logCollectorMessage } from "./collector-log.js";
 import { getSavedBookmakerEventLinks } from "./saved-bookmaker-events.js";
@@ -59,6 +60,16 @@ type CanonicalFixture = {
   id: string;
   api_football_fixture_id: number;
   name: string;
+  league:
+    | {
+        name: string;
+        api_football_league_id: number;
+      }
+    | Array<{
+        name: string;
+        api_football_league_id: number;
+      }>
+    | null;
   home_team: string | null;
   away_team: string | null;
   normalized_home_team: string | null;
@@ -72,7 +83,7 @@ async function getCanonicalFixtures() {
 
   const { data, error } = await supabase
     .from("fixtures")
-    .select("id,api_football_fixture_id,name,home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
+    .select("id,api_football_fixture_id,name,league:leagues(name,api_football_league_id),home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
     .gt("starts_at", now.toISOString())
     .lt("starts_at", end.toISOString())
     .order("starts_at", { ascending: true });
@@ -81,29 +92,23 @@ async function getCanonicalFixtures() {
   return (data ?? []) as unknown as CanonicalFixture[];
 }
 
+function fixtureLeague(fixture: CanonicalFixture) {
+  return Array.isArray(fixture.league) ? fixture.league[0] ?? null : fixture.league;
+}
+
 function matchFixture(details: AltenarEventDetails, fixtures: CanonicalFixture[]) {
   const { homeTeam, awayTeam } = splitTeams(details);
-  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
-  for (const fixture of fixtures) {
-    const result = matchEvents(
-      {
-        id: fixture.id,
-        startsAt: fixture.starts_at,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team
-      },
-      {
-        id: details.id,
-        startsAt: details.startDate,
-        homeTeam,
-        awayTeam
-      }
-    );
-
-    if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { ...result, fixture };
-  }
-
+  const best = findBestCanonicalEventMatch(
+    fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
+    {
+      id: details.id,
+      startsAt: details.startDate,
+      homeTeam,
+      awayTeam,
+      leagueName: details.champ?.name ?? null
+    },
+    { context: "league-scoped" }
+  );
   if (!best) return null;
   return { ...best, homeTeam, awayTeam };
 }
@@ -116,6 +121,55 @@ function isNearCanonicalFixtureWindow(startDate: string, fixtures: CanonicalFixt
     const fixtureStart = new Date(fixture.starts_at).getTime();
     return Number.isFinite(fixtureStart) && Math.abs(fixtureStart - eventStart) <= 20 * 60 * 1000;
   });
+}
+
+function altenarChampIdsForFixtures(fixtures: CanonicalFixture[]) {
+  const apiLeagueIds = new Set(
+    fixtures
+      .map((fixture) => fixtureLeague(fixture)?.api_football_league_id)
+      .map((leagueId) => Number(leagueId))
+      .filter((leagueId) => Number.isFinite(leagueId))
+  );
+
+  return [
+    ...new Set(
+      MVP_LEAGUES.filter((league) => apiLeagueIds.has(league.apiFootballLeagueId) && Number.isFinite(league.altenarChampId))
+        .map((league) => Number(league.altenarChampId))
+        .filter((champId) => Number.isFinite(champId))
+    )
+  ];
+}
+
+async function getDiscoveryEvents(client: AltenarClient, bookmaker: AltenarBookmakerConfig, fixtures: CanonicalFixture[]) {
+  const eventsById = new Map<number, AltenarEvent>();
+
+  if (bookmaker.discoveryMode !== "championship") {
+    try {
+      const footballEvents = await client.getFootballEvents();
+      for (const event of footballEvents) {
+        eventsById.set(Number(event.id), event);
+      }
+    } catch (error) {
+      await log(bookmaker, "warn", "altenar football discovery failed; falling back to championships", {
+        error: serializeError(error)
+      });
+    }
+  }
+
+  for (const champId of altenarChampIdsForFixtures(fixtures)) {
+    try {
+      const events = await client.getEvents(champId);
+      for (const event of events) {
+        eventsById.set(Number(event.id), event);
+      }
+    } catch (error) {
+      await log(bookmaker, "warn", "altenar championship discovery failed; skipping championship", {
+        champId,
+        error: serializeError(error)
+      });
+    }
+  }
+  return [...eventsById.values()];
 }
 
 function buildBookmakerLink(bookmaker: AltenarBookmakerConfig, fixtureId: string, details: AltenarEventDetails, confidenceScore: number): BookmakerLinkRow {
@@ -279,7 +333,7 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
         return summary;
       }
 
-      const events = await client.getFootballEvents();
+      const events = await getDiscoveryEvents(client, bookmaker, discoveryFixtures);
       summary.eventsSeen = events.length;
       const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event.startDate, discoveryFixtures));
       summary.eventsInWindow = targetEvents.length;

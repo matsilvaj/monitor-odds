@@ -21,7 +21,7 @@ export const MVP_LEAGUES: LeagueConfig[] = [
   { slug: "ligue-2", name: "Ligue 2", apiFootballLeagueId: 62 },
   { slug: "coupe-de-france", name: "Coupe de France", apiFootballLeagueId: 66 },
   { slug: "brasileirao", name: "Brasileirao", apiFootballLeagueId: 71, altenarChampId: 11318 },
-  { slug: "brasileirao-serie-b", name: "Brasileirao Serie B", apiFootballLeagueId: 72 },
+  { slug: "brasileirao-serie-b", name: "Brasileirao Serie B", apiFootballLeagueId: 72, altenarChampId: 11005 },
   { slug: "copa-do-brasil", name: "Copa do Brasil", apiFootballLeagueId: 73 },
   { slug: "bundesliga", name: "Bundesliga", apiFootballLeagueId: 78, altenarChampId: 2950 },
   { slug: "2-bundesliga", name: "2. Bundesliga", apiFootballLeagueId: 79 },
@@ -57,5 +57,5 @@ export const MVP_LEAGUES: LeagueConfig[] = [
   { slug: "turkish-super-cup", name: "Turkish Super Cup", apiFootballLeagueId: 551 },
   { slug: "supercopa-espana", name: "Supercopa de Espana", apiFootballLeagueId: 556 },
   { slug: "supercopa-do-brasil", name: "Supercopa do Brasil", apiFootballLeagueId: 632 },
-  { slug: "conference-league", name: "Conference League", apiFootballLeagueId: 848 },
+  { slug: "conference-league", name: "Conference League", apiFootballLeagueId: 848, altenarChampId: 31608 },
 ];

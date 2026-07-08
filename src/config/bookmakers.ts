@@ -23,6 +23,10 @@ export type AltenarBookmakerConfig = {
   origin: string;
   referer: string;
   engine: BookmakerHttpEngine;
+  discoveryMode?: "football" | "championship";
+  listDeviceType?: "1" | "2";
+  detailDeviceType?: "1" | "2";
+  acceptHeader?: string;
 };
 
 export type SportingbetBookmakerConfig = {
@@ -359,7 +363,10 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://jogodeouro.bet.br",
     referer: "https://jogodeouro.bet.br/",
-    engine: "fetch"
+    engine: "got-scraping",
+    discoveryMode: "championship",
+    listDeviceType: "1",
+    acceptHeader: "*/*"
   },
   {
     slug: "vupibet",

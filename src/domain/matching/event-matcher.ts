@@ -15,13 +15,26 @@ export type EventMatchResult = {
   score: number;
   timeScore: number;
   teamScore: number;
+  bestSingleTeamScore?: number;
   orientation: "NORMAL" | "INVERTED";
   reason: string;
+};
+
+export type MatchEventsOptions = {
+  context?: "strict" | "league-scoped";
+  trustedLeagueScope?: boolean;
+  maxTimeDiffMs?: number;
+  singleTeamMinScore?: number;
+  singleTeamMinTimeScore?: number;
+  pairScoreMargin?: number;
+  singleTeamScoreMargin?: number;
 };
 
 const MAX_TIME_DIFF_MS = 20 * 60 * 1000;
 const MIN_TEAM_SCORE = 0.65;
 const MIN_SIDE_TEAM_SCORE = 0.62;
+const MIN_SINGLE_TEAM_SCORE = 0.88;
+const MIN_SINGLE_TEAM_TIME_SCORE = 0.62;
 const VIRTUAL_EVENT_RE = /\b(?:e\s*soccer|esoccer|virtual|fantasy|simulado|simulacao|srl|cyber|pes|ebasket|basketball\s*cyber|kings\s*league)\b/i;
 const SAFE_PARTICIPANT_QUALIFIER_RE = /^(?:w|women|woman|f|fem|feminino|feminina|u\d{2}|sub\s*\d{2}|reserve|reserves|reserva|b|ii|iii|iv)$/;
 
@@ -85,35 +98,90 @@ function pairScore(leftHome: unknown, leftAway: unknown, rightHome: unknown, rig
   };
 }
 
-export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent): EventMatchResult {
+function teamEvidence(leftHome: unknown, leftAway: unknown, rightHome: unknown, rightAway: unknown) {
+  const normalHome = teamNameSimilarity(leftHome, rightHome);
+  const normalAway = teamNameSimilarity(leftAway, rightAway);
+  const invertedHome = teamNameSimilarity(leftHome, rightAway);
+  const invertedAway = teamNameSimilarity(leftAway, rightHome);
+  const bestSingle = [
+    { score: normalHome, orientation: "NORMAL" as const },
+    { score: normalAway, orientation: "NORMAL" as const },
+    { score: invertedHome, orientation: "INVERTED" as const },
+    { score: invertedAway, orientation: "INVERTED" as const }
+  ].sort((left, right) => right.score - left.score)[0];
+
+  return {
+    bestSingleTeamScore: bestSingle?.score ?? 0,
+    bestSingleOrientation: bestSingle?.orientation ?? ("NORMAL" as const)
+  };
+}
+
+export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent, options: MatchEventsOptions = {}): EventMatchResult {
   const canonicalTime = timestamp(canonical.startsAt);
   const bookmakerTime = timestamp(bookmaker.startsAt);
   const diffMs = Math.abs(canonicalTime - bookmakerTime);
+  const maxTimeDiffMs = options.maxTimeDiffMs ?? MAX_TIME_DIFF_MS;
 
   if (!Number.isFinite(canonicalTime) || !Number.isFinite(bookmakerTime)) {
     return { matched: false, score: 0, timeScore: 0, teamScore: 0, orientation: "NORMAL", reason: "invalid-time" };
   }
 
-  if (diffMs > MAX_TIME_DIFF_MS) {
+  if (diffMs > maxTimeDiffMs) {
     return { matched: false, score: 0, timeScore: 0, teamScore: 0, orientation: "NORMAL", reason: "time-rejected" };
   }
 
   if (!looksLikeVirtualEvent(canonical) && looksLikeVirtualEvent(bookmaker)) {
-    return { matched: false, score: 0, timeScore: 1 - diffMs / MAX_TIME_DIFF_MS, teamScore: 0, orientation: "NORMAL", reason: "virtual-event-rejected" };
+    return { matched: false, score: 0, timeScore: 1 - diffMs / maxTimeDiffMs, teamScore: 0, orientation: "NORMAL", reason: "virtual-event-rejected" };
   }
 
-  if (!hasSharedSignificantToken(canonical, bookmaker) && !hasStrongLeagueSignal(canonical, bookmaker)) {
-    return { matched: false, score: 0, timeScore: 1 - diffMs / MAX_TIME_DIFF_MS, teamScore: 0, orientation: "NORMAL", reason: "no-shared-token" };
+  const strongLeagueSignal = Boolean(options.trustedLeagueScope) || hasStrongLeagueSignal(canonical, bookmaker);
+  if (!hasSharedSignificantToken(canonical, bookmaker) && !strongLeagueSignal) {
+    return { matched: false, score: 0, timeScore: 1 - diffMs / maxTimeDiffMs, teamScore: 0, orientation: "NORMAL", reason: "no-shared-token" };
   }
 
   const normalScore = pairScore(canonical.homeTeam, canonical.awayTeam, bookmaker.homeTeam, bookmaker.awayTeam);
   const invertedScore = pairScore(canonical.homeTeam, canonical.awayTeam, bookmaker.awayTeam, bookmaker.homeTeam);
   const selectedScore = normalScore.score >= invertedScore.score ? normalScore : invertedScore;
   const orientation = normalScore.score >= invertedScore.score ? "NORMAL" : "INVERTED";
+  const evidence = teamEvidence(canonical.homeTeam, canonical.awayTeam, bookmaker.homeTeam, bookmaker.awayTeam);
   const teamScore = selectedScore.score;
-  const timeScore = 1 - diffMs / MAX_TIME_DIFF_MS;
+  const timeScore = 1 - diffMs / maxTimeDiffMs;
   const score = timeScore * 0.4 + teamScore * 0.6;
   const threshold = timeScore >= 0.95 ? 0.58 : timeScore >= 0.85 ? 0.64 : 0.72;
+  const pairMatched = selectedScore.minSideScore >= MIN_SIDE_TEAM_SCORE && teamScore >= MIN_TEAM_SCORE && score >= threshold;
+
+  if (pairMatched) {
+    return {
+      matched: true,
+      score,
+      timeScore,
+      teamScore,
+      bestSingleTeamScore: evidence.bestSingleTeamScore,
+      orientation,
+      reason: "matched"
+    };
+  }
+
+  const singleTeamMinScore = options.singleTeamMinScore ?? MIN_SINGLE_TEAM_SCORE;
+  const singleTeamMinTimeScore = options.singleTeamMinTimeScore ?? MIN_SINGLE_TEAM_TIME_SCORE;
+  const canUseSingleTeam =
+    options.context === "league-scoped" &&
+    strongLeagueSignal &&
+    timeScore >= singleTeamMinTimeScore &&
+    evidence.bestSingleTeamScore >= singleTeamMinScore;
+
+  if (canUseSingleTeam) {
+    const singleScore = evidence.bestSingleTeamScore * 0.72 + timeScore * 0.28;
+    return {
+      matched: true,
+      score: Math.max(score, singleScore),
+      timeScore,
+      teamScore,
+      bestSingleTeamScore: evidence.bestSingleTeamScore,
+      orientation: evidence.bestSingleOrientation,
+      reason: "single-team-league-scope"
+    };
+  }
 
   if (selectedScore.minSideScore < MIN_SIDE_TEAM_SCORE) {
     return {
@@ -121,6 +189,7 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
       score,
       timeScore,
       teamScore,
+      bestSingleTeamScore: evidence.bestSingleTeamScore,
       orientation,
       reason: "side-score-rejected"
     };
@@ -132,18 +201,20 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
       score,
       timeScore,
       teamScore,
+      bestSingleTeamScore: evidence.bestSingleTeamScore,
       orientation,
       reason: "team-score-rejected"
     };
   }
 
   return {
-    matched: score >= threshold,
+    matched: false,
     score,
     timeScore,
     teamScore,
+    bestSingleTeamScore: evidence.bestSingleTeamScore,
     orientation,
-    reason: score >= threshold ? "matched" : "below-threshold"
+    reason: "below-threshold"
   };
 }
 
@@ -164,4 +235,51 @@ export function findBestEventMatch<T extends MatchableEvent>(canonical: Matchabl
   }
 
   return best;
+}
+
+function matchableFromCanonicalCandidate(candidate: unknown): MatchableEvent {
+  const record = candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>) : {};
+  return {
+    id: record.id as string | number | undefined,
+    startsAt: (record.startsAt ?? record.starts_at ?? "") as string | number | Date,
+    homeTeam: (record.homeTeam ?? record.home_team ?? null) as string | null,
+    awayTeam: (record.awayTeam ?? record.away_team ?? null) as string | null,
+    leagueName: (record.leagueName ?? record.league_name ?? null) as string | null
+  };
+}
+
+function hasTrustedCandidateScope(candidates: MatchableEvent[]) {
+  if (candidates.length === 1) return true;
+
+  const leagueKeys = new Set(
+    candidates
+      .map((candidate) => normalizeForMatching(candidate.leagueName))
+      .filter(Boolean)
+  );
+  return leagueKeys.size === 1;
+}
+
+export function findBestCanonicalEventMatch<T>(canonicalCandidates: T[], bookmaker: MatchableEvent, options: MatchEventsOptions = {}) {
+  const candidates = canonicalCandidates.map((fixture) => ({ fixture, matchable: matchableFromCanonicalCandidate(fixture) }));
+  const matchOptions = {
+    ...options,
+    trustedLeagueScope:
+      options.trustedLeagueScope || (options.context === "league-scoped" && hasTrustedCandidateScope(candidates.map((candidate) => candidate.matchable)))
+  };
+  const accepted = candidates
+    .map(({ fixture, matchable }) => ({ fixture, match: matchEvents(matchable, bookmaker, matchOptions) }))
+    .filter((item) => item.match.matched)
+    .sort((left, right) => right.match.score - left.match.score);
+
+  const best = accepted[0];
+  if (!best) return null;
+
+  const runnerUp = accepted[1];
+  const requiredMargin =
+    best.match.reason === "single-team-league-scope"
+      ? options.singleTeamScoreMargin ?? 0.08
+      : options.pairScoreMargin ?? 0.02;
+
+  if (runnerUp && best.match.score - runnerUp.match.score < requiredMargin) return null;
+  return { ...best.match, fixture: best.fixture };
 }

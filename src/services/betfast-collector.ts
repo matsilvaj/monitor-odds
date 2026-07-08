@@ -3,7 +3,7 @@ import pMap from "p-map";
 import type { BetfastBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetfastClient, type BetfastEvent, type BetfastOdd } from "../providers/betfast.js";
@@ -84,31 +84,17 @@ function isNearCanonicalFixtureWindow(event: BetfastEvent, fixtures: CanonicalFi
 }
 
 function findBestMatch(event: BetfastEvent, fixtures: CanonicalFixture[]) {
-  let best: (EventMatchResult & { fixture: CanonicalFixture }) | null = null;
-
-  for (const fixture of fixtures) {
-    const result = matchEvents(
-      {
-        id: fixture.id,
-        startsAt: fixture.starts_at,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team,
-        leagueName: fixtureLeague(fixture)?.name ?? null
-      },
-      {
-        id: event.id,
-        startsAt: event.startsAt,
-        homeTeam: event.homeTeam,
-        awayTeam: event.awayTeam,
-        leagueName: event.leagueName
-      }
-    );
-
-    if (!result.matched) continue;
-    if (!best || result.score > best.score) best = { ...result, fixture };
-  }
-
-  return best;
+  return findBestCanonicalEventMatch(
+    fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
+    {
+      id: event.id,
+      startsAt: event.startsAt,
+      homeTeam: event.homeTeam,
+      awayTeam: event.awayTeam,
+      leagueName: event.leagueName
+    },
+    { context: "league-scoped" }
+  );
 }
 
 function selectionFromOdd(odd: BetfastOdd): Selection | null {

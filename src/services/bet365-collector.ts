@@ -1001,6 +1001,7 @@ export class Bet365Collector {
       oddsFound: 0,
       oddsUpserted: 0,
       errors: 0,
+      leagueUrlsOpened: 0,
       lastError: null as string | null
     };
 
@@ -1033,6 +1034,7 @@ export class Bet365Collector {
     const savedEventLinks = await getSavedBookmakerEventLinks(this.config.slug, fixtures.map((fixture) => fixture.id));
     const processedFixtureIds = new Set<string>();
     const attemptedLeagueUrls: Bet365LeagueUrlCandidate[] = [];
+    let openedAnyLeagueUrl = false;
     const applyFixtureResult = (result: Bet365FixtureCollectResult) => {
       leagueSummary.eventsCollected += result.eventsCollected;
       leagueSummary.eventsWithoutOdds += result.eventsWithoutOdds;
@@ -1102,6 +1104,8 @@ export class Bet365Collector {
 
       try {
         await this.chrome.navigateTo(candidate.sourceUrl);
+        openedAnyLeagueUrl = true;
+        leagueSummary.leagueUrlsOpened += 1;
       } catch (error) {
         leagueSummary.errors += 1;
         leagueSummary.lastError = errorMessage(error);
@@ -1145,8 +1149,14 @@ export class Bet365Collector {
       await this.logger("warn", leagueSummary.lastError, { fixtureId: fixture.id });
     }
 
-    if (!processedFixtureIds.size) {
+    if (!processedFixtureIds.size && !openedAnyLeagueUrl) {
       await requestLeagueUrlUpdate(this.config, firstLeague, savedLeagueLink?.source_url ?? null, attemptedLeagueUrls, this.logger);
+    } else if (!processedFixtureIds.size && openedAnyLeagueUrl) {
+      await this.logger("warn", "liga da bet365 abriu, mas nenhum evento alvo foi coletado", {
+        leagueName: firstLeague.name,
+        apiFootballLeagueId: firstLeague.api_football_league_id,
+        attemptedUrls: attemptedLeagueUrls.map((candidate) => ({ source: candidate.source, label: candidate.label, sourceUrl: candidate.sourceUrl }))
+      });
     }
 
     return leagueSummary;
