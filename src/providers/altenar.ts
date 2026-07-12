@@ -54,6 +54,7 @@ export type AltenarClientConfig = {
   origin: string;
   referer: string;
   engine: BookmakerHttpEngine;
+  eventListMode?: "legacy" | "coupon-events";
   listDeviceType?: "1" | "2";
   detailDeviceType?: "1" | "2";
   acceptHeader?: string;
@@ -85,6 +86,26 @@ export class AltenarClient {
   }
 
   async getEvents(champId: number) {
+    if (this.config.eventListMode === "coupon-events") {
+      const params = new URLSearchParams({
+        culture: "pt-BR",
+        timezoneOffset: "180",
+        integration: this.config.integration,
+        deviceType: this.listDeviceType,
+        numFormat: "en-GB",
+        countryCode: "BR",
+        champId: String(champId),
+        isLive: "false"
+      });
+
+      const data = await httpClient<{ events?: AltenarEvent[] }>({
+        url: new URL(`widget/GetBreadcrumbEvents?${params}`, this.config.baseUrl),
+        headers: this.headers,
+        referer: this.config.referer,
+        engine: this.config.engine
+      });
+      return Array.isArray(data.events) ? data.events.map((event) => ({ ...event, champId: event.champId ?? champId })) : [];
+    }
     const params = new URLSearchParams({
       culture: "pt-BR",
       timezoneOffset: "180",
@@ -107,6 +128,39 @@ export class AltenarClient {
   }
 
   async getFootballEvents() {
+    if (this.config.eventListMode === "coupon-events") {
+      const periods = [
+        { period: "5", couponType: "1" },
+        { period: "6", couponType: "2" }
+      ];
+      const responses = await Promise.all(
+        periods.map(async ({ period, couponType }) => {
+          const params = new URLSearchParams({
+            culture: "pt-BR",
+            timezoneOffset: "180",
+            integration: this.config.integration,
+            deviceType: this.listDeviceType,
+            numFormat: "en-GB",
+            countryCode: "BR",
+            eventCount: "0",
+            sportId: "66",
+            period,
+            couponType
+          });
+          return httpClient<{ events?: AltenarEvent[] }>({
+            url: new URL(`widget/GetCouponEvents?${params}`, this.config.baseUrl),
+            headers: this.headers,
+            referer: this.config.referer,
+            engine: this.config.engine,
+            timeoutMs: 30_000,
+            maxRetries: 1
+          });
+        })
+      );
+
+      const events = responses.flatMap((data) => (Array.isArray(data.events) ? data.events : []));
+      return [...new Map(events.map((event) => [Number(event.id), event])).values()];
+    }
     const params = new URLSearchParams({
       culture: "pt-BR",
       timezoneOffset: "180",

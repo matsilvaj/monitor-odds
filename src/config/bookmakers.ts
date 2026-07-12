@@ -24,6 +24,7 @@ export type AltenarBookmakerConfig = {
   referer: string;
   engine: BookmakerHttpEngine;
   discoveryMode?: "football" | "championship";
+  eventListMode?: "legacy" | "coupon-events";
   listDeviceType?: "1" | "2";
   detailDeviceType?: "1" | "2";
   acceptHeader?: string;
@@ -377,7 +378,9 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://www.vupi.bet.br",
     referer: "https://www.vupi.bet.br/",
-    engine: "fetch"
+    engine: "fetch",
+    eventListMode: "coupon-events",
+    listDeviceType: "1"
   },
   {
     slug: "sportingbet",
