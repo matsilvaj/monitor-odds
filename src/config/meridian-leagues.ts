@@ -6,7 +6,7 @@ export type MeridianLeagueConfig = {
 
 export const MERIDIAN_LEAGUES: Record<number, MeridianLeagueConfig> = {
   1: { id: 1, name: "Copa do Mundo", url: "https://meridianbet.bet.br/ca/esportes/futebol/mundo/copa-do-mundo-2026?leagueIds=176327" },
-  2: { id: 2, name: "Champions League", url: "https://meridianbet.bet.br/ca/esportes/futebol/europa/liga-dos-campe%C3%B5es?leagueIds=84" },
+  2: { id: 2, name: "Champions League - Classificatórias", url: "https://meridianbet.bet.br/ca/esportes/futebol/europa/liga-dos-campe%C3%B5es?leagueIds=84" },
   3: { id: 3, name: "Europa League", url: "https://meridianbet.bet.br/ca/esportes/futebol/europa/liga-europa?leagueIds=86" },
   10: { id: 10, name: "Friendlies", url: "https://meridianbet.bet.br/ca/esportes/futebol/mundo/amistosos-internacionais?leagueIds=106" },
   11: { id: 11, name: "Copa Sul-Americana", url: "https://meridianbet.bet.br/ca/esportes/futebol/am%C3%A9rica-do-sul/sudamericana?leagueIds=417" },

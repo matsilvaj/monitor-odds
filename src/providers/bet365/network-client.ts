@@ -1,6 +1,6 @@
 import { chromium, type Browser, type BrowserContext, type Page, type WebSocket } from "playwright-core";
 import { nationalTeamAliases } from "../../domain/matching/team-aliases.js";
-import { matchingTokens, teamNameSearchPatterns, teamNameSimilarity } from "../../domain/matching/text-similarity.js";
+import { matchingTokens, teamNameSearchPatterns } from "../../domain/matching/text-similarity.js";
 import type { Bet365DomMarket, Logger } from "./types.js";
 
 export type Bet365NetworkCapture = {
@@ -16,7 +16,6 @@ export type Bet365NetworkCapture = {
 export type Bet365ClickTarget = {
   homeTeam: string | null;
   awayTeam: string | null;
-  startsAt?: string | null;
 };
 
 export type Bet365NetworkTabSession = {
@@ -42,26 +41,6 @@ type Bet365DomMarketCard = {
   priceCount: number;
 };
 
-type Bet365FixtureCandidate = {
-  text: string;
-  homeTeam: string | null;
-  awayTeam: string | null;
-  startTime: string | null;
-  x: number;
-  y: number;
-};
-
-type Bet365FixtureEvidence = {
-  matched: boolean;
-  mode: "PAIR_MATCH" | "SINGLE_TEAM_UNIQUE" | "NO_MATCH";
-  score: number;
-  timeScore: number;
-  teamScore: number;
-  bestSingleTeamScore: number;
-  minPairSideScore: number;
-  reason: string;
-};
-
 type Bet365ClickPoint = {
   x: number;
   y: number;
@@ -81,16 +60,6 @@ function looksLikeBet365Payload(payload: string) {
 
 function isBet365EventUrl(url: string | null | undefined) {
   return /\/E\d+\/F/i.test(String(url ?? ""));
-}
-
-function bet365EventId(url: string | null | undefined) {
-  return String(url ?? "").match(/\/E(\d+)\//i)?.[1] ?? null;
-}
-
-function matchesExpectedBet365EventUrl(expectedUrl: string | null | undefined, currentUrl: string | null | undefined) {
-  const expectedEventId = bet365EventId(expectedUrl);
-  if (!expectedEventId) return true;
-  return bet365EventId(currentUrl) === expectedEventId;
 }
 
 function targetTeamNames(target: Bet365ClickTarget | null | undefined) {
@@ -133,83 +102,8 @@ function textMatchesTokenGroups(rawText: string, groups: string[][]) {
   );
 }
 
-function looksLikeFixtureTeamLine(line: string) {
-  const clean = line.trim();
-  if (clean.length < 2 || clean.length > 90) return false;
-  if (!/[A-Za-z\u00C0-\u024F]/.test(clean)) return false;
-  if (/\b(?:[1-9]\d{0,2}|0)[.,]\d{2,3}\b/.test(clean)) return false;
-  if (/^([01]?\d|2[0-3]):[0-5]\d$/.test(clean)) return false;
-  if (/^(?:v|vs|x|-|draw|empate|full time result|resultado final|popular|matches|jogos)$/i.test(normalizeText(clean))) return false;
-  if (/\b(?:pagamento antecipado|early payout|precos ajustados|enhanced prices|acum aumentado|acrescimos)\b/i.test(normalizeText(clean))) return false;
-  return true;
-}
-
-function fixtureTeamPairsFromText(rawText: string) {
-  const lines = rawText
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 160);
-  const pairs: Array<{ homeTeam: string; awayTeam: string }> = [];
-
-  for (const line of lines) {
-    const parts = line.split(/\s+(?:v|vs|x)\s+/i).map((part) => part.trim()).filter(Boolean);
-    if (parts.length === 2 && looksLikeFixtureTeamLine(parts[0]) && looksLikeFixtureTeamLine(parts[1])) {
-      pairs.push({ homeTeam: parts[0], awayTeam: parts[1] });
-    }
-  }
-
-  for (let index = 1; index < lines.length - 1; index += 1) {
-    if (!/^(?:v|vs|x|-)$/.test(lines[index].trim().toLowerCase())) continue;
-    const homeTeam = lines.slice(Math.max(0, index - 8), index).reverse().find(looksLikeFixtureTeamLine);
-    const awayTeam = lines.slice(index + 1, Math.min(lines.length, index + 8)).find(looksLikeFixtureTeamLine);
-    if (homeTeam && awayTeam) pairs.push({ homeTeam, awayTeam });
-  }
-
-  return [...new Map(pairs.map((pair) => [`${normalizeText(pair.homeTeam)}:${normalizeText(pair.awayTeam)}`, pair])).values()];
-}
-
-function fixturePairScore(target: Bet365ClickTarget | null | undefined, homeTeam: string | null | undefined, awayTeam: string | null | undefined) {
-  if (!target?.homeTeam || !target.awayTeam || !homeTeam || !awayTeam) return { score: 0, minSideScore: 0 };
-  const normalHome = teamNameSimilarity(target.homeTeam, homeTeam);
-  const normalAway = teamNameSimilarity(target.awayTeam, awayTeam);
-  const invertedHome = teamNameSimilarity(target.homeTeam, awayTeam);
-  const invertedAway = teamNameSimilarity(target.awayTeam, homeTeam);
-  const normal = { score: (normalHome + normalAway) / 2, minSideScore: Math.min(normalHome, normalAway) };
-  const inverted = { score: (invertedHome + invertedAway) / 2, minSideScore: Math.min(invertedHome, invertedAway) };
-  return normal.score >= inverted.score ? normal : inverted;
-}
-
-function fixtureSingleTeamScore(target: Bet365ClickTarget | null | undefined, homeTeam: string | null | undefined, awayTeam: string | null | undefined) {
-  if (!target?.homeTeam || !target.awayTeam || !homeTeam || !awayTeam) return 0;
-  return Math.max(
-    teamNameSimilarity(target.homeTeam, homeTeam),
-    teamNameSimilarity(target.homeTeam, awayTeam),
-    teamNameSimilarity(target.awayTeam, homeTeam),
-    teamNameSimilarity(target.awayTeam, awayTeam)
-  );
-}
-
-function fixtureTimeScore(target: Bet365ClickTarget | null | undefined, startTime: string | null | undefined) {
-  if (!target?.startsAt || !startTime) return 0.86;
-  const canonical = new Date(target.startsAt).getTime();
-  const candidate = new Date(candidateStartsAt(target, startTime)).getTime();
-  if (!Number.isFinite(canonical) || !Number.isFinite(candidate)) return 0.86;
-  const diffMs = Math.abs(canonical - candidate);
-  const maxDiffMs = 45 * 60 * 1000;
-  return Math.max(0, 1 - diffMs / maxDiffMs);
-}
-
 function textHasFixturePair(rawText: string, target: Bet365ClickTarget | null | undefined) {
-  if (textMatchesTokenGroups(rawText, teamTokenGroups(target?.homeTeam)) && textMatchesTokenGroups(rawText, teamTokenGroups(target?.awayTeam))) {
-    return true;
-  }
-
-  return fixtureTeamPairsFromText(rawText).some((pair) => {
-    const pairScore = fixturePairScore(target, pair.homeTeam, pair.awayTeam);
-    const singleTeamScore = fixtureSingleTeamScore(target, pair.homeTeam, pair.awayTeam);
-    return (pairScore.score >= 0.66 && pairScore.minSideScore >= 0.58) || singleTeamScore >= 0.88;
-  });
+  return textMatchesTokenGroups(rawText, teamTokenGroups(target?.homeTeam)) && textMatchesTokenGroups(rawText, teamTokenGroups(target?.awayTeam));
 }
 
 function pageLooksLikeHome(rawText: string) {
@@ -237,7 +131,11 @@ function isMarketBoundaryLine(normalizedLine: string) {
   return (
     /^(?:to qualify|para se qualificar|para se classificar|team to kick off|time para dar o pontape inicial|equipe a dar o pontape inicial|aposta aumentada|ganhos aumentados|criar aposta|correct score|placar correto|both teams|ambas equipes|total goals|total de gols|goals|gols|corners|escanteios|cartoes faltas|cartoes|cards|half|intervalo|1 tempo 2 tempo|other|outro|outros|asian lines|odds asiaticas|linhas asiaticas|bet builder|marcadores|scorers|chutes|shots|estatisticas do jogador|player stats)\b/.test(
       normalizedLine
-    ) || (/^[a-z0-9 ]{3,70}$/.test(normalizedLine) && !normalizedLine.includes(".") && !normalizedLine.includes(",") && /\b(?:qualify|qualificar|classificar|kick|pontape|score|placar|goals|gols|corners|escanteios|cards|cartoes|half|tempo|other|outro|asian|asiaticas|builder|stats|estatisticas|chutes|marcadores)\b/.test(normalizedLine))
+    ) ||
+    (/^[a-z0-9 ]{3,70}$/.test(normalizedLine) &&
+      !normalizedLine.includes(".") &&
+      !normalizedLine.includes(",") &&
+      /\b(?:qualify|qualificar|classificar|kick|pontape|score|placar|goals|gols|corners|escanteios|cards|cartoes|half|tempo|other|outro|asian|asiaticas|builder|stats|estatisticas|chutes|marcadores)\b/.test(normalizedLine))
   );
 }
 
@@ -275,10 +173,7 @@ function extractPriceValues(rawText: string) {
 }
 
 function extractSelectionRows(rawText: string) {
-  const lines = rawText
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const lines = rawText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
   const rows: Array<{ label: string; price: number }> = [];
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -305,15 +200,20 @@ function extractSelectionRows(rawText: string) {
   return rows;
 }
 
+function labelMatchesTeam(label: string, team: string | null | undefined) {
+  if (!label.trim() || !team?.trim()) return false;
+  if (textMatchesTokenGroups(label, teamTokenGroups(team))) return true;
+  return teamNameSearchPatterns(team).some((pattern) => new RegExp(pattern.source, "i").test(label));
+}
+
 function selectionRowsMatchTarget(target: Bet365ClickTarget | null | undefined, rows: Array<{ label: string; price: number }>) {
   if (!target?.homeTeam || !target.awayTeam || rows.length !== 3) return false;
-  const homeLabel = rows[0]?.label ?? "";
   const drawLabel = normalizeText(rows[1]?.label ?? "");
-  const awayLabel = rows[2]?.label ?? "";
-  if (!homeLabel || !awayLabel || (drawLabel && drawLabel !== "draw" && drawLabel !== "empate" && drawLabel !== "x")) return false;
-  const pairScore = fixturePairScore(target, homeLabel, awayLabel);
-  const singleTeamScore = fixtureSingleTeamScore(target, homeLabel, awayLabel);
-  return (pairScore.score >= 0.66 && pairScore.minSideScore >= 0.58) || singleTeamScore >= 0.88;
+  if (drawLabel && drawLabel !== "draw" && drawLabel !== "empate" && drawLabel !== "x") return false;
+
+  const normalPair = labelMatchesTeam(rows[0]?.label ?? "", target.homeTeam) && labelMatchesTeam(rows[2]?.label ?? "", target.awayTeam);
+  const invertedPair = labelMatchesTeam(rows[0]?.label ?? "", target.awayTeam) && labelMatchesTeam(rows[2]?.label ?? "", target.homeTeam);
+  return normalPair || invertedPair;
 }
 
 function blockLooksContaminated(rawText: string) {
@@ -335,23 +235,6 @@ function marketHeaderKey(header: string) {
   return normalizeText(header).replace(/\s+/g, " ");
 }
 
-function closedMoneylineHeaders(rawText: string) {
-  return moneylineBlocksFromText(rawText)
-    .map((block) => {
-      const header = block
-        .split(/\n+/)
-        .map((line) => line.trim())
-        .find((line) => isTargetMoneylineHeader(normalizeText(line)));
-      return header ? { header, prices: extractPriceValues(block).length } : null;
-    })
-    .filter((item): item is { header: string; prices: number } => Boolean(item))
-    .filter((item) => item.prices < 3)
-    .filter((item) => {
-      const block = moneylineBlocksFromText(rawText).find((candidate) => candidate.includes(item.header));
-      return block ? !blockLooksLikeEnhancedOfferGroup(block) : true;
-    });
-}
-
 function classifyVisibleMoneylineCategory(rawText: string) {
   const normalized = normalizeText(rawText);
   if (normalized.includes("pagamento antecipado") || normalized.includes("early payout") || normalized.includes("early pay out")) {
@@ -364,7 +247,7 @@ function marketQualityScore(market: Bet365DomMarket) {
   const normalized = normalizeText(market.rawText);
   let score = 0;
   if (market.selections.length >= 3) score += 3;
-  if (normalized.includes("full time result") || normalized.includes("resultado final")) score += 2;
+  if (isTargetMoneylineHeader(normalized)) score += 2;
   if (normalized.includes("pagamento antecipado") || normalized.includes("early payout")) score += 1;
   if (normalized.includes("enhanced prices") || normalized.includes("precos ajustados")) score += 1;
   if (!normalized.includes("to qualify") && !normalized.includes("para se classificar")) score += 1;
@@ -403,7 +286,7 @@ function parseVisibleMoneylineMarkets(rawTexts: string[], target: Bet365ClickTar
       .filter((selection): selection is { label: string; price: number } => Boolean(selection));
 
     const drawLabel = normalized.includes("empate") ? "Empate" : "Draw";
-    const drawPrice = priceAfterLabel(rawText, drawLabel);
+    const drawPrice = priceAfterLabel(rawText, drawLabel) ?? priceAfterLabel(rawText, "X");
     if (drawPrice) {
       selections.splice(1, 0, { label: drawLabel, price: drawPrice });
     }
@@ -450,87 +333,6 @@ function parseVisibleMoneylineMarkets(rawTexts: string[], target: Bet365ClickTar
     if (best) selected.push(best);
   }
   return selected.length ? selected : values.slice(0, 1);
-}
-
-function candidateStartsAt(target: Bet365ClickTarget | null | undefined, startTime: string | null | undefined) {
-  if (!target?.startsAt || !startTime) return target?.startsAt ?? "1970-01-01T00:00:00.000Z";
-  const base = new Date(target.startsAt);
-  const match = startTime.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
-  if (!Number.isFinite(base.getTime()) || !match) return target.startsAt;
-
-  const candidates = [-1, 0, 1].map((dayOffset) => {
-    const value = new Date(base);
-    value.setDate(value.getDate() + dayOffset);
-    value.setHours(Number(match[1]), Number(match[2]), 0, 0);
-    return value;
-  });
-  const closest = candidates.sort((left, right) => Math.abs(left.getTime() - base.getTime()) - Math.abs(right.getTime() - base.getTime()))[0];
-  return closest.toISOString();
-}
-
-function scoreFixtureCandidate(target: Bet365ClickTarget | null | undefined, candidate: Bet365FixtureCandidate): Bet365FixtureEvidence | null {
-  if (!target?.homeTeam || !target.awayTeam || !candidate.homeTeam || !candidate.awayTeam) return null;
-  const pair = fixturePairScore(target, candidate.homeTeam, candidate.awayTeam);
-  const singleTeamScore = fixtureSingleTeamScore(target, candidate.homeTeam, candidate.awayTeam);
-  const timeScore = fixtureTimeScore(target, candidate.startTime);
-  const pairMatch = pair.score >= 0.68 && pair.minSideScore >= 0.58;
-  const singleMatch = singleTeamScore >= 0.88 && timeScore >= 0.62;
-
-  if (pairMatch) {
-    return {
-      matched: true,
-      mode: "PAIR_MATCH",
-      score: pair.score * 0.75 + timeScore * 0.25,
-      timeScore,
-      teamScore: pair.score,
-      bestSingleTeamScore: singleTeamScore,
-      minPairSideScore: pair.minSideScore,
-      reason: "pair-match"
-    } satisfies Bet365FixtureEvidence;
-  }
-
-  if (singleMatch) {
-    return {
-      matched: true,
-      mode: "SINGLE_TEAM_UNIQUE",
-      score: singleTeamScore * 0.72 + timeScore * 0.28,
-      timeScore,
-      teamScore: singleTeamScore,
-      bestSingleTeamScore: singleTeamScore,
-      minPairSideScore: pair.minSideScore,
-      reason: "single-team-time-league"
-    } satisfies Bet365FixtureEvidence;
-  }
-
-  return {
-    matched: false,
-    mode: "NO_MATCH",
-    score: Math.max(pair.score, singleTeamScore) * 0.75 + timeScore * 0.25,
-    timeScore,
-    teamScore: pair.score,
-    bestSingleTeamScore: singleTeamScore,
-    minPairSideScore: pair.minSideScore,
-    reason: "below-evidence-threshold"
-  } satisfies Bet365FixtureEvidence;
-}
-
-function selectFixtureCandidate(scored: Array<{ candidate: Bet365FixtureCandidate; match: Bet365FixtureEvidence }>) {
-  const accepted = scored
-    .filter((item) => item.match.matched)
-    .sort((left, right) => right.match.score - left.match.score);
-  const best = accepted[0];
-  if (!best) return null;
-
-  const runnerUp = accepted[1];
-  if (best.match.mode === "PAIR_MATCH") {
-    return !runnerUp || best.match.score - runnerUp.match.score >= 0.02 ? best : null;
-  }
-
-  if (best.match.mode === "SINGLE_TEAM_UNIQUE") {
-    return !runnerUp || best.match.score - runnerUp.match.score >= 0.08 ? best : null;
-  }
-
-  return null;
 }
 
 class Bet365PageController {
@@ -658,97 +460,6 @@ class Bet365PageController {
       .catch(() => undefined);
   }
 
-  private async readFixtureCandidates(): Promise<Bet365FixtureCandidate[]> {
-    if (!this.page) return [];
-    return this.page
-      .evaluate(() => {
-        const normalize = (value: unknown) =>
-          String(value ?? "")
-            .normalize("NFD")
-            .replace(/\p{Diacritic}/gu, "")
-            .toLowerCase()
-            .replace(/[^a-z0-9.,]+/g, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-        const priceRe = /\b(?:[1-9]\d{0,2}|0)[.,]\d{2,3}\b/;
-        const timeRe = /^([01]?\d|2[0-3]):[0-5]\d$/;
-        const isVisible = (element: HTMLElement) => {
-          const rect = element.getBoundingClientRect();
-          const style = window.getComputedStyle(element);
-          return rect.width >= 30 && rect.height >= 12 && rect.bottom >= 0 && rect.top <= window.innerHeight && style.display !== "none" && style.visibility !== "hidden";
-        };
-        const looksLikeTeamLine = (line: string) => {
-          const clean = line.trim();
-          const normalized = normalize(clean);
-          if (clean.length < 2 || clean.length > 90) return false;
-          if (!/[A-Za-z\u00C0-\u024F]/.test(clean)) return false;
-          if (priceRe.test(clean) || timeRe.test(clean)) return false;
-          if (/^(?:v|vs|x|-|draw|empate|popular|matches|jogos|full time result|resultado final)$/.test(normalized)) return false;
-          if (/\b(?:pagamento antecipado|early payout|precos ajustados|enhanced prices|acum aumentado|acrescimos|promocoes|registre se|login)\b/.test(normalized)) return false;
-          return true;
-        };
-        const parseTeams = (text: string) => {
-          const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean).slice(0, 30);
-          for (const line of lines) {
-            const parts = line.split(/\s+(?:v|vs|x)\s+/i).map((part) => part.trim()).filter(Boolean);
-            if (parts.length === 2 && looksLikeTeamLine(parts[0]) && looksLikeTeamLine(parts[1])) {
-              return { homeTeam: parts[0], awayTeam: parts[1], startTime: lines.find((candidate) => timeRe.test(candidate)) ?? null };
-            }
-          }
-
-          for (let index = 1; index < lines.length - 1; index += 1) {
-            if (!/^(?:v|vs|x|-)$/.test(lines[index].trim().toLowerCase())) continue;
-            const homeTeam = lines.slice(Math.max(0, index - 8), index).reverse().find(looksLikeTeamLine);
-            const awayTeam = lines.slice(index + 1, Math.min(lines.length, index + 8)).find(looksLikeTeamLine);
-            if (homeTeam && awayTeam) return { homeTeam, awayTeam, startTime: lines.find((candidate) => timeRe.test(candidate)) ?? null };
-          }
-
-          const teamLines = lines.filter(looksLikeTeamLine);
-          if (teamLines.length >= 2) return { homeTeam: teamLines[0], awayTeam: teamLines[1], startTime: lines.find((candidate) => timeRe.test(candidate)) ?? null };
-          return { homeTeam: null, awayTeam: null, startTime: lines.find((candidate) => timeRe.test(candidate)) ?? null };
-        };
-
-        const selectors = [
-          ".rcl-ParticipantFixtureDetails-clickable",
-          "[class*='ParticipantFixtureDetails-clickable']",
-          "[class*='ParticipantFixtureDetails']",
-          "[class*='FixtureDetails']",
-          "[class*='EventRow']",
-          "[class*='CouponParticipant']"
-        ];
-        const seen = new Set<Element>();
-        const nodes = selectors.flatMap((selector) =>
-          [...document.querySelectorAll(selector)].filter((node) => {
-            if (seen.has(node)) return false;
-            seen.add(node);
-            return true;
-          })
-        );
-        const candidates: Bet365FixtureCandidate[] = [];
-
-        for (const node of nodes) {
-          const element = node as HTMLElement;
-          if (!isVisible(element)) continue;
-          const rect = element.getBoundingClientRect();
-          const text = (element.innerText || element.textContent || "").trim();
-          if (text.length < 4 || text.length > 500 || rect.height > 240) continue;
-          const teams = parseTeams(text);
-          if (!teams.homeTeam || !teams.awayTeam) continue;
-          candidates.push({
-            text: text.slice(0, 500),
-            homeTeam: teams.homeTeam,
-            awayTeam: teams.awayTeam,
-            startTime: teams.startTime,
-            x: rect.left + Math.min(Math.max(rect.width * 0.35, 24), rect.width - 6),
-            y: rect.top + rect.height / 2
-          });
-        }
-
-        return [...new Map(candidates.map((candidate) => [`${normalize(candidate.homeTeam)}:${normalize(candidate.awayTeam)}:${candidate.startTime ?? ""}`, candidate])).values()];
-      })
-      .catch(() => []);
-  }
-
   private async readMoneylineMarketCards(): Promise<Bet365DomMarketCard[]> {
     if (!this.page) return [];
     return this.page
@@ -780,6 +491,7 @@ class Bet365PageController {
               cursor = cursor.parentElement;
               continue;
             }
+
             const rect = cursor.getBoundingClientRect();
             const text = (cursor.innerText || cursor.textContent || "").trim();
             const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
@@ -821,8 +533,8 @@ class Bet365PageController {
       .catch(() => []);
   }
 
-  private async moneylineMarketHeaderClickPoints(header: string): Promise<Bet365ClickPoint[]> {
-    if (!this.page) return [];
+  private async moneylineMarketHeaderClickPoint(header: string): Promise<Bet365ClickPoint | null> {
+    if (!this.page) return null;
     return this.page
       .evaluate((targetHeader) => {
         const normalize = (value: unknown) =>
@@ -834,41 +546,22 @@ class Bet365PageController {
             .replace(/\s+/g, " ")
             .trim();
         const target = normalize(targetHeader);
+        const priceRe = /\b([1-9]\d{0,2}[.,]\d{2,3})\b/;
         const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
         const isVisible = (element: HTMLElement) => {
           const rect = element.getBoundingClientRect();
           const style = window.getComputedStyle(element);
           return rect.width >= 8 && rect.height >= 8 && style.display !== "none" && style.visibility !== "hidden";
         };
-        const hasTargetHeader = (element: HTMLElement) =>
+        const hasExactTargetHeader = (element: HTMLElement) =>
           (element.innerText || element.textContent || "")
             .split(/\n+/)
             .map((line) => normalize(line))
-            .some((line) => line === target || line.includes(target));
-        const visibleRect = (element: HTMLElement) => {
-          const rect = element.getBoundingClientRect();
-          return {
-            left: clamp(rect.left, 0, window.innerWidth - 2),
-            right: clamp(rect.right, 2, window.innerWidth - 2),
-            top: clamp(rect.top, 0, window.innerHeight - 2),
-            bottom: clamp(rect.bottom, 2, window.innerHeight - 2),
-            width: rect.width,
-            height: rect.height
-          };
-        };
-        const clickPoints: Bet365ClickPoint[] = [];
-        const addPoint = (x: number, y: number, reason: string) => {
-          if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-          clickPoints.push({
-            x: clamp(x, 2, window.innerWidth - 2),
-            y: clamp(y, 2, window.innerHeight - 2),
-            reason
-          });
-        };
+            .some((line) => line === target);
 
         const headerElements = [...document.querySelectorAll("body *")]
           .map((node) => node as HTMLElement)
-          .filter((element) => isVisible(element) && hasTargetHeader(element))
+          .filter((element) => isVisible(element) && hasExactTargetHeader(element))
           .sort((left, right) => {
             const leftRect = left.getBoundingClientRect();
             const rightRect = right.getBoundingClientRect();
@@ -877,152 +570,73 @@ class Bet365PageController {
 
         for (const headerElement of headerElements.slice(0, 8)) {
           headerElement.scrollIntoView({ block: "center", inline: "nearest" });
-          const headerRect = visibleRect(headerElement);
-          const headerY = headerRect.top + Math.max(Math.min(headerRect.height / 2, 24), 10);
-          addPoint(window.innerWidth - 118, headerY, "viewport-right-at-header");
-          addPoint(window.innerWidth - 64, headerY, "viewport-far-right-at-header");
+          let cursor: HTMLElement | null = headerElement;
+          let headerRow: HTMLElement | null = null;
+          while (cursor && cursor !== document.body && cursor !== document.documentElement) {
+            if (!hasExactTargetHeader(cursor) || !isVisible(cursor)) break;
+            const rect = cursor.getBoundingClientRect();
+            const text = (cursor.innerText || cursor.textContent || "").trim();
 
-          let root: HTMLElement | null = headerElement;
-          let bestRoot: HTMLElement | null = headerElement;
-          while (root && root !== document.body && root !== document.documentElement) {
-            if (hasTargetHeader(root) && isVisible(root)) {
-              const rect = root.getBoundingClientRect();
-              const text = root.innerText || root.textContent || "";
-              if (rect.width >= 180 && rect.height >= 24 && rect.height <= 360 && text.length <= 1400) {
-                bestRoot = root;
-              }
-            }
-            root = root.parentElement;
+            // A faixa do cabecalho nunca contem odds. Paramos antes de subir
+            // para o card inteiro, cuja area inclui as selecoes clicaveis.
+            if (priceRe.test(text) || rect.height > 120 || text.length > 420) break;
+            if (rect.width >= 180 && rect.height >= 20) headerRow = cursor;
+            cursor = cursor.parentElement;
           }
 
-          const rootRect = visibleRect(bestRoot);
-          const clickableSelectors = [
-            "button",
-            "[role='button']",
+          if (!headerRow) continue;
+          const headerRect = headerRow.getBoundingClientRect();
+          const toggleSelectors = [
             "[class*='Chevron']",
             "[class*='chevron']",
             "[class*='Arrow']",
             "[class*='arrow']",
             "[class*='Toggle']",
             "[class*='toggle']",
-            "[class*='Header']",
-            "[class*='Market']"
+            "[aria-expanded]"
           ];
-          const clickables = clickableSelectors
-            .flatMap((selector) => [...bestRoot.querySelectorAll(selector)])
+          const toggles = toggleSelectors
+            .flatMap((selector) => [...headerRow.querySelectorAll(selector)])
             .map((node) => node as HTMLElement)
             .filter(isVisible)
             .map((element) => ({ element, rect: element.getBoundingClientRect() }))
-            .filter(({ rect }) => rect.left >= rootRect.left && rect.right <= rootRect.right + 4)
-            .sort((left, right) => right.rect.right - left.rect.right || Math.abs(left.rect.top - headerRect.top) - Math.abs(right.rect.top - headerRect.top));
+            .filter(({ rect }) => {
+              const centerY = rect.top + rect.height / 2;
+              return (
+                rect.left >= headerRect.left &&
+                rect.right <= headerRect.right + 2 &&
+                centerY >= headerRect.top &&
+                centerY <= headerRect.bottom
+              );
+            })
+            .sort((left, right) => right.rect.right - left.rect.right);
 
-          const clickable = clickables[0];
-          if (clickable) {
-            addPoint(clickable.rect.left + clickable.rect.width / 2, clickable.rect.top + clickable.rect.height / 2, "child-clickable");
+          const toggle = toggles[0];
+          if (toggle) {
+            return {
+              x: clamp(toggle.rect.left + toggle.rect.width / 2, 2, window.innerWidth - 2),
+              y: clamp(toggle.rect.top + toggle.rect.height / 2, 2, window.innerHeight - 2),
+              reason: "header-toggle"
+            } satisfies Bet365ClickPoint;
           }
 
-          addPoint(rootRect.right - 24, headerY, "root-right-at-header");
-          addPoint(window.innerWidth - 140, headerY, "viewport-safe-right-at-header");
-          addPoint(rootRect.left + Math.min(180, Math.max(24, rootRect.width * 0.18)), headerY, "header-left-label");
+          // Fallback seguro: extremo direito da propria faixa de cabecalho.
+          // Nunca usa o viewport nem procura qualquer <button> do card.
+          return {
+            x: clamp(headerRect.right - 24, headerRect.left + 8, window.innerWidth - 2),
+            y: clamp(headerRect.top + Math.min(Math.max(headerRect.height / 2, 12), 32), 2, window.innerHeight - 2),
+            reason: "header-row-right"
+          } satisfies Bet365ClickPoint;
         }
 
-        return [...new Map(clickPoints.map((point) => [`${Math.round(point.x)}:${Math.round(point.y)}:${point.reason}`, point])).values()].slice(0, 24);
+        return null;
       }, header)
-      .catch(() => []);
+      .catch(() => null);
   }
-
   private async clickMoneylineMarketHeaderPoint(point: Bet365ClickPoint) {
     if (!this.page) return false;
     await this.page.mouse.move(point.x, point.y).catch(() => undefined);
     await this.page.mouse.click(point.x, point.y).catch(() => undefined);
-    return true;
-  }
-
-  private async clickMoneylineMarketHeader(header: string) {
-    if (!this.page) return false;
-
-    for (const point of await this.moneylineMarketHeaderClickPoints(header)) {
-      if (await this.clickMoneylineMarketHeaderPoint(point)) return true;
-    }
-
-    const clickHeaderRowChevron = async (locator: ReturnType<Page["getByText"]>, index: number) => {
-      const box = await locator.nth(index).boundingBox().catch(() => null);
-      const viewport = this.page?.viewportSize();
-      if (!box || !viewport) return false;
-      const x = Math.min(Math.max(box.x + box.width + 40, viewport.width - 140), viewport.width - 24);
-      const y = box.y + Math.max(box.height / 2, 10);
-      await this.page?.mouse.click(x, y).catch(() => undefined);
-      return true;
-    };
-
-    const locator = this.page.getByText(header, { exact: true });
-    const count = await locator.count().catch(() => 0);
-    for (let index = 0; index < Math.min(count, 4); index += 1) {
-      try {
-        if (await clickHeaderRowChevron(locator, index)) return true;
-        await locator.nth(index).click({ timeout: 2_500 });
-        return true;
-      } catch {
-        // Tenta outro elemento com o mesmo header.
-      }
-    }
-
-    const looseLocator = this.page.getByText(header, { exact: false });
-    const looseCount = await looseLocator.count().catch(() => 0);
-    for (let index = 0; index < Math.min(looseCount, 4); index += 1) {
-      try {
-        if (await clickHeaderRowChevron(looseLocator, index)) return true;
-        await looseLocator.nth(index).click({ timeout: 2_500 });
-        return true;
-      } catch {
-        // Tenta outro elemento compativel com o mesmo header.
-      }
-    }
-
-    return false;
-  }
-
-  private async expandMoneylineMarketHeader(header: string) {
-    if (!this.page) return false;
-
-    for (const point of await this.moneylineMarketHeaderClickPoints(header)) {
-      await this.clickMoneylineMarketHeaderPoint(point);
-      if (await this.waitForMoneylineHeaderPrices(header, 3, 1_250)) return true;
-    }
-
-    const clickHeaderRowChevron = async (locator: ReturnType<Page["getByText"]>, index: number) => {
-      const box = await locator.nth(index).boundingBox().catch(() => null);
-      const viewport = this.page?.viewportSize();
-      if (!box || !viewport) return false;
-      const x = Math.min(Math.max(box.x + box.width + 40, viewport.width - 140), viewport.width - 24);
-      const y = box.y + Math.max(box.height / 2, 10);
-      await this.page?.mouse.click(x, y).catch(() => undefined);
-      return this.waitForMoneylineHeaderPrices(header, 3, 1_250);
-    };
-
-    const locator = this.page.getByText(header, { exact: true });
-    const count = await locator.count().catch(() => 0);
-    for (let index = 0; index < Math.min(count, 4); index += 1) {
-      if (await clickHeaderRowChevron(locator, index)) return true;
-      await locator.nth(index).click({ timeout: 1_500 }).catch(() => undefined);
-      if (await this.waitForMoneylineHeaderPrices(header, 3, 1_250)) return true;
-    }
-
-    const looseLocator = this.page.getByText(header, { exact: false });
-    const looseCount = await looseLocator.count().catch(() => 0);
-    for (let index = 0; index < Math.min(looseCount, 4); index += 1) {
-      if (await clickHeaderRowChevron(looseLocator, index)) return true;
-      await looseLocator.nth(index).click({ timeout: 1_500 }).catch(() => undefined);
-      if (await this.waitForMoneylineHeaderPrices(header, 3, 1_250)) return true;
-    }
-
-    return false;
-  }
-
-  private async clickMoneylineMarketCard(card: Bet365DomMarketCard) {
-    if (!this.page) return false;
-    if (await this.clickMoneylineMarketHeader(card.header)) return true;
-    await this.page.mouse.click(card.x, card.y).catch(() => undefined);
     return true;
   }
 
@@ -1047,50 +661,43 @@ class Bet365PageController {
     return false;
   }
 
+  private async expandMoneylineMarketHeader(header: string) {
+    if (!this.page) return false;
+    const point = await this.moneylineMarketHeaderClickPoint(header);
+    if (!point) {
+      await this.logger?.("warn", "cabecalho 1X2 da bet365 sem alvo seguro para expansao", { header });
+      return false;
+    }
+
+    await this.clickMoneylineMarketHeaderPoint(point);
+    const expanded = await this.waitForMoneylineHeaderPrices(header, 3, 1_500);
+    if (!expanded) {
+      await this.logger?.("warn", "mercado 1X2 da bet365 nao expandiu apos clique seguro", {
+        header,
+        reason: point.reason
+      });
+    }
+    return expanded;
+  }
   private async expandCollapsedMoneylineMarkets(target: Bet365ClickTarget | null | undefined) {
     if (!this.page) return 0;
-    const attemptsByKey = new Map<string, number>();
+    const attempted = new Set<string>();
     let expanded = 0;
 
-    for (let attempt = 1; attempt <= 8; attempt += 1) {
+    // Existem no maximo dois mercados 1X2 relevantes: com PA e sem PA.
+    // Cada card fechado recebe no maximo um clique.
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
       const cards = await this.readMoneylineMarketCards();
       const candidate = cards.find((card) => {
         const key = `${Math.round(card.x)}:${Math.round(card.y)}:${marketHeaderKey(card.header)}`;
-        if ((attemptsByKey.get(key) ?? 0) >= 2) return false;
-        const parsed = target ? parseVisibleMoneylineMarkets([card.text], target) : [];
-        return card.priceCount < 3 || (target ? parsed.length === 0 : false);
+        if (attempted.has(key)) return false;
+        return card.priceCount === 0 && (!target || !textHasFixturePair(card.text, target));
       });
 
-      if (candidate) {
-        const key = `${Math.round(candidate.x)}:${Math.round(candidate.y)}:${marketHeaderKey(candidate.header)}`;
-        attemptsByKey.set(key, (attemptsByKey.get(key) ?? 0) + 1);
-        if (await this.expandMoneylineMarketHeader(candidate.header)) expanded += 1;
-        continue;
-      }
-
-      const bodyText = await this.page.locator("body").innerText({ timeout: 3_000 }).catch(() => "");
-      const bodyCandidate = moneylineBlocksFromText(bodyText)
-        .map((block) => ({
-          block,
-          header: block.split(/\n+/).map((line) => line.trim()).find((line) => isTargetMoneylineHeader(normalizeText(line))) ?? "Full Time Result",
-          priceCount: extractPriceValues(block).length,
-          parsed: target ? parseVisibleMoneylineMarkets([block], target) : []
-        }))
-        .find((block) => {
-          const key = `body:${marketHeaderKey(block.header)}:${block.priceCount}`;
-          if ((attemptsByKey.get(key) ?? 0) >= 2) return false;
-          return block.priceCount < 3 || (target ? block.parsed.length === 0 : false);
-        });
-
-      if (!bodyCandidate) break;
-      const key = `body:${marketHeaderKey(bodyCandidate.header)}:${bodyCandidate.priceCount}`;
-      attemptsByKey.set(key, (attemptsByKey.get(key) ?? 0) + 1);
-      if (await this.expandMoneylineMarketHeader(bodyCandidate.header)) {
-        expanded += 1;
-        continue;
-      }
-
-      break;
+      if (!candidate) break;
+      const key = `${Math.round(candidate.x)}:${Math.round(candidate.y)}:${marketHeaderKey(candidate.header)}`;
+      attempted.add(key);
+      if (await this.expandMoneylineMarketHeader(candidate.header)) expanded += 1;
     }
 
     if (expanded > 0) {
@@ -1098,7 +705,6 @@ class Bet365PageController {
     }
     return expanded;
   }
-
   private async clickFixtureContainerByTeam(target: Bet365ClickTarget | null | undefined, sourceUrl: string) {
     if (!this.page || !target?.homeTeam || !target.awayTeam) return null;
 
@@ -1118,32 +724,6 @@ class Bet365PageController {
     await this.page.waitForTimeout(500);
 
     for (let pageDown = 0; pageDown < 18; pageDown += 1) {
-      const scoredCandidates = (await this.readFixtureCandidates())
-        .map((candidate) => ({ candidate, match: scoreFixtureCandidate(target, candidate) }))
-        .filter((item): item is { candidate: Bet365FixtureCandidate; match: Bet365FixtureEvidence } => Boolean(item.match))
-        .sort((left, right) => right.match.score - left.match.score);
-      const bestCandidate = selectFixtureCandidate(scoredCandidates);
-      if (bestCandidate) {
-        await this.page.mouse.click(bestCandidate.candidate.x, bestCandidate.candidate.y);
-        if (await this.clickOpenedEvent(target)) {
-          await this.logger?.("info", "evento da bet365 aberto por matching DOM", {
-            homeTeam: target.homeTeam,
-            awayTeam: target.awayTeam,
-            bookmakerHomeTeam: bestCandidate.candidate.homeTeam,
-            bookmakerAwayTeam: bestCandidate.candidate.awayTeam,
-            mode: bestCandidate.match.mode,
-            score: bestCandidate.match.score,
-            teamScore: bestCandidate.match.teamScore,
-            bestSingleTeamScore: bestCandidate.match.bestSingleTeamScore,
-            timeScore: bestCandidate.match.timeScore,
-            sourceUrl: this.page.url(),
-            text: bestCandidate.candidate.text.slice(0, 180)
-          });
-          return target.homeTeam;
-        }
-        await this.restoreAfterRejectedClick(sourceUrl);
-      }
-
       const candidate = await this.page
         .evaluate(
           ({ homeGroups, awayGroups }) => {
@@ -1286,11 +866,17 @@ class Bet365PageController {
       }
 
       if (markets.length) {
-        const closedHeaders = closedMoneylineHeaders(rawText);
-        if (closedHeaders.length && attempt < 4) {
-          expanded += await this.expandCollapsedMoneylineMarkets(target);
-          await this.page.waitForTimeout(350);
-          continue;
+        const closedCards = cards.filter((card) => card.priceCount === 0 && (!target || !textHasFixturePair(card.text, target)));
+        if (closedCards.length && attempt < 4) {
+          const newlyExpanded = await this.expandCollapsedMoneylineMarkets(target);
+          expanded += newlyExpanded;
+          if (newlyExpanded > 0) {
+            await this.page.waitForTimeout(350);
+            continue;
+          }
+          await this.logger?.("warn", "mercado 1X2 fechado permaneceu sem alvo seguro", {
+            headers: closedCards.map((card) => card.header)
+          });
         }
 
         await this.logger?.("info", "mercados da bet365 lidos do DOM", {
@@ -1298,7 +884,7 @@ class Bet365PageController {
           categories: markets.map((market) => market.paCategory),
           cards: cards.length,
           expanded,
-          closedHeaders: closedHeaders.map((item) => item.header)
+          closedHeaders: closedCards.map((card) => card.header)
         });
         return { markets, rawText, expanded };
       }
@@ -1332,12 +918,10 @@ class Bet365PageController {
 
     this.page.on("websocket", onWebSocket);
     try {
-      const isExpectedEventPage = (candidate: Bet365PageState | null | undefined) =>
-        Boolean(candidate && matchesExpectedBet365EventUrl(url, candidate.sourceUrl));
       let state = target ? await this.inspectCurrentPage(target, 1_500).catch(() => null) : null;
       if (state) pageState = state.name;
 
-      if (!forceNavigate && target && pageStateIsTargetEvent(state) && isExpectedEventPage(state)) {
+      if (!forceNavigate && target && pageStateIsTargetEvent(state)) {
         await this.logger?.("info", "pagina atual da bet365 ja esta no evento alvo", {
           state: state.name,
           sourceUrl: state.sourceUrl,
@@ -1348,7 +932,7 @@ class Bet365PageController {
         state = target
           ? await this.waitForPageState(
               target,
-              (candidate) => (pageStateIsTargetEvent(candidate) && isExpectedEventPage(candidate)) || candidate.name === "LEAGUE",
+              (candidate) => pageStateIsTargetEvent(candidate) || candidate.name === "LEAGUE",
               Math.max(4_000, Math.min(waitMs, 10_000))
             )
           : await this.inspectCurrentPage(target, 1_500).catch(() => null);
@@ -1360,13 +944,13 @@ class Bet365PageController {
           if (state?.name !== "LEAGUE") {
             state = await this.waitForPageState(
               target,
-              (candidate) => (pageStateIsTargetEvent(candidate) && isExpectedEventPage(candidate)) || candidate.name === "LEAGUE",
+              (candidate) => pageStateIsTargetEvent(candidate) || candidate.name === "LEAGUE",
               Math.max(4_000, Math.min(waitMs, 10_000))
             );
             pageState = state.name;
           }
 
-          if (pageStateIsTargetEvent(state) && isExpectedEventPage(state)) {
+          if (pageStateIsTargetEvent(state)) {
             await this.logger?.("info", "evento alvo da bet365 detectado sem novo clique", {
               state: state.name,
               sourceUrl: state.sourceUrl,
@@ -1381,7 +965,7 @@ class Bet365PageController {
         }
       }
 
-      if (target && clickEvent && !clickedTeam && (!pageStateIsTargetEvent(state) || !isExpectedEventPage(state))) {
+      if (target && clickEvent && !clickedTeam && !pageStateIsTargetEvent(state)) {
         pageText = state?.pageText || (await this.pageBodyText(2_000));
         return {
           sourceUrl: this.page.url(),
@@ -1394,25 +978,8 @@ class Bet365PageController {
         };
       }
 
-      if (!matchesExpectedBet365EventUrl(url, this.page.url())) {
-        pageText = state?.pageText || (await this.pageBodyText(2_000));
-        return {
-          sourceUrl: this.page.url(),
-          payloads,
-          domMarkets,
-          domMarketsExpanded,
-          clickedTeam,
-          pageText,
-          pageState: "WRONG_EVENT"
-        };
-      }
-
       if (target && pageStateIsTargetEvent(state)) {
-        state = await this.waitForPageState(
-          target,
-          (candidate) => candidate.name === "EVENT_READY" && isExpectedEventPage(candidate),
-          Math.min(waitMs, 6_000)
-        );
+        state = await this.waitForPageState(target, (candidate) => candidate.name === "EVENT_READY", Math.min(waitMs, 6_000));
         pageState = state.name;
       }
 

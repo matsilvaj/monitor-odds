@@ -5,7 +5,6 @@ import type { Bet365BookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { matchEvents } from "../domain/matching/event-matcher.js";
-import { teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import { normalizeName } from "../domain/text.js";
 import { buildBet365Event, buildBet365EventFromDomMarkets, summarizeBet365Payloads } from "../providers/bet365/parser.js";
 import type { Bet365Event, Bet365FixtureTarget, Bet365Market, Logger } from "../providers/bet365/types.js";
@@ -123,6 +122,7 @@ type Bet365DirectRefreshResult = {
 
 const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   1: [{ label: "Copa do Mundo", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E131901075/G40/I%5E88/" }],
+  3: [{ label: "Europa League - Classificatórias", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E135566042/G40/" }],
   71: [{ label: "Brasileirao Serie A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E88369731/G40/" }],
   72: [{ label: "Brasileirao Serie B", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E102584281/G40/H%5E1/" }]
 };
@@ -189,34 +189,6 @@ function candidateTeamsMatchFixture(fixture: Bet365FixtureTarget, homeTeam: stri
   ).matched;
 }
 
-function candidateTeamEvidence(fixture: Bet365FixtureTarget, homeTeam: string | null, awayTeam: string | null) {
-  if (!fixture.homeTeam || !fixture.awayTeam || !homeTeam || !awayTeam) {
-    return { pairScore: 0, minPairSideScore: 0, bestSingleTeamScore: 0 };
-  }
-
-  const normalHome = teamNameSimilarity(fixture.homeTeam, homeTeam);
-  const normalAway = teamNameSimilarity(fixture.awayTeam, awayTeam);
-  const invertedHome = teamNameSimilarity(fixture.homeTeam, awayTeam);
-  const invertedAway = teamNameSimilarity(fixture.awayTeam, homeTeam);
-  const normalPair = { score: (normalHome + normalAway) / 2, minSideScore: Math.min(normalHome, normalAway) };
-  const invertedPair = { score: (invertedHome + invertedAway) / 2, minSideScore: Math.min(invertedHome, invertedAway) };
-  const selectedPair = normalPair.score >= invertedPair.score ? normalPair : invertedPair;
-
-  return {
-    pairScore: selectedPair.score,
-    minPairSideScore: selectedPair.minSideScore,
-    bestSingleTeamScore: Math.max(normalHome, normalAway, invertedHome, invertedAway)
-  };
-}
-
-function candidateTeamsHaveBet365Evidence(fixture: Bet365FixtureTarget, homeTeam: string | null, awayTeam: string | null) {
-  const evidence = candidateTeamEvidence(fixture, homeTeam, awayTeam);
-  return (
-    (evidence.pairScore >= 0.66 && evidence.minPairSideScore >= 0.58) ||
-    evidence.bestSingleTeamScore >= 0.88
-  );
-}
-
 function isDrawMarketLabel(label: string) {
   const normalized = normalizeName(label);
   return normalized === "draw" || normalized === "empate" || normalized === "x";
@@ -235,7 +207,7 @@ function marketTeamsFromSelections(event: Bet365Event, fixture: Bet365FixtureTar
     const homeTeam = teamLabels[0];
     const awayTeam = teamLabels[teamLabels.length - 1];
 
-    if (candidateTeamsHaveBet365Evidence(fixture, homeTeam, awayTeam)) {
+    if (candidateTeamsMatchFixture(fixture, homeTeam, awayTeam)) {
       return { matched: true as const, homeTeam, awayTeam };
     }
   }
@@ -253,7 +225,7 @@ function visibleEventTeams(rawText: string, fixture: Bet365FixtureTarget) {
   for (const line of lines) {
     const parts = line.split(/\s+(?:v|vs|x)\s+/i).map((part) => part.trim()).filter(Boolean);
     if (parts.length === 2 && looksLikeTeamLine(parts[0]) && looksLikeTeamLine(parts[1])) {
-      if (candidateTeamsHaveBet365Evidence(fixture, parts[0], parts[1])) {
+      if (candidateTeamsMatchFixture(fixture, parts[0], parts[1])) {
         return { homeTeam: parts[0], awayTeam: parts[1] };
       }
     }
@@ -278,7 +250,7 @@ function visibleEventTeams(rawText: string, fixture: Bet365FixtureTarget) {
       }
     }
 
-    if (homeTeam && awayTeam && candidateTeamsHaveBet365Evidence(fixture, homeTeam, awayTeam)) return { homeTeam, awayTeam };
+    if (homeTeam && awayTeam && candidateTeamsMatchFixture(fixture, homeTeam, awayTeam)) return { homeTeam, awayTeam };
   }
 
   return null;
@@ -313,8 +285,7 @@ function validateCollectedEvent(fixture: CanonicalFixture, event: Bet365Event) {
     return { ok: false as const, reason: "not-event-url", score: 0 };
   }
 
-  const fixtureTarget = fixtureTargetFromCanonical(fixture);
-  const marketTeams = marketTeamsFromSelections(event, fixtureTarget);
+  const marketTeams = marketTeamsFromSelections(event, fixtureTargetFromCanonical(fixture));
   if (marketTeams?.matched === false) {
     return { ok: false as const, reason: "market-team-rejected", score: 0 };
   }
@@ -336,23 +307,7 @@ function validateCollectedEvent(fixture: CanonicalFixture, event: Bet365Event) {
     }
   );
 
-  if (match.matched) return { ok: true as const, match };
-
-  const evidence = candidateTeamEvidence(fixtureTarget, event.bookmakerHomeTeam, event.bookmakerAwayTeam);
-  if (evidence.bestSingleTeamScore >= 0.88) {
-    return {
-      ok: true as const,
-      match: {
-        ...match,
-        matched: true,
-        score: Math.max(match.score, evidence.bestSingleTeamScore * 0.78),
-        teamScore: Math.max(match.teamScore, evidence.bestSingleTeamScore),
-        reason: "single-team-bet365-league-evidence"
-      }
-    };
-  }
-
-  return { ok: false as const, reason: match.reason, score: match.score };
+  return match.matched ? { ok: true as const, match } : { ok: false as const, reason: match.reason, score: match.score };
 }
 
 function contextValue(context: Record<string, unknown>, key: string) {
@@ -578,7 +533,7 @@ function marketCompletenessScore(market: Bet365Market) {
   if (selections.has("DRAW")) score += 1;
   if (selections.has("AWAY")) score += 1;
   if (/full time result|resultado final/i.test(market.rawText)) score += 1;
-  if (/enhanced prices|precos ajustados|preços ajustados|pagamento antecipado|early payout/i.test(market.rawText)) score += 1;
+  if (/enhanced prices|precos ajustados|precos ajustados|pagamento antecipado|early payout/i.test(market.rawText)) score += 1;
   return score;
 }
 
@@ -797,10 +752,6 @@ function partitionIntoTabGroups<T>(items: T[], tabs: number) {
   }).filter((group) => group.length);
 }
 
-function bet365DirectTabCount(configuredTabs: number | null | undefined, itemCount: number) {
-  return Math.min(Math.max(configuredTabs || 1, 1), 2, Math.max(itemCount, 1));
-}
-
 export class Bet365Collector {
   private readonly directRefreshResults = new Map<string, Bet365FixtureCollectResult>();
   private directRefreshCompleted = false;
@@ -922,27 +873,17 @@ export class Bet365Collector {
     });
     if (!queue.length) return;
 
-    const directTabs = bet365DirectTabCount(this.config.monitorTabs, queue.length);
+    const directTabs = Math.min(Math.max(this.config.monitorTabs || 1, 1), 5, queue.length);
     await this.logger("info", "iniciando refresh direto global da bet365 por URLs cacheadas", {
       fixtures: queue.length,
       tabs: directTabs,
       leagues: new Set(queue.map((item) => item.leagueSlug)).size
     });
 
-    const queueByLeague = new Map<string, Bet365CachedDirectItem[]>();
-    for (const item of queue) {
-      const leagueQueue = queueByLeague.get(item.leagueSlug) ?? [];
-      leagueQueue.push(item);
-      queueByLeague.set(item.leagueSlug, leagueQueue);
-    }
+    const directResults = await this.collectCachedDirectCarousel(queue, directTabs);
 
-    for (const leagueQueue of queueByLeague.values()) {
-      const leagueTabs = bet365DirectTabCount(this.config.monitorTabs, leagueQueue.length);
-      const directResults = await this.collectCachedDirectCarousel(leagueQueue, leagueTabs);
-
-      for (const { fixtureId, result } of directResults) {
-        this.directRefreshResults.set(fixtureId, result);
-      }
+    for (const { fixtureId, result } of directResults) {
+      this.directRefreshResults.set(fixtureId, result);
     }
   }
 
@@ -1001,7 +942,6 @@ export class Bet365Collector {
       oddsFound: 0,
       oddsUpserted: 0,
       errors: 0,
-      leagueUrlsOpened: 0,
       lastError: null as string | null
     };
 
@@ -1034,7 +974,6 @@ export class Bet365Collector {
     const savedEventLinks = await getSavedBookmakerEventLinks(this.config.slug, fixtures.map((fixture) => fixture.id));
     const processedFixtureIds = new Set<string>();
     const attemptedLeagueUrls: Bet365LeagueUrlCandidate[] = [];
-    let openedAnyLeagueUrl = false;
     const applyFixtureResult = (result: Bet365FixtureCollectResult) => {
       leagueSummary.eventsCollected += result.eventsCollected;
       leagueSummary.eventsWithoutOdds += result.eventsWithoutOdds;
@@ -1058,7 +997,7 @@ export class Bet365Collector {
         .filter((item): item is { fixture: CanonicalFixture; link: SavedBookmakerEventLink } => Boolean(savedEventCollectionUrl(item.link)));
 
       if (cachedDirectQueue.length) {
-        const directTabs = bet365DirectTabCount(this.config.monitorTabs, cachedDirectQueue.length);
+        const directTabs = Math.min(Math.max(this.config.monitorTabs || 1, 1), 5, cachedDirectQueue.length);
         await this.logger("info", "iniciando refresh direto da bet365 por URLs cacheadas", {
           leagueName: firstLeague.name,
           fixtures: cachedDirectQueue.length,
@@ -1104,8 +1043,6 @@ export class Bet365Collector {
 
       try {
         await this.chrome.navigateTo(candidate.sourceUrl);
-        openedAnyLeagueUrl = true;
-        leagueSummary.leagueUrlsOpened += 1;
       } catch (error) {
         leagueSummary.errors += 1;
         leagueSummary.lastError = errorMessage(error);
@@ -1149,14 +1086,8 @@ export class Bet365Collector {
       await this.logger("warn", leagueSummary.lastError, { fixtureId: fixture.id });
     }
 
-    if (!processedFixtureIds.size && !openedAnyLeagueUrl) {
+    if (!processedFixtureIds.size) {
       await requestLeagueUrlUpdate(this.config, firstLeague, savedLeagueLink?.source_url ?? null, attemptedLeagueUrls, this.logger);
-    } else if (!processedFixtureIds.size && openedAnyLeagueUrl) {
-      await this.logger("warn", "liga da bet365 abriu, mas nenhum evento alvo foi coletado", {
-        leagueName: firstLeague.name,
-        apiFootballLeagueId: firstLeague.api_football_league_id,
-        attemptedUrls: attemptedLeagueUrls.map((candidate) => ({ source: candidate.source, label: candidate.label, sourceUrl: candidate.sourceUrl }))
-      });
     }
 
     return leagueSummary;
@@ -1417,7 +1348,10 @@ export class Bet365Collector {
 
       const link = buildBookmakerLink(this.config, fixture, event, context);
       const odds = buildMoneylineOdds(this.config, fixture, event);
-      const oddsUpserted = await OddsRepository.saveAll(this.config.slug, [link], odds, { replaceExistingOdds: true });
+      const oddsUpserted = await OddsRepository.saveAll(this.config.slug, [link], odds, {
+        replaceExistingOdds: true,
+        cleanupPaCategories: marketsSeen(event)
+      });
       const { error: linkRawError } = await supabase
         .from("bookmaker_event_links")
         .update({ source_url: link.source_url, raw: link.raw, updated_at: link.updated_at })

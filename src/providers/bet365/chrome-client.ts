@@ -93,10 +93,6 @@ export class ChromeClient {
     }
 
     if (!(await waitForDevtools(this.config.debugPort, Math.max(this.config.navigationWaitMs, 5_000)))) {
-      if (this.chromeProcess) {
-        this.chromeProcess.kill();
-        this.chromeProcess = null;
-      }
       throw new Error(`Chrome CDP nao respondeu na porta ${this.config.debugPort}.`);
     }
 
