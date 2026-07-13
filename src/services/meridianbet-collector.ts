@@ -112,6 +112,11 @@ function formatConsoleLine(level: "info" | "warn" | "error", message: string, co
   if (message === "verificacao da meridianbet nao liberou dentro do tempo esperado") return "[meridianbet] Verificacao nao liberou dentro do tempo esperado.";
   if (message === "falha ao coletar jogo da meridianbet por URL cacheada; tentando pela liga") return "[meridianbet] URL cacheada falhou; tentando pela liga.";
   if (message === "filtro TUDO da meridianbet clicado") return `[meridianbet] Filtro TUDO clicado.`;
+  if (message === "eventos alvo da meridianbet ja visiveis; filtro TUDO dispensado") return "[meridianbet] Jogos alvo já visíveis; filtro TUDO dispensado.";
+  if (message === "filtro TUDO da meridianbet ja estava selecionado") return "[meridianbet] Filtro TUDO já estava selecionado.";
+  if (message === "filtro TUDO da meridianbet ausente; eventos visiveis encontrados") return "[meridianbet] Filtro TUDO ausente; jogos visíveis encontrados.";
+  if (message === "filtro TUDO da meridianbet ausente e nenhum evento visivel encontrado") return "[meridianbet] Aviso: filtro TUDO ausente e nenhum jogo visível encontrado.";
+  if (message === "jogo alvo da meridianbet encontrado na liga, mas nao foi possivel abrir") return `[meridianbet] Aviso: não foi possível abrir ${fixtureName(context)}.`;
   if (message === "filtro TUDO da meridianbet não encontrado na barra de tempo") return "[meridianbet] Filtro TUDO não encontrado.";
   if (message === "jogo da meridianbet salvo no banco") return `[meridianbet] Odds salvas: ${fixtureName(context)} | ${contextValue(context, "oddsUpserted")} odds.`;
   if (message === "liga da meridianbet precisa atualizar link") return `[meridianbet] Erro: ${contextValue(context, "errorMessage")}`;
@@ -485,8 +490,9 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           });
 
           await client.goToUrl(discoveryPage, leagueUrl, "navegando para URL de liga da meridianbet");
-          await client.selectAllPeriod(discoveryPage);
-          if (!(await client.pageHasAnyFixture(discoveryPage, leagueFixtures.map((fixture) => fixtureTargetFromCanonical(fixture))))) {
+          const leagueTargets = leagueFixtures.map((fixture) => fixtureTargetFromCanonical(fixture));
+          await client.selectAllPeriod(discoveryPage, leagueTargets);
+          if (!(await client.pageHasAnyFixture(discoveryPage, leagueTargets))) {
             if (!(await client.pageLooksLikeLeague(discoveryPage))) {
               await emitLeagueUrlError(bookmaker, league, savedUrl ?? leagueUrl, savedUrl ? "saved-url-failed" : "league-not-found", logger);
               summary.leaguesSkipped += 1;
@@ -514,8 +520,15 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
               const opened = await client.openFixture(discoveryPage, target);
               if (!opened) {
                 summary.eventsUnmatched += 1;
+                await logger("warn", "jogo alvo da meridianbet encontrado na liga, mas nao foi possivel abrir", {
+                  fixtureId: fixture.id,
+                  homeTeam: fixture.home_team,
+                  awayTeam: fixture.away_team,
+                  leagueName: league.name,
+                  sourceUrl: discoveryPage.url()
+                });
                 await client.goToUrl(discoveryPage, leagueUrl, "voltando para a liga da meridianbet após falha").catch(() => undefined);
-                await client.selectAllPeriod(discoveryPage).catch(() => undefined);
+                await client.selectAllPeriod(discoveryPage, leagueTargets).catch(() => undefined);
                 continue;
               }
 
@@ -528,7 +541,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
               summary.oddsUpserted += persisted.oddsUpserted;
               processedFixtureIds.add(fixture.id);
               await client.goToUrl(discoveryPage, leagueUrl, "voltando para a liga da meridianbet após coletar jogo");
-              await client.selectAllPeriod(discoveryPage);
+              await client.selectAllPeriod(discoveryPage, leagueTargets);
             } catch (error) {
               summary.errors += 1;
               summary.lastError = errorMessage(error);
@@ -538,7 +551,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
                 error: serializeError(error)
               });
               await client.goToUrl(discoveryPage, leagueUrl, "voltando para a liga da meridianbet após erro").catch(() => undefined);
-              await client.selectAllPeriod(discoveryPage).catch(() => undefined);
+              await client.selectAllPeriod(discoveryPage, leagueTargets).catch(() => undefined);
             }
           }
         }

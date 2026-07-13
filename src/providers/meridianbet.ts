@@ -18,6 +18,13 @@ export type MeridianFixtureTarget = {
   startsAt: string;
 };
 
+export type MeridianPeriodSelectionState =
+  | "TARGET_EVENTS_VISIBLE"
+  | "ALL_ALREADY_SELECTED"
+  | "ALL_FILTER_APPLIED"
+  | "FILTER_ABSENT_WITH_EVENTS"
+  | "FILTER_ABSENT_WITHOUT_EVENTS";
+
 export type MeridianCollectedSelection = {
   selection: Selection;
   label: string;
@@ -52,6 +59,7 @@ type ClickTarget = {
   y: number;
   priority: number;
   matchKind: "PAIR" | "SINGLE";
+  timeMatched: boolean;
 };
 
 const PRICE_RE = /^(?:[1-9]\d{0,2}|0)(?:[.,]\d{1,3})?$/;
@@ -147,6 +155,20 @@ function fixtureTextEvidence(rawText: string, fixture: MeridianFixtureTarget) {
     hasBoth: hasHome && hasAway,
     hasAny: hasHome || hasAway
   };
+}
+
+function fixtureLocalTimeLabels(startsAt: string) {
+  const date = new Date(startsAt);
+  if (!Number.isFinite(date.getTime())) return [];
+  const labels = new Set<string>();
+  const formatter = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+  labels.add(formatter.format(date).replace(/^24:/, "00:"));
+  return [...labels];
 }
 
 function looksLikeUsableLeagueText(rawText: string) {
@@ -345,54 +367,71 @@ export class MeridianbetBrowserClient {
     await this.acceptCookies(page);
   }
 
-  async selectAllPeriod(page: Page) {
+  async selectAllPeriod(page: Page, fixtures: MeridianFixtureTarget[] = []): Promise<MeridianPeriodSelectionState> {
     await page.keyboard.press("Home").catch(() => undefined);
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(600);
 
-    await page
-      .waitForFunction(
-        () => {
-          const normalize = (value: unknown) =>
-            String(value ?? "")
-              .normalize("NFD")
-              .replace(/[\u0300-\u036f]/g, "")
-              .toLowerCase()
-              .replace(/\s+/g, " ")
-              .trim();
-          const text = normalize(document.body?.innerText || document.body?.textContent || "");
-          return text.includes("uma hora") && text.includes("tres horas") && text.includes("dia") && text.includes("3 dias") && text.includes("tudo");
-        },
-        { timeout: Math.min(this.config.navigationTimeoutMs, 8000) }
-      )
-      .catch(() => undefined);
-
-    if (await this.isTopPeriodFilterSelected(page, "TUDO")) return;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      const clicked = (await this.clickAllPeriodTab(page)) || (await this.clickTopPeriodFilter(page, "TUDO"));
-      if (clicked) {
-        await this.logger("info", "filtro TUDO da meridianbet clicado", { attempt });
-        await page.waitForTimeout(1200);
-        await this.waitForUi(page);
-        if (await this.isTopPeriodFilterSelected(page, "TUDO")) return;
-        return;
-      }
+    if (fixtures.length && (await this.pageHasVisibleTargetFixture(page, fixtures))) {
+      await this.logger("info", "eventos alvo da meridianbet ja visiveis; filtro TUDO dispensado", { fixtures: fixtures.length });
+      return "TARGET_EVENTS_VISIBLE";
     }
 
-    await this.logger("warn", "filtro TUDO da meridianbet não encontrado na barra de tempo");
+    if (await this.isTopPeriodFilterSelected(page, "TUDO")) {
+      await this.logger("info", "filtro TUDO da meridianbet ja estava selecionado");
+      return "ALL_ALREADY_SELECTED";
+    }
+
+    const clicked = (await this.clickAllPeriodTab(page)) || (await this.clickTopPeriodFilter(page, "TUDO"));
+    if (clicked) {
+      await this.logger("info", "filtro TUDO da meridianbet clicado", { attempt: 1 });
+      await page.waitForTimeout(1200);
+      await this.waitForUi(page);
+      return "ALL_FILTER_APPLIED";
+    }
+
+    const hasEvents = await this.pageHasVisibleEvents(page);
+    if (hasEvents) {
+      await this.logger("info", "filtro TUDO da meridianbet ausente; eventos visiveis encontrados");
+      return "FILTER_ABSENT_WITH_EVENTS";
+    }
+
+    await this.logger("warn", "filtro TUDO da meridianbet ausente e nenhum evento visivel encontrado");
+    return "FILTER_ABSENT_WITHOUT_EVENTS";
   }
 
+  private async pageHasVisibleTargetFixture(page: Page, fixtures: MeridianFixtureTarget[]) {
+    for (const fixture of fixtures) {
+      if (await this.findFixtureClickTargetForFixture(page, fixture)) return true;
+    }
+    return false;
+  }
+
+  private async pageHasVisibleEvents(page: Page) {
+    return page
+      .evaluate(() => {
+        const isVisible = (node: Element) => {
+          if (!(node instanceof HTMLElement)) return false;
+          const rect = node.getBoundingClientRect();
+          const style = window.getComputedStyle(node);
+          return rect.width >= 260 && rect.height >= 32 && rect.height <= 220 && rect.bottom >= 100 && rect.top <= window.innerHeight - 8 && style.visibility !== "hidden" && style.display !== "none";
+        };
+        return [...document.querySelectorAll("standard-event, .c-event")].some((node) => isVisible(node));
+      })
+      .catch(() => false);
+  }
   async pageHasAnyFixture(page: Page, fixtures: MeridianFixtureTarget[]) {
     if (!fixtures.length) return false;
     await page.keyboard.press("Home").catch(() => undefined);
     await page.waitForTimeout(600);
 
     for (let attempt = 0; attempt < 18; attempt += 1) {
-      const text = await this.visibleText(page);
-      const found = fixtures.some((fixture) => {
-        const evidence = fixtureTextEvidence(text, fixture);
-        return evidence.hasBoth || evidence.hasAny;
-      });
-      if (found) return true;
+      for (const fixture of fixtures) {
+        if (await this.findFixtureClickTargetForFixture(page, fixture)) {
+          await page.keyboard.press("Home").catch(() => undefined);
+          await page.waitForTimeout(300);
+          return true;
+        }
+      }
 
       await page.keyboard.press("PageDown").catch(() => undefined);
       await this.scrollMainContent(page, 800);
@@ -424,12 +463,13 @@ export class MeridianbetBrowserClient {
     await page.keyboard.press("Home").catch(() => undefined);
     await page.waitForTimeout(700);
     for (let attempt = 0; attempt < 14; attempt += 1) {
-      const target = await this.findFixtureClickTarget(page, homeTokenGroups, awayTokenGroups);
+      const target = await this.findFixtureClickTarget(page, homeTokenGroups, awayTokenGroups, fixtureLocalTimeLabels(fixture.startsAt));
       if (target) {
         await this.logger("info", "jogo encontrado na meridianbet; abrindo página do evento", {
           fixtureId: fixture.id,
           attempt: attempt + 1,
           matchKind: target.matchKind,
+          timeMatched: target.timeMatched,
           targetText: target.text.slice(0, 180),
           href: target.href
         });
@@ -863,19 +903,28 @@ export class MeridianbetBrowserClient {
     await page.evaluate(script).catch(() => undefined);
   }
 
-  private async findFixtureClickTarget(page: Page, homeTokenGroups: string[][], awayTokenGroups: string[][]) {
-    const payload = JSON.stringify({ homeTokenGroups, awayTokenGroups });
+  private async findFixtureClickTargetForFixture(page: Page, fixture: MeridianFixtureTarget) {
+    const homeTokenGroups = nationalTeamTokenGroups(fixture.homeTeam);
+    const awayTokenGroups = nationalTeamTokenGroups(fixture.awayTeam);
+    if (!homeTokenGroups.length && !awayTokenGroups.length) return null;
+    return this.findFixtureClickTarget(page, homeTokenGroups, awayTokenGroups, fixtureLocalTimeLabels(fixture.startsAt));
+  }
+
+  private async findFixtureClickTarget(page: Page, homeTokenGroups: string[][], awayTokenGroups: string[][], expectedTimeLabels: string[] = []) {
+    const payload = JSON.stringify({ homeTokenGroups, awayTokenGroups, expectedTimeLabels });
     const script = String.raw`
 (() => {
-  const { homeTokenGroups: pageHomeTokenGroups, awayTokenGroups: pageAwayTokenGroups } = ${payload};
+  const { homeTokenGroups: pageHomeTokenGroups, awayTokenGroups: pageAwayTokenGroups, expectedTimeLabels: pageExpectedTimeLabels } = ${payload};
   const norm = (value) => String(value ?? "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^a-z0-9:]+/g, " ")
     .trim();
   const hasToken = (text, tokens) => tokens.slice(0, 4).some((token) => text.includes(token));
   const hasTokenGroup = (text, tokenGroups) => tokenGroups.some((tokens) => hasToken(text, tokens));
+  const normalizedTimeLabels = pageExpectedTimeLabels.map(norm).filter(Boolean);
+  const hasExpectedTime = (text) => normalizedTimeLabels.length > 0 && normalizedTimeLabels.some((label) => text.includes(label));
   const isVisible = (node) => {
     if (!node || !(node instanceof HTMLElement)) return false;
     const rect = node.getBoundingClientRect();
@@ -891,9 +940,10 @@ export class MeridianbetBrowserClient {
       return null;
     }
   };
+  const distinctKey = (candidate) => norm(candidate.text).slice(0, 220) + "|" + Math.round(candidate.y / 8);
 
   const candidates = [];
-  const rows = [...document.querySelectorAll(".c-event, standard-event, [class*='event']")];
+  const rows = [...document.querySelectorAll("standard-event, .c-event")];
   for (const row of rows) {
     if (!isVisible(row)) continue;
     const rect = row.getBoundingClientRect();
@@ -905,6 +955,7 @@ export class MeridianbetBrowserClient {
     if (!hasHome && !hasAway) continue;
     if (/bilhete|valor apostado|registrar|entrar|missoes/i.test(normalized)) continue;
     const matchKind = hasHome && hasAway ? "PAIR" : "SINGLE";
+    const timeMatched = hasExpectedTime(normalized);
 
     const push = (target, href, priority) => {
       if (!isVisible(target)) return;
@@ -914,8 +965,9 @@ export class MeridianbetBrowserClient {
         href,
         x: targetRect.left + targetRect.width / 2,
         y: targetRect.top + targetRect.height / 2,
-        priority: priority + (matchKind === "PAIR" ? 0 : 100),
-        matchKind
+        priority: priority + (matchKind === "PAIR" ? 0 : 100) - (timeMatched ? 35 : 0),
+        matchKind,
+        timeMatched
       });
     };
 
@@ -926,14 +978,26 @@ export class MeridianbetBrowserClient {
     push(row.querySelector(".c-event__info"), null, 30);
     push(row, null, 50);
   }
-  candidates.sort((left, right) => left.priority - right.priority || left.y - right.y);
-  const best = candidates[0];
-  if (!best) return null;
-  if (best.matchKind === "PAIR") return best;
 
-  const runnerUp = candidates.find((candidate) => candidate !== best && candidate.matchKind === "SINGLE");
-  if (runnerUp && Math.abs(runnerUp.priority - best.priority) < 40) return null;
-  return best;
+  candidates.sort((left, right) => left.priority - right.priority || left.y - right.y);
+  const unique = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const key = distinctKey(candidate);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+  }
+
+  const pair = unique.find((candidate) => candidate.matchKind === "PAIR");
+  if (pair) return pair;
+
+  const timedSingles = unique.filter((candidate) => candidate.matchKind === "SINGLE" && candidate.timeMatched);
+  if (timedSingles.length === 1) return timedSingles[0];
+  if (timedSingles.length > 1) return null;
+
+  const singles = unique.filter((candidate) => candidate.matchKind === "SINGLE");
+  return singles.length === 1 ? singles[0] : null;
 })()
 `;
     return page.evaluate(script) as Promise<ClickTarget | null>;
