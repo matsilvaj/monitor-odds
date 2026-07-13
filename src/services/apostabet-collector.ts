@@ -220,7 +220,10 @@ function findBestMatch(event: ApostabetEvent, fixtures: CanonicalFixture[]) {
 }
 
 function isMoneylineMarket(market: ApostabetMarket) {
-  return market.smarketId === 1 && market.status === 1 && !market.isMarketCancel && !market.inPlay;
+  const marketId = market.marketId ?? market.smarketId;
+  const marketName = String(market.nameTranslated ?? market.nameDefault ?? "").trim();
+
+  return marketId === 1 && /^1x2$/i.test(marketName) && market.status === 1 && !market.isMarketCancel && !market.inPlay;
 }
 
 function paForEvent(event: ApostabetEvent, earlyPayoutTournamentIds: Set<string>): { category: PaCategory; confidence: number; reason: string } {
