@@ -282,6 +282,8 @@ const MANUAL_ALIAS_GROUPS = [
   ["Atletico GO", "Atletico Goianiense", "Atlético Goianiense", "AC Goianiense"],
   ["America MG", "America Mineiro", "América Mineiro"],
   ["FC Iberia 1999", "Iberia 1999", "Saburtalo", "FC Saburtalo", "Saburtalo Tbilisi"],
+  ["Gyori ETO FC", "Gyor ETO FC", "Győri ETO FC", "Győr ETO FC"],
+  ["Vardar Skopje", "Vardar", "FK Vardar"],
   ["ML Vitebsk", "FC ML Vitebsk", "Maxline Vitebsk", "FC Maxline Vitebsk", "Maxline Rogachev"],
   ["Rigas FS", "RFS", "Riga FS", "Rigas Futbola Skola"],
   ["Vikingur Gota", "Vikingur Gøta", "Vikingur Goeta", "Víkingur Gøta"],

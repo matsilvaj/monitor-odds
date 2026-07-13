@@ -1,6 +1,6 @@
 import { chromium, type Browser, type BrowserContext, type Page, type WebSocket } from "playwright-core";
-import { nationalTeamAliases } from "../../domain/matching/team-aliases.js";
-import { matchingTokens, teamNameSearchPatterns } from "../../domain/matching/text-similarity.js";
+import { nationalTeamAliases, teamAliasTokens } from "../../domain/matching/team-aliases.js";
+import { teamNameSearchPatterns } from "../../domain/matching/text-similarity.js";
 import type { Bet365DomMarket, Logger } from "./types.js";
 
 export type Bet365NetworkCapture = {
@@ -30,6 +30,7 @@ type Bet365PageState = {
   pageText: string;
   domMarkets: Bet365DomMarket[];
   hasTargetFixture: boolean;
+  hasFixtureRows: boolean;
   isEventUrl: boolean;
 };
 
@@ -74,11 +75,13 @@ function targetTeamAliases(target: Bet365ClickTarget | null | undefined) {
   return targetTeamNames(target).map((team) => [...new Set(nationalTeamAliases(team).flatMap(withAmpersandAliases))]);
 }
 
+const BET365_TEAM_SUFFIXES = new Set(["athletic", "utd", "rovers", "rangers", "albion", "fa"]);
+
 function teamTokenGroups(team: string | null | undefined) {
   if (!team?.trim()) return [];
   const groups = nationalTeamAliases(team)
     .flatMap(withAmpersandAliases)
-    .map((alias) => matchingTokens(alias).filter((token) => token.length > 1))
+    .map((alias) => teamAliasTokens(alias).filter((token) => token.length > 1 && !BET365_TEAM_SUFFIXES.has(token)))
     .filter((tokens) => tokens.length > 0);
 
   return [...new Map(groups.map((tokens) => [tokens.join(":"), tokens])).values()];
@@ -344,7 +347,9 @@ class Bet365PageController {
 
   async navigate(url: string, timeoutMs: number) {
     if (!this.page) throw new Error("Browser da Bet365 nao conectado via CDP.");
-    await this.page.goto(url, { waitUntil: "domcontentloaded", timeout: Math.max(timeoutMs, 10_000) });
+    const timeout = Math.max(timeoutMs, 10_000);
+    await this.page.goto(url, { waitUntil: "commit", timeout });
+    await this.page.waitForLoadState("domcontentloaded", { timeout: Math.min(timeout, 8_000) }).catch(() => undefined);
   }
 
   async currentUrl() {
@@ -357,7 +362,12 @@ class Bet365PageController {
     return this.page.locator("body").innerText({ timeout }).catch(() => "");
   }
 
-  private classifyPageState(sourceUrl: string, pageText: string, target: Bet365ClickTarget | null | undefined): Bet365PageState {
+  private classifyPageState(
+    sourceUrl: string,
+    pageText: string,
+    target: Bet365ClickTarget | null | undefined,
+    hasFixtureRows = false
+  ): Bet365PageState {
     const isEventUrl = isBet365EventUrl(sourceUrl);
     const hasTargetFixture = target?.homeTeam && target.awayTeam ? textHasFixturePair(pageText, target) : false;
     const domMarkets = target ? parseVisibleMoneylineMarkets([pageText], target) : [];
@@ -368,7 +378,7 @@ class Bet365PageController {
     else if (isEventUrl && target && pageText.trim().length > 200) name = "WRONG_EVENT";
     else if (isEventUrl) name = "EVENT";
     else if (hasTargetFixture) name = "LEAGUE";
-    else if (pageLooksLikeLeague(pageText)) name = "LEAGUE";
+    else if (hasFixtureRows && pageLooksLikeLeague(pageText)) name = "LEAGUE";
     else if (pageLooksLikeHome(pageText)) name = "HOME";
 
     return {
@@ -377,6 +387,7 @@ class Bet365PageController {
       pageText,
       domMarkets,
       hasTargetFixture: Boolean(hasTargetFixture),
+      hasFixtureRows,
       isEventUrl
     };
   }
@@ -385,7 +396,12 @@ class Bet365PageController {
     if (!this.page) throw new Error("Browser da Bet365 nao conectado via CDP.");
     const sourceUrl = this.page.url();
     const pageText = await this.page.locator("body").innerText({ timeout }).catch(() => "");
-    return this.classifyPageState(sourceUrl, pageText, target);
+    const hasFixtureRows = await this.page
+      .locator("[class*='ParticipantFixtureDetails']")
+      .count()
+      .then((count) => count > 0)
+      .catch(() => false);
+    return this.classifyPageState(sourceUrl, pageText, target, hasFixtureRows);
   }
 
   private async waitForPageState(
@@ -412,11 +428,11 @@ class Bet365PageController {
     await this.page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => undefined);
     const state = await this.waitForPageState(
       target,
-      (candidate) => pageStateIsTargetEvent(candidate) || (candidate.isEventUrl && !target),
+      (candidate) => pageStateIsTargetEvent(candidate) || candidate.isEventUrl,
       5_000
     );
 
-    return target ? pageStateIsTargetEvent(state) : state.isEventUrl;
+    return pageStateIsTargetEvent(state) || state.isEventUrl;
   }
 
   private async restoreAfterRejectedClick(sourceUrl: string) {

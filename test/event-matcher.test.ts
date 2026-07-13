@@ -37,7 +37,9 @@ test("keeps legitimate aliases and expanded club names", () => {
   const accepted = [
     ["KuPS", "Inter Turku", "Kuopion Palloseura", "FC Inter Turku"],
     ["Manchester United", "Arsenal", "Man Utd", "Arsenal FC"],
-    ["CRB", "Nautico", "Clube de Regatas Brasil", "Nautico Recife"]
+    ["CRB", "Nautico", "Clube de Regatas Brasil", "Nautico Recife"],
+    ["Gyori ETO FC", "Vikingur Reykjavik", "Gyor ETO FC", "Vikingur Reykjavik"],
+    ["KuPS", "Vardar Skopje", "KuPS Kuopio", "FK Vardar"]
   ] as const;
 
   for (const [homeTeam, awayTeam, bookmakerHome, bookmakerAway] of accepted) {
