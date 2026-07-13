@@ -124,7 +124,8 @@ const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   1: [{ label: "Copa do Mundo", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E131901075/G40/I%5E88/" }],
   3: [{ label: "Europa League - Classificatórias", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E135566042/G40/" }],
   71: [{ label: "Brasileirao Serie A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E88369731/G40/" }],
-  72: [{ label: "Brasileirao Serie B", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E102584281/G40/H%5E1/" }]
+  72: [{ label: "Brasileirao Serie B", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E102584281/G40/H%5E1/" }],
+  185: [{ label: "Scottish League Cup", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E135851259/G40/" }]
 };
 
 function dateKey(date: Date) {
