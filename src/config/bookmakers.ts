@@ -342,7 +342,9 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://br4.bet.br",
     referer: "https://br4.bet.br/",
-    engine: "fetch"
+    engine: "fetch",
+    eventListMode: "coupon-events",
+    listDeviceType: "1"
   },
   {
     slug: "lotogreen",

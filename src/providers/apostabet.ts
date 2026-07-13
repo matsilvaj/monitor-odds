@@ -30,6 +30,7 @@ export type ApostabetOutcome = {
 
 export type ApostabetMarket = {
   id: string;
+  marketId?: number;
   smarketId?: number;
   nameDefault?: string;
   nameTranslated?: string | null;
@@ -93,12 +94,6 @@ type ApostabetFixtureDetail = {
   eventStatus?: number;
   producerId?: number;
   isEarlyPayout?: boolean;
-  [key: string]: unknown;
-};
-
-type ApostabetPrincipalMarkets = {
-  sportMarketDetails?: ApostabetMarket[];
-  totalActiveMarkets?: number;
   [key: string]: unknown;
 };
 
@@ -227,8 +222,8 @@ export class ApostabetClient {
         timeoutMs: 15_000,
         maxRetries: 1
       }),
-      httpClient<ApostabetPrincipalMarkets>({
-        url: new URL(`api/EventFixture/v1/GetPrincipalMarkets/${eventId}`, this.config.apiBaseUrl),
+      httpClient<ApostabetMarket[]>({
+        url: new URL(`api/EventFixture/v1/markets/${eventId}`, this.config.apiBaseUrl),
         headers: this.headers,
         referer: this.config.referer,
         engine: this.config.engine,
@@ -236,6 +231,27 @@ export class ApostabetClient {
         maxRetries: 1
       })
     ]);
+
+    const moneylineMarkets = markets.filter((market) =>
+      (market.marketId ?? market.smarketId) === 1 &&
+      market.status === 1 &&
+      !market.isMarketCancel &&
+      !market.inPlay
+    );
+    const hydratedMoneylineMarkets = await Promise.all(
+      moneylineMarkets.map(async (market) => ({
+        ...market,
+        smarketId: market.smarketId ?? market.marketId,
+        sportOutcomeDetails: await httpClient<ApostabetOutcome[]>({
+          url: new URL(`api/EventFixture/v1/outcomes/${market.id}`, this.config.apiBaseUrl),
+          headers: this.headers,
+          referer: this.config.referer,
+          engine: this.config.engine,
+          timeoutMs: 15_000,
+          maxRetries: 1
+        })
+      }))
+    );
 
     return {
       id: detail.eventId ?? eventId,
@@ -248,8 +264,8 @@ export class ApostabetClient {
       sportId: detail.sportId,
       producerId: detail.producerId,
       isEarlyPayout: detail.isEarlyPayout,
-      sportMarketDetails: markets.sportMarketDetails ?? [],
-      totalActiveMarkets: markets.totalActiveMarkets,
+      sportMarketDetails: hydratedMoneylineMarkets,
+      totalActiveMarkets: markets.filter((market) => market.status === 1).length,
       rawDetail: detail
     } satisfies ApostabetEvent;
   }

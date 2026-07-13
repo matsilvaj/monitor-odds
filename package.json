@@ -25,7 +25,8 @@
     "client:dev": "npm --prefix servidor-monitor-odds run dev",
     "client:package": "npm --prefix servidor-monitor-odds run package",
     "client:release": "npm --prefix servidor-monitor-odds run release",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:matching": "tsx --test test/event-matcher.test.ts"
   },
   "keywords": [],
   "author": "",

@@ -32,7 +32,9 @@ export type MatchEventsOptions = {
 
 const MAX_TIME_DIFF_MS = 20 * 60 * 1000;
 const MIN_TEAM_SCORE = 0.65;
-const MIN_SIDE_TEAM_SCORE = 0.62;
+const MIN_SIDE_TEAM_SCORE = 0.68;
+const MIN_ANCHORED_TEAM_SCORE = 0.88;
+const MIN_BALANCED_SIDE_TEAM_SCORE = 0.8;
 const MIN_SINGLE_TEAM_SCORE = 0.88;
 const MIN_SINGLE_TEAM_TIME_SCORE = 0.62;
 const VIRTUAL_EVENT_RE = /\b(?:e\s*soccer|esoccer|virtual|fantasy|simulado|simulacao|srl|cyber|pes|ebasket|basketball\s*cyber|kings\s*league)\b/i;
@@ -148,7 +150,14 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
   const timeScore = 1 - diffMs / maxTimeDiffMs;
   const score = timeScore * 0.4 + teamScore * 0.6;
   const threshold = timeScore >= 0.95 ? 0.58 : timeScore >= 0.85 ? 0.64 : 0.72;
-  const pairMatched = selectedScore.minSideScore >= MIN_SIDE_TEAM_SCORE && teamScore >= MIN_TEAM_SCORE && score >= threshold;
+  const maxSideScore = Math.max(selectedScore.homeScore, selectedScore.awayScore);
+  const hasPairIdentityEvidence =
+    maxSideScore >= MIN_ANCHORED_TEAM_SCORE || selectedScore.minSideScore >= MIN_BALANCED_SIDE_TEAM_SCORE;
+  const pairMatched =
+    hasPairIdentityEvidence &&
+    selectedScore.minSideScore >= MIN_SIDE_TEAM_SCORE &&
+    teamScore >= MIN_TEAM_SCORE &&
+    score >= threshold;
 
   if (pairMatched) {
     return {
@@ -249,7 +258,7 @@ function matchableFromCanonicalCandidate(candidate: unknown): MatchableEvent {
 }
 
 function hasTrustedCandidateScope(candidates: MatchableEvent[]) {
-  if (candidates.length === 1) return true;
+  if (candidates.length < 2) return false;
 
   const leagueKeys = new Set(
     candidates

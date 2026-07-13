@@ -84,7 +84,7 @@ type CardsResponse = {
 };
 
 const SEARCH_DOCUMENT_ID = "SearchView#a2f3fa92545de5b1c4dd432e666608ab";
-const CARD_DOCUMENT_ID = "Card#e790c877715333c5873badebe1846e23";
+const CARD_DOCUMENT_ID = "Card#40a8e68b27ffbca0e7be3ce942064101";
 const EXPERIMENTS = [
   { id: "uki_safety_rti_10k_stakes", variant: "display" },
   { id: "cms-int-bf-br-player-widget-experiment", variant: "control" }
@@ -92,9 +92,8 @@ const EXPERIMENTS = [
 const MARKET_TEMPLATE_URNS = [
   "Z-KJShEAACIAkTdu",
   "ZxDkyRIAACAAf2za",
-  "ZxDiBBIAACIAf2f_",
   "aZxLFhAAACMAuJnT",
-  "ZxDkzxIAACIAf2zo"
+  "ZxDh2BIAACEAf2ee"
 ];
 
 function preferences() {
