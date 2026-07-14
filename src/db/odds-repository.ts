@@ -70,19 +70,21 @@ function isStatementTimeout(error: unknown) {
   return code === "57014" || /statement timeout/i.test(errorMessage(error));
 }
 
-async function withStatementTimeoutRetry(label: string, operation: () => Promise<{ error: unknown }>) {
+async function withStatementTimeoutRetry<T extends { error: unknown }>(label: string, operation: () => Promise<T>): Promise<T> {
   for (let attempt = 1; attempt <= DB_RETRY_ATTEMPTS; attempt += 1) {
-    const { error } = await operation();
-    if (!error) return;
+    const result = await operation();
+    if (!result.error) return result;
 
-    if (!isStatementTimeout(error) || attempt === DB_RETRY_ATTEMPTS) {
-      throw error;
+    if (!isStatementTimeout(result.error) || attempt === DB_RETRY_ATTEMPTS) {
+      throw result.error;
     }
 
     const delayMs = DB_RETRY_BASE_DELAY_MS * attempt;
     console.warn(`[db] ${label} cancelado por timeout; tentando novamente (${attempt + 1}/${DB_RETRY_ATTEMPTS})...`);
     await sleep(delayMs);
   }
+
+  throw new Error(`[db] ${label} excedeu o limite de tentativas.`);
 }
 
 function keyValue(value: string | number | null | undefined) {
@@ -299,6 +301,39 @@ async function touchSeenOdds(ids: string[], seenAt: string) {
 }
 
 export class OddsRepository {
+  static async deleteStaleSeenBefore(
+    bookmakerSlug: string,
+    fixtureIds: string[],
+    seenBefore: string,
+    options: { marketCodes?: string[] } = {}
+  ) {
+    const uniqueFixtureIds = [...new Set(fixtureIds.filter(Boolean))];
+    if (!uniqueFixtureIds.length) return 0;
+
+    const seenBeforeTimestamp = new Date(seenBefore);
+    if (!Number.isFinite(seenBeforeTimestamp.getTime())) {
+      throw new Error(`Data de inicio invalida para limpeza de odds: ${seenBefore}`);
+    }
+
+    const marketCodes = options.marketCodes?.length ? [...new Set(options.marketCodes)] : ["1X2"];
+    let deleted = 0;
+
+    for (const fixtureIdBatch of chunks(uniqueFixtureIds, SELECT_BATCH_SIZE)) {
+      const result = await withStatementTimeoutRetry("limpeza de odds nao vistas no ciclo", async () =>
+        await supabase
+          .from("odds")
+          .delete({ count: "exact" })
+          .eq("bookmaker_slug", bookmakerSlug)
+          .in("fixture_id", fixtureIdBatch)
+          .in("market_code", marketCodes)
+          .lt("last_seen_at", seenBeforeTimestamp.toISOString())
+      );
+      deleted += result.count ?? 0;
+    }
+
+    return deleted;
+  }
+
   static async saveAll(
     bookmakerSlug: string,
     links: BookmakerLinkRow[],
