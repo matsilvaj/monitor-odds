@@ -78,6 +78,8 @@ type Bet365Summary = {
   eventsSkippedStarted: number;
   oddsFound: number;
   oddsUpserted: number;
+  oddsRemoved: number;
+  fixturesPreservedAfterFailure: number;
   errors: number;
   lastError: string | null;
   leagues: Record<string, unknown>;
@@ -337,8 +339,11 @@ function formatConsoleLine(level: "info" | "warn" | "error", message: string, co
   }
   if (message === "abrindo liga da bet365 por URL") return `[bet365] Abrindo liga por URL: ${contextValue(context, "leagueName")}.`;
   if (message === "jogo da bet365 salvo no banco") return `[bet365] Odds salvas: ${contextValue(context, "eventName")} | ${contextValue(context, "oddsUpserted")} odds.`;
+  if (message === "limpeza do ciclo da bet365 finalizada") {
+    return `[bet365] Limpeza do ciclo: ${contextValue(context, "oddsRemoved")} odds antigas removidas | ${contextValue(context, "fixturesPreservedAfterFailure")} jogos preservados por falha de coleta.`;
+  }
   if (message === "coleta da bet365 finalizada") {
-    return `[bet365] Coleta finalizada: ${contextValue(context, "eventsCollected")} jogos coletados | ${contextValue(context, "oddsUpserted")} odds salvas | ${contextValue(context, "errors")} erros.`;
+    return `[bet365] Coleta finalizada: ${contextValue(context, "eventsCollected")} jogos coletados | ${contextValue(context, "oddsUpserted")} odds salvas | ${contextValue(context, "oddsRemoved")} odds removidas | ${contextValue(context, "errors")} erros.`;
   }
   if (message.startsWith("Bet365 nao retornou odds para ")) return `[bet365] Sem odds: ${message.replace(/^Bet365 nao retornou odds para\s*/i, "").replace(/\.+$/, "")}.`;
   if (level === "error") return `[bet365] Erro: ${message}.`;
@@ -755,6 +760,8 @@ function partitionIntoTabGroups<T>(items: T[], tabs: number) {
 
 export class Bet365Collector {
   private readonly directRefreshResults = new Map<string, Bet365FixtureCollectResult>();
+  private readonly fixturesCollectedReliably = new Set<string>();
+  private readonly fixturesTargetedThisCycle = new Set<string>();
   private directRefreshCompleted = false;
   private persistQueue: Promise<void> = Promise.resolve();
 
@@ -766,6 +773,7 @@ export class Bet365Collector {
   ) {}
 
   async collectAll(options: BookmakerCollectOptions = {}) {
+    const cycleStartedAt = new Date().toISOString();
     const dateKeys = targetDateKeys(options.date);
     const summary: Bet365Summary = {
       trigger: options.trigger ?? "manual",
@@ -780,6 +788,8 @@ export class Bet365Collector {
       eventsSkippedStarted: 0,
       oddsFound: 0,
       oddsUpserted: 0,
+      oddsRemoved: 0,
+      fixturesPreservedAfterFailure: 0,
       errors: 0,
       lastError: null,
       leagues: {}
@@ -802,6 +812,8 @@ export class Bet365Collector {
       } else {
         await this.chrome.navigateTo(this.config.baseUrl);
         this.directRefreshResults.clear();
+        this.fixturesCollectedReliably.clear();
+        this.fixturesTargetedThisCycle.clear();
         this.directRefreshCompleted = false;
         await this.collectCachedDirectForTargetLeagues(targetLeagueSlugs, dateKeys);
 
@@ -818,6 +830,22 @@ export class Bet365Collector {
           summary.errors += Number(leagueSummary.errors ?? 0);
           if (leagueSummary.lastError) summary.lastError = String(leagueSummary.lastError);
         }
+
+        summary.fixturesPreservedAfterFailure = [...this.fixturesTargetedThisCycle].filter(
+          (fixtureId) => !this.fixturesCollectedReliably.has(fixtureId)
+        ).length;
+        summary.oddsRemoved = await OddsRepository.deleteStaleSeenBefore(
+          this.config.slug,
+          [...this.fixturesCollectedReliably],
+          cycleStartedAt,
+          { marketCodes: ["1X2"] }
+        );
+        await this.logger("info", "limpeza do ciclo da bet365 finalizada", {
+          oddsRemoved: summary.oddsRemoved,
+          fixturesCleaned: this.fixturesCollectedReliably.size,
+          fixturesPreservedAfterFailure: summary.fixturesPreservedAfterFailure,
+          cycleStartedAt
+        });
 
         if (summary.fixturesTargeted === 0) {
           summary.skipped = true;
@@ -954,6 +982,7 @@ export class Bet365Collector {
       return false;
     }).slice(0, this.config.fixtureLimitPerLeague);
     leagueSummary.fixturesTargeted = fixtures.length;
+    for (const fixture of fixtures) this.fixturesTargetedThisCycle.add(fixture.id);
 
     if (!fixtures.length) {
       leagueSummary.skipped = true;
@@ -1353,6 +1382,7 @@ export class Bet365Collector {
         replaceExistingOdds: true,
         cleanupPaCategories: marketsSeen(event)
       });
+      this.fixturesCollectedReliably.add(fixture.id);
       const { error: linkRawError } = await supabase
         .from("bookmaker_event_links")
         .update({ source_url: link.source_url, raw: link.raw, updated_at: link.updated_at })
