@@ -39,6 +39,22 @@ create table if not exists teams (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists team_aliases (
+  id uuid primary key default gen_random_uuid(),
+  team_id uuid not null references teams(id) on delete cascade,
+  alias text not null,
+  normalized_alias text not null,
+  source text not null default 'generated',
+  confidence numeric not null default 0.8,
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (team_id, normalized_alias)
+);
+
+create index if not exists team_aliases_normalized_alias_idx
+  on team_aliases (normalized_alias);
+
 create table if not exists fixtures (
   id uuid primary key default gen_random_uuid(),
   api_football_fixture_id bigint not null unique,
@@ -178,6 +194,12 @@ execute function set_database_updated_at();
 drop trigger if exists bookmaker_event_links_set_database_updated_at on bookmaker_event_links;
 create trigger bookmaker_event_links_set_database_updated_at
 before insert or update on bookmaker_event_links
+for each row
+execute function set_database_updated_at();
+
+drop trigger if exists team_aliases_set_database_updated_at on team_aliases;
+create trigger team_aliases_set_database_updated_at
+before insert or update on team_aliases
 for each row
 execute function set_database_updated_at();
 
@@ -466,6 +488,7 @@ revoke all on
   bookmakers,
   leagues,
   teams,
+  team_aliases,
   fixtures,
   bookmaker_event_links,
   bookmaker_league_links,
@@ -481,6 +504,7 @@ revoke all on function public.try_acquire_bookmaker_collection_lock(text, timest
 alter table bookmakers enable row level security;
 alter table leagues enable row level security;
 alter table teams enable row level security;
+alter table team_aliases enable row level security;
 alter table fixtures enable row level security;
 alter table bookmaker_event_links enable row level security;
 alter table bookmaker_league_links enable row level security;
