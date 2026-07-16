@@ -24,7 +24,7 @@ export type AltenarBookmakerConfig = {
   referer: string;
   engine: BookmakerHttpEngine;
   discoveryMode?: "football" | "championship";
-  eventListMode?: "legacy" | "coupon-events";
+  eventListMode?: "legacy" | "coupon-events" | "coupon-football";
   listDeviceType?: "1" | "2";
   detailDeviceType?: "1" | "2";
   acceptHeader?: string;
@@ -320,7 +320,9 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://esportiva.bet.br",
     referer: "https://esportiva.bet.br/",
-    engine: "fetch"
+    engine: "got-scraping",
+    eventListMode: "coupon-football",
+    listDeviceType: "1"
   },
   {
     slug: "estrelabet",
