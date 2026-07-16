@@ -54,7 +54,7 @@ export type AltenarClientConfig = {
   origin: string;
   referer: string;
   engine: BookmakerHttpEngine;
-  eventListMode?: "legacy" | "coupon-events";
+  eventListMode?: "legacy" | "coupon-events" | "coupon-football";
   listDeviceType?: "1" | "2";
   detailDeviceType?: "1" | "2";
   acceptHeader?: string;
@@ -128,7 +128,7 @@ export class AltenarClient {
   }
 
   async getFootballEvents() {
-    if (this.config.eventListMode === "coupon-events") {
+    if (this.config.eventListMode === "coupon-events" || this.config.eventListMode === "coupon-football") {
       const periods = [
         { period: "5", couponType: "1" },
         { period: "6", couponType: "2" }
