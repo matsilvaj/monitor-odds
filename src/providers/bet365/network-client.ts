@@ -99,7 +99,9 @@ function normalizeText(value: string | null | undefined) {
 function textMatchesTokenGroups(rawText: string, groups: string[][]) {
   const normalized = normalizeText(rawText);
   if (!normalized || !groups.length) return false;
-  const tokenSet = new Set(normalized.split(/\s+/).filter(Boolean));
+  const tokenSet = new Set(
+    normalized.split(/\s+/).flatMap((token) => [token, token.replace(/[.,]+$/g, "")]).filter(Boolean)
+  );
   return groups.some((group) =>
     group.every((token) => (token.length <= 3 ? tokenSet.has(token) : normalized.includes(token)))
   );
@@ -336,6 +338,28 @@ function parseVisibleMoneylineMarkets(rawTexts: string[], target: Bet365ClickTar
     if (best) selected.push(best);
   }
   return selected.length ? selected : values.slice(0, 1);
+}
+
+export function parseFixtureRowMoneylineMarket(
+  rawText: string,
+  target: Bet365ClickTarget | null | undefined,
+  hasEarlyPayout = false
+): Bet365DomMarket | null {
+  if (!target?.homeTeam || !target.awayTeam || !textHasFixturePair(rawText, target)) return null;
+
+  const prices = extractPriceValues(rawText);
+  if (prices.length !== 3) return null;
+
+  return {
+    marketName: "Resultado Final",
+    paCategory: hasEarlyPayout ? "COM_PA" : "SEM_PA",
+    rawText,
+    selections: [
+      { label: target.homeTeam, price: prices[0] },
+      { label: "Empate", price: prices[1] },
+      { label: target.awayTeam, price: prices[2] }
+    ]
+  };
 }
 
 class Bet365PageController {
@@ -721,6 +745,96 @@ class Bet365PageController {
     }
     return expanded;
   }
+
+  private async readFixtureRowMoneyline(target: Bet365ClickTarget | null | undefined) {
+    if (!this.page || !target?.homeTeam || !target.awayTeam) return null;
+
+    const homeGroups = teamTokenGroups(target.homeTeam);
+    const awayGroups = teamTokenGroups(target.awayTeam);
+    if (!homeGroups.length || !awayGroups.length) return null;
+
+    await this.page.keyboard.press("Home").catch(() => undefined);
+    await this.page
+      .evaluate(() => {
+        for (const node of [document.scrollingElement, ...document.querySelectorAll("*")]) {
+          const element = node as HTMLElement | null;
+          if (element && element.scrollHeight > element.clientHeight + 40) element.scrollTop = 0;
+        }
+      })
+      .catch(() => undefined);
+    await this.page.waitForTimeout(350);
+
+    for (let pageDown = 0; pageDown < 18; pageDown += 1) {
+      const candidate = await this.page
+        .evaluate(
+          ({ homeGroups, awayGroups }) => {
+            const normalize = (value: unknown) =>
+              String(value ?? "")
+                .normalize("NFD")
+                .replace(/\p{Diacritic}/gu, "")
+                .toLowerCase()
+                .replace(/[^a-z0-9.,]+/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+            const matchesGroup = (rawText: string, groups: string[][]) => {
+              const normalized = normalize(rawText);
+              const tokens = new Set(normalized.split(/\s+/).filter(Boolean));
+              return groups.some((group) => group.every((token) => (token.length <= 3 ? tokens.has(token) : normalized.includes(token))));
+            };
+            const priceCount = (rawText: string) => [...rawText.matchAll(/\b([1-9]\d{0,2}[.,]\d{2,3})\b/g)].length;
+            const isVisible = (element: HTMLElement) => {
+              const rect = element.getBoundingClientRect();
+              const style = window.getComputedStyle(element);
+              return rect.width >= 20 && rect.height >= 15 && style.display !== "none" && style.visibility !== "hidden";
+            };
+            const selectors = [
+              ".rcl-ParticipantFixtureDetails-clickable",
+              "[class*='ParticipantFixtureDetails-clickable']",
+              "[class*='ParticipantFixtureDetails']"
+            ];
+            const nodes = [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))];
+            const candidates: Array<{ text: string; area: number }> = [];
+
+            for (const node of nodes) {
+              const participant = node as HTMLElement;
+              let cursor: HTMLElement | null = participant;
+              for (let depth = 0; cursor && depth < 8; depth += 1, cursor = cursor.parentElement) {
+                if (!isVisible(cursor)) continue;
+                const rect = cursor.getBoundingClientRect();
+                const text = (cursor.innerText || cursor.textContent || "").trim();
+                if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+                if (rect.height > 180 || text.length > 700) break;
+                if (!matchesGroup(text, homeGroups) || !matchesGroup(text, awayGroups)) continue;
+                if (priceCount(text) !== 3) continue;
+                candidates.push({ text, area: rect.width * rect.height });
+              }
+            }
+
+            const best = candidates.sort((left, right) => left.area - right.area)[0];
+            if (!best) return null;
+            const bodyText = document.body.innerText || document.body.textContent || "";
+            const normalizedBody = normalize(bodyText);
+            return {
+              text: best.text,
+              hasEarlyPayout: normalizedBody.includes("pagamento antecipado") || normalizedBody.includes("early payout")
+            };
+          },
+          { homeGroups, awayGroups }
+        )
+        .catch(() => null);
+
+      if (candidate) {
+        const market = parseFixtureRowMoneylineMarket(candidate.text, target, candidate.hasEarlyPayout);
+        if (market) return market;
+      }
+
+      await this.scrollSearchViewport(850);
+      await this.page.waitForTimeout(450);
+    }
+
+    return null;
+  }
+
   private async clickFixtureContainerByTeam(target: Bet365ClickTarget | null | undefined, sourceUrl: string) {
     if (!this.page || !target?.homeTeam || !target.awayTeam) return null;
 
@@ -770,20 +884,29 @@ class Bet365PageController {
               })
             );
 
+            const candidates: Array<{ x: number; y: number; text: string; area: number }> = [];
             for (const node of nodes) {
               const element = node as HTMLElement;
-              const text = element.innerText || element.textContent || "";
-              if (!matchesGroup(text, homeGroups) || !matchesGroup(text, awayGroups)) continue;
-              const rect = element.getBoundingClientRect();
-              if (rect.width < 20 || rect.height < 15) continue;
-              if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
-
-              return {
-                x: rect.left + Math.min(Math.max(rect.width * 0.35, 24), rect.width - 6),
-                y: rect.top + rect.height / 2,
-                text: text.trim().slice(0, 180)
-              };
+              let cursor: HTMLElement | null = element;
+              for (let depth = 0; cursor && depth < 8; depth += 1, cursor = cursor.parentElement) {
+                const rect = cursor.getBoundingClientRect();
+                if (rect.width < 20 || rect.height < 15) continue;
+                if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+                const text = cursor.innerText || cursor.textContent || "";
+                if (rect.height > 180 || text.length > 700) break;
+                if (!matchesGroup(text, homeGroups) || !matchesGroup(text, awayGroups)) continue;
+                candidates.push({
+                  x: rect.left + Math.min(Math.max(rect.width * 0.35, 24), rect.width - 6),
+                  y: rect.top + rect.height / 2,
+                  text: text.trim().slice(0, 180),
+                  area: rect.width * rect.height
+                });
+                break;
+              }
             }
+
+            const best = candidates.sort((left, right) => left.area - right.area)[0];
+            if (best) return best;
 
             return null;
           },
@@ -973,6 +1096,27 @@ class Bet365PageController {
               markets: state.domMarkets.length
             });
           } else if (state?.name === "LEAGUE") {
+            const leagueRowMarket = await this.readFixtureRowMoneyline(target);
+            if (leagueRowMarket) {
+              domMarkets = [leagueRowMarket];
+              pageText = leagueRowMarket.rawText;
+              await this.logger?.("info", "odds 1X2 da bet365 lidas diretamente da linha da liga", {
+                homeTeam: target.homeTeam,
+                awayTeam: target.awayTeam,
+                prices: leagueRowMarket.selections.map((selection) => selection.price),
+                category: leagueRowMarket.paCategory,
+                sourceUrl: this.page.url()
+              });
+              return {
+                sourceUrl: this.page.url(),
+                payloads,
+                domMarkets,
+                domMarketsExpanded,
+                clickedTeam,
+                pageText,
+                pageState
+              };
+            }
             clickedTeam = await this.clickEventByTeam(target, url);
             const inspectedState = await this.inspectCurrentPage(target, 1_500).catch(() => null);
             if (inspectedState) state = inspectedState;
