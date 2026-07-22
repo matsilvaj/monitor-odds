@@ -256,11 +256,11 @@ async function fetchExistingLinksByEventIds(bookmakerSlug: string, externalEvent
   return rows;
 }
 
-async function fetchExistingOdds(bookmakerSlug: string, fixtureIds: string[], marketCodes: string[]) {
+async function fetchExistingOdds(bookmakerSlug: string, fixtureIds: string[], marketCodes: string[], paCategories?: string[]) {
   const rows: ExistingOddRow[] = [];
 
   for (const fixtureIdBatch of chunks(fixtureIds, SELECT_BATCH_SIZE)) {
-    const { data, error } = await supabase
+    let query = supabase
       .from("odds")
       .select(
         "id,fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,raw_odd_type,source_odd_id,updated_at,last_seen_at"
@@ -268,6 +268,9 @@ async function fetchExistingOdds(bookmakerSlug: string, fixtureIds: string[], ma
       .eq("bookmaker_slug", bookmakerSlug)
       .in("market_code", marketCodes)
       .in("fixture_id", fixtureIdBatch);
+    if (paCategories?.length) query = query.in("pa_category", paCategories);
+
+    const { data, error } = await query;
 
     if (error) throw error;
     rows.push(...((data ?? []) as unknown as ExistingOddRow[]));
@@ -338,7 +341,13 @@ export class OddsRepository {
     bookmakerSlug: string,
     links: BookmakerLinkRow[],
     odds: OddRow[],
-    options: { marketCodes?: string[]; cleanupFixtureIds?: string[]; replaceExistingOdds?: boolean; cleanupPaCategories?: string[] } = {}
+    options: {
+      marketCodes?: string[];
+      cleanupFixtureIds?: string[];
+      replaceExistingOdds?: boolean;
+      cleanupPaCategories?: string[];
+      touchUnchangedOdds?: boolean;
+    } = {}
   ) {
     const saveStartedAt = new Date().toISOString();
     const marketCodes = options.marketCodes?.length ? options.marketCodes : ["1X2"];
@@ -386,7 +395,7 @@ export class OddsRepository {
       ).values()
     ]);
 
-    const replaceExistingOdds = options.replaceExistingOdds ?? true;
+    const replaceExistingOdds = options.replaceExistingOdds ?? false;
 
     if (replaceExistingOdds && fixtureIds.length) {
       await deleteExistingOdds(bookmakerSlug, fixtureIds, marketCodes, options.cleanupPaCategories);
@@ -404,7 +413,9 @@ export class OddsRepository {
       return uniqueOdds.length;
     }
 
-    const existingOdds = fixtureIds.length ? await fetchExistingOdds(bookmakerSlug, fixtureIds, marketCodes) : [];
+    const existingOdds = fixtureIds.length
+      ? await fetchExistingOdds(bookmakerSlug, fixtureIds, marketCodes, options.cleanupPaCategories)
+      : [];
     const existingOddsByKey = new Map(existingOdds.map((row) => [oddKey(row), row]));
     const currentOddKeys = new Set(uniqueOdds.map(oddKey));
     const changedOdds = uniqueOdds.filter((odd) => {
@@ -426,7 +437,9 @@ export class OddsRepository {
       );
     }
 
-    await touchSeenOdds(seenUnchangedOddIds, saveStartedAt);
+    if (options.touchUnchangedOdds) {
+      await touchSeenOdds(seenUnchangedOddIds, saveStartedAt);
+    }
 
     if (fixtureIds.length) {
       await deleteRowsById("odds", "limpeza de odds antigas", staleOddIds);

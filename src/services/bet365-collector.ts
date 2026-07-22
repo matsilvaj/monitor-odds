@@ -1379,8 +1379,9 @@ export class Bet365Collector {
       const link = buildBookmakerLink(this.config, fixture, event, context);
       const odds = buildMoneylineOdds(this.config, fixture, event);
       const oddsUpserted = await OddsRepository.saveAll(this.config.slug, [link], odds, {
-        replaceExistingOdds: true,
-        cleanupPaCategories: marketsSeen(event)
+        replaceExistingOdds: false,
+        cleanupPaCategories: marketsSeen(event),
+        touchUnchangedOdds: true
       });
       this.fixturesCollectedReliably.add(fixture.id);
       const { error: linkRawError } = await supabase

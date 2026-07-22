@@ -301,6 +301,7 @@ const MANUAL_ALIAS_GROUPS = [
   ["HNK Hajduk Split", "Hajduk Split"],
   ["RB Bragantino", "Bragantino", "Red Bull Bragantino"],
   ["St Louis City", "St. Louis City SC"],
+  ["HB Torshavn", "Havnar Boltfelag", "Havnar Bóltfelag"],
   ["Sporting Kansas City", "Sporting KC", "Kansas City"],
   ["Nashville SC", "Nashville"],
   ["Atlanta United FC", "Atlanta United"],

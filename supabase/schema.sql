@@ -305,6 +305,7 @@ create index if not exists bookmaker_payload_cache_expires_at_idx on bookmaker_p
 create index if not exists bookmaker_payload_cache_bookmaker_endpoint_idx on bookmaker_payload_cache (bookmaker_slug, endpoint);
 create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on bookmaker_event_snapshots (bookmaker_slug, date_key);
 create index if not exists bookmaker_event_snapshots_league_idx on bookmaker_event_snapshots (league_api_football_id);
+create index if not exists bookmaker_event_snapshots_starts_at_idx on bookmaker_event_snapshots (starts_at);
 create index if not exists bookmaker_collection_state_next_run_idx on bookmaker_collection_state (next_run_at);
 
 drop view if exists public.public_odds_feed;

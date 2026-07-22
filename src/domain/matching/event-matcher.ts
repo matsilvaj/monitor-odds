@@ -24,10 +24,7 @@ export type MatchEventsOptions = {
   context?: "strict" | "league-scoped";
   trustedLeagueScope?: boolean;
   maxTimeDiffMs?: number;
-  singleTeamMinScore?: number;
-  singleTeamMinTimeScore?: number;
   pairScoreMargin?: number;
-  singleTeamScoreMargin?: number;
 };
 
 const MAX_TIME_DIFF_MS = 20 * 60 * 1000;
@@ -35,8 +32,6 @@ const MIN_TEAM_SCORE = 0.65;
 const MIN_SIDE_TEAM_SCORE = 0.68;
 const MIN_ANCHORED_TEAM_SCORE = 0.88;
 const MIN_BALANCED_SIDE_TEAM_SCORE = 0.8;
-const MIN_SINGLE_TEAM_SCORE = 0.88;
-const MIN_SINGLE_TEAM_TIME_SCORE = 0.62;
 const VIRTUAL_EVENT_RE = /\b(?:e\s*soccer|esoccer|virtual|fantasy|simulado|simulacao|srl|cyber|pes|ebasket|basketball\s*cyber|kings\s*league)\b/i;
 const SAFE_PARTICIPANT_QUALIFIER_RE = /^(?:w|women|woman|f|fem|feminino|feminina|u\d{2}|sub\s*\d{2}|reserve|reserves|reserva|b|ii|iii|iv)$/;
 
@@ -171,27 +166,6 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
     };
   }
 
-  const singleTeamMinScore = options.singleTeamMinScore ?? MIN_SINGLE_TEAM_SCORE;
-  const singleTeamMinTimeScore = options.singleTeamMinTimeScore ?? MIN_SINGLE_TEAM_TIME_SCORE;
-  const canUseSingleTeam =
-    options.context === "league-scoped" &&
-    strongLeagueSignal &&
-    timeScore >= singleTeamMinTimeScore &&
-    evidence.bestSingleTeamScore >= singleTeamMinScore;
-
-  if (canUseSingleTeam) {
-    const singleScore = evidence.bestSingleTeamScore * 0.72 + timeScore * 0.28;
-    return {
-      matched: true,
-      score: Math.max(score, singleScore),
-      timeScore,
-      teamScore,
-      bestSingleTeamScore: evidence.bestSingleTeamScore,
-      orientation: evidence.bestSingleOrientation,
-      reason: "single-team-league-scope"
-    };
-  }
-
   if (selectedScore.minSideScore < MIN_SIDE_TEAM_SCORE) {
     return {
       matched: false,
@@ -284,10 +258,7 @@ export function findBestCanonicalEventMatch<T>(canonicalCandidates: T[], bookmak
   if (!best) return null;
 
   const runnerUp = accepted[1];
-  const requiredMargin =
-    best.match.reason === "single-team-league-scope"
-      ? options.singleTeamScoreMargin ?? 0.08
-      : options.pairScoreMargin ?? 0.02;
+  const requiredMargin = options.pairScoreMargin ?? 0.02;
 
   if (runnerUp && best.match.score - runnerUp.match.score < requiredMargin) return null;
   return { ...best.match, fixture: best.fixture };

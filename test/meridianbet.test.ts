@@ -44,7 +44,45 @@ test("uses the visible event header to detect inverted home and away order", () 
     bookmakerAwayTeam: "Alloa Athletic"
   });
 });
-test("accepts one recognized team only when date and kickoff are exact", () => {
+test("does not invert teams that share a generic FC prefix", () => {
+  const zimbruFixture: MeridianFixtureTarget = {
+    id: "zimbru-noah",
+    homeTeam: "Zimbru",
+    awayTeam: "FC Noah",
+    leagueName: "Conference League",
+    leagueCountry: "World",
+    startsAt: "2026-07-23T17:00:00.000Z"
+  };
+  const rawText = eventPage("Conferencia Liga Europa\n1415 Amanha 14:00\nFC Zimbru Chisinau\n-\nFC Noah Yerevan");
+  const sourceUrl = "https://meridianbet.example/fc-zimbru-chisinau-fc-noah-yerevan/1415";
+
+  assert.equal(isExpectedMeridianEvent(rawText, sourceUrl, zimbruFixture, new Date("2026-07-22T15:00:00.000Z")), true);
+  assert.deepEqual(meridianEventDisplayOrder(rawText, sourceUrl, zimbruFixture), {
+    orientation: "NORMAL",
+    bookmakerHomeTeam: "Zimbru",
+    bookmakerAwayTeam: "FC Noah"
+  });
+});
+test("keeps Dinamo Tbilisi and FK Zalgiris in the visible Meridian order", () => {
+  const dinamoFixture: MeridianFixtureTarget = {
+    id: "dinamo-zalgiris",
+    homeTeam: "Dinamo Tbilisi",
+    awayTeam: "FK Zalgiris Vilnius",
+    leagueName: "Conference League",
+    leagueCountry: "World",
+    startsAt: "2026-07-23T17:00:00.000Z"
+  };
+  const rawText = eventPage("Conferencia Liga Europa\n1400 Amanha 14:00\nFC Dinamo Tbilisi\n-\nFK Zalgiris Vilnius");
+  const sourceUrl = "https://meridianbet.example/fc-dinamo-tbilisi-fk-zalgiris-vilnius/1400";
+
+  assert.equal(isExpectedMeridianEvent(rawText, sourceUrl, dinamoFixture, new Date("2026-07-22T15:00:00.000Z")), true);
+  assert.deepEqual(meridianEventDisplayOrder(rawText, sourceUrl, dinamoFixture), {
+    orientation: "NORMAL",
+    bookmakerHomeTeam: "Dinamo Tbilisi",
+    bookmakerAwayTeam: "FK Zalgiris Vilnius"
+  });
+});
+test("rejects an event when only one team is recognized even at the exact kickoff", () => {
   const fixtureWithDifferentName: MeridianFixtureTarget = {
     ...fixture,
     homeTeam: "The Wasps"
@@ -52,11 +90,10 @@ test("accepts one recognized team only when date and kickoff are exact", () => {
   const rawText = eventPage("League Cup\n2519 Amanha 15:45\nAlloa Athletic FC\n-\nFalkirk FC");
   const sourceUrl = "https://meridianbet.example/alloa-athletic-fc-falkirk-fc/2519";
 
-  assert.equal(isExpectedMeridianEvent(rawText, sourceUrl, fixtureWithDifferentName, new Date("2026-07-20T15:00:00.000Z")), true);
-  assert.equal(meridianEventDisplayOrder(rawText, sourceUrl, fixtureWithDifferentName).orientation, "NORMAL");
+  assert.equal(isExpectedMeridianEvent(rawText, sourceUrl, fixtureWithDifferentName, new Date("2026-07-20T15:00:00.000Z")), false);
 });
 
-test("detects inverted order from the event URL when only one team name is recognized", () => {
+test("rejects an inverted event when only one team name is recognized", () => {
   const fixtureWithDifferentName: MeridianFixtureTarget = {
     ...fixture,
     homeTeam: "The Wasps"
@@ -64,8 +101,7 @@ test("detects inverted order from the event URL when only one team name is recog
   const rawText = eventPage("League Cup\n2519 Amanha 15:45\nFalkirk FC\n-\nAlloa Athletic FC");
   const sourceUrl = "https://meridianbet.example/falkirk-fc-alloa-athletic-fc/2519";
 
-  assert.equal(isExpectedMeridianEvent(rawText, sourceUrl, fixtureWithDifferentName, new Date("2026-07-20T15:00:00.000Z")), true);
-  assert.equal(meridianEventDisplayOrder(rawText, sourceUrl, fixtureWithDifferentName).orientation, "INVERTED");
+  assert.equal(isExpectedMeridianEvent(rawText, sourceUrl, fixtureWithDifferentName, new Date("2026-07-20T15:00:00.000Z")), false);
 });
 test("finds the event header even with promotional content before the Principal tab", () => {
   const promotions = Array.from({ length: 30 }, (_, index) => `Oferta promocional ${index + 1}`).join("\n");

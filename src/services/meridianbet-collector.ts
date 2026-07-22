@@ -334,7 +334,7 @@ async function persistCollectedEvent(bookmaker: MeridianbetBookmakerConfig, fixt
 
   const link = buildBookmakerLink(bookmaker, fixture, event);
   const odds = buildMoneylineOdds(bookmaker, fixture, event);
-  const oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, [link], odds, { replaceExistingOdds: true });
+  const oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, [link], odds, { replaceExistingOdds: false });
 
   await logger("info", "jogo da meridianbet salvo no banco", {
     fixtureId: fixture.id,

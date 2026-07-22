@@ -300,7 +300,9 @@ function teamPositionInText(text: string, teamName: unknown) {
     const normalizedAlias = normalizeVisibleText(alias);
     if (!normalizedAlias) continue;
     const exactPosition = searchable.indexOf(` ${normalizedAlias} `);
-    if (exactPosition >= 0) return textTokens.indexOf(normalizedAlias.split(/\s+/)[0]);
+    if (exactPosition >= 0) {
+      return searchable.slice(0, exactPosition).trim().split(/\s+/).filter(Boolean).length;
+    }
     const position = orderedTokenPosition(textTokens, significantTokensFromText(alias).slice(0, 4));
     if (position != null) return position;
   }
@@ -335,26 +337,14 @@ function eventOrderTextFromUrl(sourceUrl: string) {
 }
 
 export function meridianEventDisplayOrder(rawText: string, sourceUrl: string, fixture: MeridianFixtureTarget) {
-  const signals = [
-    { text: eventHeaderLinesFromRawText(rawText).join(" "), allowSingle: false },
-    { text: eventOrderTextFromUrl(sourceUrl), allowSingle: true }
-  ].filter((signal) => Boolean(signal.text));
+  const signals = [eventHeaderLinesFromRawText(rawText).join(" "), eventOrderTextFromUrl(sourceUrl)].filter(Boolean);
   let orientation: "NORMAL" | "INVERTED" = "NORMAL";
 
   for (const signal of signals) {
-    const homePosition = teamPositionInText(signal.text, fixture.homeTeam);
-    const awayPosition = teamPositionInText(signal.text, fixture.awayTeam);
+    const homePosition = teamPositionInText(signal, fixture.homeTeam);
+    const awayPosition = teamPositionInText(signal, fixture.awayTeam);
     if (homePosition != null && awayPosition != null && homePosition !== awayPosition) {
       orientation = awayPosition < homePosition ? "INVERTED" : "NORMAL";
-      break;
-    }
-    if (!signal.allowSingle) continue;
-    if (homePosition != null && awayPosition == null) {
-      orientation = homePosition === 0 ? "NORMAL" : "INVERTED";
-      break;
-    }
-    if (awayPosition != null && homePosition == null) {
-      orientation = awayPosition === 0 ? "INVERTED" : "NORMAL";
       break;
     }
   }
@@ -375,7 +365,7 @@ export function meridianEventValidation(rawText: string, fixture: MeridianFixtur
   const timeMatches = fixtureLocalTimeLabels(fixture.startsAt).some((label) => headerText.includes(normalizeVisibleText(label)));
   const dateMatches = fixtureLocalDateLabels(fixture.startsAt, now).some((label) => headerText.includes(normalizeVisibleText(label)));
   return {
-    valid: Boolean(headerText) && (hasHome || hasAway) && timeMatches && dateMatches,
+    valid: Boolean(headerText) && hasHome && hasAway && timeMatches && dateMatches,
     hasHeader: Boolean(headerText),
     hasHome,
     hasAway,

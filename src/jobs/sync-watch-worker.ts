@@ -5,9 +5,11 @@ import { isWatchLane, serializeSyncWatchEvent, type SyncWatchWorkerEvent, type W
 
 installProcessErrorHandlers();
 
-const WATCH_LOOP_PAUSE_MS = 2000;
+const WATCH_LOOP_PAUSE_MS = numberEnv("SYNC_WATCH_LOOP_PAUSE_MS", 15_000, 1_000);
+const STARTED_FIXTURE_CLEANUP_INTERVAL_MS = numberEnv("SYNC_WATCH_CLEANUP_INTERVAL_MS", 60_000, 15_000);
 
 let shutdownRequested = false;
+let lastStartedFixtureCleanupAt = 0;
 let resolveShutdown: (() => void) | null = null;
 const shutdownPromise = new Promise<void>((resolve) => {
   resolveShutdown = resolve;
@@ -81,10 +83,13 @@ async function collectLane(targetLane: WatchLane) {
   }
 
   if (targetLane === "fast") {
-    return collectFastBookmakers({ concurrency: 3, logProgress: true, trigger: "watch" });
+    const now = Date.now();
+    const cleanupStarted = now - lastStartedFixtureCleanupAt >= STARTED_FIXTURE_CLEANUP_INTERVAL_MS;
+    if (cleanupStarted) lastStartedFixtureCleanupAt = now;
+    return collectFastBookmakers({ concurrency: 3, logProgress: true, trigger: "watch", cleanupStarted });
   }
 
-  return collectBookmakerBySlug(targetLane, { concurrency: 1, logProgress: true, trigger: "watch" });
+  return collectBookmakerBySlug(targetLane, { concurrency: 1, logProgress: true, trigger: "watch", cleanupStarted: false });
 }
 
 process.on("message", (message: unknown) => {
