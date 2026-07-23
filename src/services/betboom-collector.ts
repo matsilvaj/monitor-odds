@@ -3,7 +3,9 @@ import type { BetboomBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import { normalizeForMatching, tokenSetSimilarity } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -160,9 +162,9 @@ function eventTeams(event: BetboomEvent) {
   };
 }
 
-function findBestMatch(event: BetboomEvent, fixtures: CanonicalFixture[]) {
+async function findBestMatch(event: BetboomEvent, fixtures: CanonicalFixture[], bookmakerSlug: string) {
   const { homeTeam, awayTeam } = eventTeams(event);
-  return findBestCanonicalEventMatch(
+  return findBestCanonicalEventMatchOnline(
     fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
     {
       id: event.id,
@@ -171,7 +173,7 @@ function findBestMatch(event: BetboomEvent, fixtures: CanonicalFixture[]) {
       awayTeam,
       leagueName: event.tournamentName ?? null
     },
-    { context: "league-scoped" }
+    { context: "league-scoped", bookmakerSlug }
   );
 }
 
@@ -290,7 +292,7 @@ export function createBetboomCollector(bookmaker: BetboomBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -331,10 +333,10 @@ export function createBetboomCollector(bookmaker: BetboomBookmakerConfig) {
       const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, fixtures));
       summary.eventsInWindow = targetEvents.length;
 
-      const bestMatchByFixtureId = new Map<string, { event: BetboomEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+      const bestMatchByFixtureId = new Map<string, { event: BetboomEvent; matched: NonNullable<Awaited<ReturnType<typeof findBestMatch>>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, fixtures);
+        const matched = await findBestMatch(event, fixtures, bookmaker.slug);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;

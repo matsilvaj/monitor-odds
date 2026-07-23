@@ -4,14 +4,16 @@ import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import type { Bet365BookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents } from "../domain/matching/event-matcher.js";
+import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeName } from "../domain/text.js";
 import { buildBet365Event, buildBet365EventFromDomMarkets, summarizeBet365Payloads } from "../providers/bet365/parser.js";
+import type { Bet365VisibleFixtureCandidate } from "../providers/bet365/network-client.js";
 import type { Bet365Event, Bet365FixtureTarget, Bet365Market, Logger } from "../providers/bet365/types.js";
 import { ChromeClient, type Bet365ChromeTabSession } from "../providers/bet365/chrome-client.js";
 import { isFixturePrematchForOddsRefresh as isPrematch } from "./collector-resilience.js";
 import { Bet365CollectionStateRepository } from "./bet365-collection-state.js";
 import { requestBookmakerLeagueUrl, resolveBookmakerLeagueUrlRequest } from "./bookmaker-league-url-requests.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
 import { getSavedBookmakerEventLinks, objectRaw, type SavedBookmakerEventLink } from "./saved-bookmaker-events.js";
 import { errorMessage } from "../utils/errors.js";
 
@@ -198,7 +200,7 @@ function isDrawMarketLabel(label: string) {
 }
 
 function marketTeamsFromSelections(event: Bet365Event, fixture: Bet365FixtureTarget) {
-  let sawTeamPair = false;
+  let lastTeamPair: { homeTeam: string; awayTeam: string } | null = null;
 
   for (const market of event.markets) {
     const teamLabels = market.selections
@@ -206,16 +208,16 @@ function marketTeamsFromSelections(event: Bet365Event, fixture: Bet365FixtureTar
       .filter((label) => label && !isDrawMarketLabel(label) && looksLikeTeamLine(label));
 
     if (teamLabels.length < 2) continue;
-    sawTeamPair = true;
     const homeTeam = teamLabels[0];
     const awayTeam = teamLabels[teamLabels.length - 1];
+    lastTeamPair = { homeTeam, awayTeam };
 
     if (candidateTeamsMatchFixture(fixture, homeTeam, awayTeam)) {
       return { matched: true as const, homeTeam, awayTeam };
     }
   }
 
-  return sawTeamPair ? { matched: false as const, homeTeam: null, awayTeam: null } : null;
+  return lastTeamPair ? { matched: false as const, ...lastTeamPair } : null;
 }
 
 function visibleEventTeams(rawText: string, fixture: Bet365FixtureTarget) {
@@ -261,7 +263,7 @@ function visibleEventTeams(rawText: string, fixture: Bet365FixtureTarget) {
 
 function applyVisibleEventIdentity(event: Bet365Event, fixture: Bet365FixtureTarget, rawText: string) {
   const marketTeams = marketTeamsFromSelections(event, fixture);
-  if (marketTeams?.matched) {
+  if (marketTeams) {
     return {
       ...event,
       eventName: [marketTeams.homeTeam, marketTeams.awayTeam].filter(Boolean).join(" x ") || event.eventName,
@@ -272,7 +274,14 @@ function applyVisibleEventIdentity(event: Bet365Event, fixture: Bet365FixtureTar
   }
 
   const teams = visibleEventTeams(rawText, fixture);
-  if (!teams) return event;
+  if (!teams) {
+    return {
+      ...event,
+      bookmakerHomeTeam: null,
+      bookmakerAwayTeam: null,
+      rawText: event.rawText || rawText
+    };
+  }
 
   return {
     ...event,
@@ -280,6 +289,22 @@ function applyVisibleEventIdentity(event: Bet365Event, fixture: Bet365FixtureTar
     bookmakerHomeTeam: teams.homeTeam ?? event.bookmakerHomeTeam,
     bookmakerAwayTeam: teams.awayTeam ?? event.bookmakerAwayTeam,
     rawText: event.rawText || rawText
+  };
+}
+
+export function applyCanonicalBet365EventOrientation(
+  event: Bet365Event,
+  orientation: EventMatchResult["orientation"]
+) {
+  return {
+    ...event,
+    markets: event.markets.map((market) => ({
+      ...market,
+      selections: market.selections.map((selection) => ({
+        ...selection,
+        selection: selectionForCanonicalOrientation(selection.selection, orientation)
+      }))
+    }))
   };
 }
 
@@ -311,6 +336,96 @@ function validateCollectedEvent(fixture: CanonicalFixture, event: Bet365Event) {
   );
 
   return match.matched ? { ok: true as const, match } : { ok: false as const, reason: match.reason, score: match.score };
+}
+
+function saoPauloParts(value: string | number | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+  const read = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    year: read("year"),
+    month: read("month"),
+    day: read("day"),
+    hour: read("hour").replace(/^24$/, "00"),
+    minute: read("minute")
+  };
+}
+
+function visibleBet365EventMatchesFixture(event: Bet365VisibleFixtureCandidate, fixture: CanonicalFixture) {
+  const parts = saoPauloParts(fixture.starts_at);
+  if (!parts || !event.timeLabel) return false;
+  if (event.timeLabel !== `${parts.hour}:${parts.minute}`) return false;
+  if (!event.dateLabel) return true;
+
+  const label = normalizeName(event.dateLabel);
+  const now = new Date();
+  const today = saoPauloParts(now);
+  const tomorrow = saoPauloParts(new Date(now.getTime() + 86_400_000));
+  if (label === "hoje") {
+    return Boolean(today && parts.year === today.year && parts.month === today.month && parts.day === today.day);
+  }
+  if (label === "amanha") {
+    return Boolean(tomorrow && parts.year === tomorrow.year && parts.month === tomorrow.month && parts.day === tomorrow.day);
+  }
+  return false;
+}
+
+async function stageVisibleBet365Identities(
+  bookmaker: Bet365BookmakerConfig,
+  league: CanonicalLeague,
+  fixtures: CanonicalFixture[],
+  events: Bet365VisibleFixtureCandidate[],
+  logger: Logger
+) {
+  let compared = 0;
+  for (const event of events) {
+    const candidates = fixtures.filter((fixture) => visibleBet365EventMatchesFixture(event, fixture));
+    if (!candidates.length) continue;
+    if (!event.dateLabel) {
+      const candidateDays = new Set(
+        candidates
+          .map((fixture) => saoPauloParts(fixture.starts_at))
+          .filter((parts): parts is NonNullable<ReturnType<typeof saoPauloParts>> => Boolean(parts))
+          .map((parts) => `${parts.year}-${parts.month}-${parts.day}`)
+      );
+      if (candidateDays.size > 1) continue;
+    }
+    compared += 1;
+    await findBestCanonicalEventMatchOnline(
+      candidates.map((fixture) => ({ ...fixture, leagueName: league.name })),
+      {
+        id: event.eventKey,
+        startsAt: candidates[0].starts_at,
+        homeTeam: event.homeTeam,
+        awayTeam: event.awayTeam,
+        leagueName: league.name
+      },
+      {
+        context: "league-scoped",
+        trustedLeagueScope: true,
+        bookmakerSlug: bookmaker.slug,
+        leagueCountry: league.country
+      }
+    );
+  }
+
+  if (events.length) {
+    await logger("info", "eventos da bet365 observados durante a busca normal", {
+      leagueName: league.name,
+      visibleEvents: events.length,
+      identityComparisonsStaged: compared
+    });
+  }
+  return compared;
 }
 
 function contextValue(context: Record<string, unknown>, key: string) {
@@ -970,6 +1085,7 @@ export class Bet365Collector {
       eventsSkippedStarted: 0,
       oddsFound: 0,
       oddsUpserted: 0,
+      identityCandidatesObserved: 0,
       errors: 0,
       lastError: null as string | null
     };
@@ -1071,6 +1187,7 @@ export class Bet365Collector {
         sourceUrl: candidate.sourceUrl
       });
 
+      this.chrome.takeObservedFixtureCandidates();
       try {
         await this.chrome.navigateTo(candidate.sourceUrl);
       } catch (error) {
@@ -1096,6 +1213,15 @@ export class Bet365Collector {
           await this.chrome.reset(candidate.sourceUrl);
         }
       }
+
+      const observedEvents = this.chrome.takeObservedFixtureCandidates();
+      leagueSummary.identityCandidatesObserved += await stageVisibleBet365Identities(
+        this.config,
+        firstLeague,
+        remainingFixtures,
+        observedEvents,
+        this.logger
+      );
 
       if (candidateCollectedAnyFixture) {
         await saveLeagueLink(this.config, firstLeague, candidate, this.logger).catch(async (error) => {
@@ -1338,7 +1464,7 @@ export class Bet365Collector {
           matchScore: validation.match.score
         });
 
-        return { ok: true, event };
+        return { ok: true, event: applyCanonicalBet365EventOrientation(event, validation.match.orientation) };
       } catch (error) {
         lastReason = "nav-error";
         if (attempt === attempts || debugAttempts) {
@@ -1379,8 +1505,9 @@ export class Bet365Collector {
       const link = buildBookmakerLink(this.config, fixture, event, context);
       const odds = buildMoneylineOdds(this.config, fixture, event);
       const oddsUpserted = await OddsRepository.saveAll(this.config.slug, [link], odds, {
-        replaceExistingOdds: true,
-        cleanupPaCategories: marketsSeen(event)
+        replaceExistingOdds: false,
+        cleanupPaCategories: marketsSeen(event),
+        touchUnchangedOdds: true
       });
       this.fixturesCollectedReliably.add(fixture.id);
       const { error: linkRawError } = await supabase

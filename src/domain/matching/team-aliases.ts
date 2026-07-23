@@ -289,6 +289,24 @@ const MANUAL_ALIAS_GROUPS = [
   ["Vikingur Gota", "Vikingur Gøta", "Vikingur Goeta", "Víkingur Gøta"],
   ["Stjarnan", "Stjarnan Gardabaer", "Stjarnan Gardabaer FC", "Stjarnan Garðabær"],
   ["FK Sarajevo", "Sarajevo"],
+  ["Paide", "Paide Linnameeskond", "Paide FC"],
+  ["Hegelmann Litauen", "FC Hegelmann", "Hegelmann"],
+  ["Levadia Tallinn", "FC Levadia Tallinn", "Levadia"],
+  ["Caernarfon Town", "Caernarfon"],
+  ["Milsami Orhei", "FC Milsami", "Milsami"],
+  ["Velez", "Velez Mostar", "Vele\u017e", "FK Velez Mostar"],
+  ["Mornar", "FK Mornar Bar", "Mornar Bar"],
+  ["Atletic Club d'Escaldes", "Atl\u00e8tic Club d'Escaldes", "AC d'Escaldes", "Atletic d'Escaldes"],
+  ["Zilina", "\u017dilina", "MSK Zilina", "M\u0160K \u017dilina"],
+  ["HNK Hajduk Split", "Hajduk Split"],
+  ["RB Bragantino", "Bragantino", "Red Bull Bragantino"],
+  ["St Louis City", "St. Louis City SC"],
+  ["HB Torshavn", "Havnar Boltfelag", "Havnar Bóltfelag"],
+  ["Sporting Kansas City", "Sporting KC", "Kansas City"],
+  ["Nashville SC", "Nashville"],
+  ["Atlanta United FC", "Atlanta United"],
+  ["Los Angeles Galaxy", "LA Galaxy"],
+  ["Los Angeles FC", "LAFC"],
   ["Inter Turku", "FC Inter Turku"],
   ["Ferencvarosi TC", "Ferencvaros", "Ferencváros", "FTC"],
   ["Connah's Quay Nomads", "Connahs Quay Nomads", "Connahs Quay", "GAP Connah S Quay FC", "Connah's Quay"],
@@ -401,6 +419,7 @@ const MANUAL_ALIAS_GROUPS = [
 
 const displayNamesByLocale = new Map<string, Intl.DisplayNames>();
 let aliasIndex: Map<string, Set<string>> | null = null;
+let learnedAliasIndex = new Map<string, Set<string>>();
 const SAFE_SHORT_ALIAS_TOKENS = new Set(["u17", "u18", "u19", "u20", "u21", "u22", "u23", "usa", "eua", "uae"]);
 
 function displayNames(locale: string) {
@@ -440,6 +459,21 @@ function addAliasGroup(index: Map<string, Set<string>>, aliases: unknown[]) {
   }
 }
 
+export type LearnedTeamAlias = {
+  canonicalName: string;
+  alias: string;
+};
+
+export function replaceLearnedTeamAliases(rows: LearnedTeamAlias[]) {
+  const next = new Map<string, Set<string>>();
+  for (const row of rows) addAliasGroup(next, [row.canonicalName, row.alias]);
+  learnedAliasIndex = next;
+}
+
+export function addLearnedTeamAliases(rows: LearnedTeamAlias[]) {
+  for (const row of rows) addAliasGroup(learnedAliasIndex, [row.canonicalName, row.alias]);
+}
+
 function buildAliasIndex() {
   const index = new Map<string, Set<string>>();
 
@@ -477,6 +511,17 @@ export function nationalTeamAliases(value: unknown) {
       aliases.add(`${alias} sub ${age}`);
     } else {
       aliases.add(alias);
+    }
+  }
+
+  for (const candidate of new Set([...aliases, baseName])) {
+    for (const learnedAlias of learnedAliasIndex.get(candidate) ?? []) {
+      if (age) {
+        aliases.add(`${learnedAlias} u${age}`);
+        aliases.add(`${learnedAlias} sub ${age}`);
+      } else {
+        aliases.add(learnedAlias);
+      }
     }
   }
 

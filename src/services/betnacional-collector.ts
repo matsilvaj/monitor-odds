@@ -4,7 +4,9 @@ import type { BetnacionalBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { findBestCanonicalEventMatch, matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import type { Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BetnacionalClient, type BetnacionalOdd, type BetnacionalSearchEvent } from "../providers/betnacional.js";
@@ -195,8 +197,8 @@ function isNearCanonicalFixtureWindow(event: BetnacionalEvent, fixtures: Canonic
   });
 }
 
-function findBestMatch(event: BetnacionalEvent, fixtures: CanonicalFixture[]): (EventMatchResult & { fixture: CanonicalFixture }) | null {
-  return findBestCanonicalEventMatch(
+async function findBestMatch(event: BetnacionalEvent, fixtures: CanonicalFixture[], bookmakerSlug: string) {
+  return findBestCanonicalEventMatchOnline(
     fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
     {
       id: event.eventId,
@@ -205,7 +207,7 @@ function findBestMatch(event: BetnacionalEvent, fixtures: CanonicalFixture[]): (
       awayTeam: event.away,
       leagueName: event.tournamentName
     },
-    { context: "league-scoped" }
+    { context: "league-scoped", bookmakerSlug }
   );
 }
 
@@ -410,7 +412,7 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -446,7 +448,7 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
             const event = eventFromSavedDetail(objectRaw(link.raw), eventId, detail);
             if (!event) throw new Error(`saved event detail missing for ${eventId}`);
 
-            const matched = findBestMatch(event, [fixture]);
+            const matched = await findBestMatch(event, [fixture], bookmaker.slug);
             if (!matched) throw new Error(`saved event no longer matches fixture ${fixture.name}`);
 
             const odds = buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation);
@@ -486,10 +488,10 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
       const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, discoveryFixtures));
       summary.eventsInWindow = targetEvents.length;
 
-      const bestMatchByFixtureId = new Map<string, { event: BetnacionalEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+      const bestMatchByFixtureId = new Map<string, { event: BetnacionalEvent; matched: NonNullable<Awaited<ReturnType<typeof findBestMatch>>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, discoveryFixtures);
+        const matched = await findBestMatch(event, discoveryFixtures, bookmaker.slug);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;
@@ -525,24 +527,23 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
             if (!searchResult.event_id || seenEventIds.has(searchResult.event_id)) continue;
             seenEventIds.add(searchResult.event_id);
 
-            const result = matchEvents(
-              {
-                id: fixture.id,
-                startsAt: fixture.starts_at,
-                homeTeam: fixture.home_team,
-                awayTeam: fixture.away_team,
-                leagueName: fixtureLeague(fixture)?.name ?? null
-              },
+            const league = fixtureLeague(fixture);
+            const result = await findBestCanonicalEventMatchOnline(
+              [{ ...fixture, leagueName: league?.name ?? null }],
               {
                 id: searchResult.event_id,
                 startsAt: parseSearchDateTime(searchResult.date_start),
                 homeTeam: searchResult.home ?? null,
                 awayTeam: searchResult.away ?? null,
                 leagueName: searchResult.tournament_name ?? null
+              },
+              {
+                context: "league-scoped",
+                bookmakerSlug: bookmaker.slug
               }
             );
 
-            if (!result.matched) continue;
+            if (!result) continue;
 
             let detail;
             try {
@@ -577,7 +578,7 @@ export function createBetnacionalCollector(bookmaker: BetnacionalBookmakerConfig
 
             const previous = bestMatchByFixtureId.get(fixture.id);
             if (!previous || result.score > previous.matched.score) {
-              bestMatchByFixtureId.set(fixture.id, { event: hydratedEvent, matched: { ...result, fixture } });
+              bestMatchByFixtureId.set(fixture.id, { event: hydratedEvent, matched: { ...result, fixture: { ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null } } });
             }
           }
 

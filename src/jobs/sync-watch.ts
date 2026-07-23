@@ -31,6 +31,7 @@ function booleanEnv(name: string) {
 const SMOKE_MODE = booleanEnv("SYNC_WATCH_SMOKE_MODE");
 const SKIP_FIXTURE_SYNC = booleanEnv("SYNC_WATCH_SKIP_FIXTURE_SYNC") || SMOKE_MODE;
 const SMOKE_EXIT_AFTER_MS = SMOKE_MODE ? numberEnv("SYNC_WATCH_SMOKE_EXIT_AFTER_MS", 0, 0) : 0;
+const WATCH_LOOP_PAUSE_MS = numberEnv("SYNC_WATCH_LOOP_PAUSE_MS", 15_000, 1_000);
 const WORKER_HEARTBEAT_MS = numberEnv("WATCHDOG_WORKER_HEARTBEAT_MS", 15_000, 1_000);
 const WATCHDOG_CHECK_MS = numberEnv("WATCHDOG_CHECK_MS", 15_000, 1_000);
 const HEARTBEAT_STALE_MS = numberEnv("WATCHDOG_HEARTBEAT_STALE_MS", Math.max(WORKER_HEARTBEAT_MS * 4, 90_000), 10_000);
@@ -282,7 +283,7 @@ function handleWorkerEvent(state: WorkerState, event: SyncWatchWorkerEvent) {
     if (event.ok === false) {
       console.warn(`[sync:${state.config.label}] Ciclo ${state.currentCycle} finalizado com erro em ${duration}: ${event.error ?? "erro desconhecido"}.`);
     } else {
-      console.log(`[sync:${state.config.label}] Ciclo ${state.currentCycle} finalizado em ${duration}. Próximo ciclo em 2s.`);
+      console.log(`[sync:${state.config.label}] Ciclo ${state.currentCycle} finalizado em ${duration}. Próximo ciclo em ${formatDuration(WATCH_LOOP_PAUSE_MS)}.`);
     }
     return;
   }

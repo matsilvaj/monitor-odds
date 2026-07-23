@@ -3,7 +3,9 @@ import type { CasaDeApostasBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import { normalizeForMatching, teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import type { Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -101,9 +103,9 @@ function isNearCanonicalFixtureWindow(event: CasaDeApostasGame, fixtures: Canoni
   });
 }
 
-function findBestMatch(event: CasaDeApostasGame, fixtures: CanonicalFixture[]) {
+async function findBestMatch(event: CasaDeApostasGame, fixtures: CanonicalFixture[], bookmakerSlug: string) {
   const { homeTeam, awayTeam } = eventTeams(event);
-  return findBestCanonicalEventMatch(
+  return findBestCanonicalEventMatchOnline(
     fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
     {
       id: event.id,
@@ -112,7 +114,7 @@ function findBestMatch(event: CasaDeApostasGame, fixtures: CanonicalFixture[]) {
       awayTeam,
       leagueName: event.leagueName ?? null
     },
-    { context: "league-scoped" }
+    { context: "league-scoped", bookmakerSlug }
   );
 }
 
@@ -212,7 +214,7 @@ export function createCasaDeApostasCollector(bookmaker: CasaDeApostasBookmakerCo
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -239,10 +241,10 @@ export function createCasaDeApostasCollector(bookmaker: CasaDeApostasBookmakerCo
       const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, fixtures));
       summary.eventsInWindow = targetEvents.length;
 
-      const bestMatchByFixtureId = new Map<string, { event: CasaDeApostasGame; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+      const bestMatchByFixtureId = new Map<string, { event: CasaDeApostasGame; matched: NonNullable<Awaited<ReturnType<typeof findBestMatch>>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, fixtures);
+        const matched = await findBestMatch(event, fixtures, bookmaker.slug);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;

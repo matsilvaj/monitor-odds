@@ -7,6 +7,13 @@ const optionalNonEmptyString = () =>
     return value;
   }, z.string().optional());
 
+const envBoolean = (defaultValue: boolean) =>
+  z.preprocess((value) => {
+    if (value === undefined || value === null || value === "") return defaultValue;
+    if (typeof value === "boolean") return value;
+    return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+  }, z.boolean());
+
 const envSchema = z.object({
   NODE_ENV: z.string().default("development"),
   SUPABASE_URL: z
@@ -19,6 +26,13 @@ const envSchema = z.object({
   API_FOOTBALL_KEY: z.string().min(1),
   API_FOOTBALL_TIMEZONE: z.string().default("America/Bahia"),
   API_FOOTBALL_FIXTURE_TTL_MINUTES: z.coerce.number().int().min(1).default(720),
+  TEAM_IDENTITY_RESOLVER_ENABLED: envBoolean(true),
+  GEMINI_API_KEY: optionalNonEmptyString(),
+  GEMINI_MODEL: z.string().default("gemini-3.5-flash-lite"),
+  TEAM_IDENTITY_DAILY_LIMIT: z.coerce.number().int().min(1).max(500).default(400),
+  TEAM_IDENTITY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(4).default(4),
+  TEAM_IDENTITY_TIMEOUT_MS: z.coerce.number().int().min(3000).max(60000).default(20000),
+  TEAM_IDENTITY_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
   ALTENAR_BASE_URL: z.string().url().default("https://sb2frontend-altenar2.biahosted.com/api/"),
   COLLECT_DELAY_MS: z.coerce.number().int().min(0).default(1500),
   MERIDIANBET_BASE_URL: z.string().url().default("https://meridianbet.bet.br/"),

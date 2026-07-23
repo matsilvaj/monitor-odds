@@ -6,7 +6,9 @@ import { MVP_LEAGUES } from "../config/leagues.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { AltenarClient, type AltenarEvent, type AltenarEventDetails, type AltenarMarket, type AltenarOdd } from "../providers/altenar.js";
@@ -96,9 +98,9 @@ function fixtureLeague(fixture: CanonicalFixture) {
   return Array.isArray(fixture.league) ? fixture.league[0] ?? null : fixture.league;
 }
 
-function matchFixture(details: AltenarEventDetails, fixtures: CanonicalFixture[]) {
+async function matchFixture(details: AltenarEventDetails, fixtures: CanonicalFixture[], bookmakerSlug: string) {
   const { homeTeam, awayTeam } = splitTeams(details);
-  const best = findBestCanonicalEventMatch(
+  const best = await findBestCanonicalEventMatchOnline(
     fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
     {
       id: details.id,
@@ -107,7 +109,7 @@ function matchFixture(details: AltenarEventDetails, fixtures: CanonicalFixture[]
       awayTeam,
       leagueName: details.champ?.name ?? null
     },
-    { context: "league-scoped" }
+    { context: "league-scoped", bookmakerSlug }
   );
   if (!best) return null;
   return { ...best, homeTeam, awayTeam };
@@ -258,7 +260,7 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
     await ensureBaseRows(bookmaker);
     const linksToSave: BookmakerLinkRow[] = [];
     const oddsToSave: OddRow[] = [];
-    let canonicalFixtures = await getCanonicalFixtures();
+    let canonicalFixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
 
     if (!canonicalFixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
@@ -293,7 +295,7 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
           try {
             await sleep(env.COLLECT_DELAY_MS + Math.floor(Math.random() * 500));
             const details = await client.getEventDetails(Number(link.external_event_id));
-            const matched = matchFixture(details, [fixture]);
+            const matched = await matchFixture(details, [fixture], bookmaker.slug);
             if (!matched) {
               summary.directEventsFailed += 1;
               await log(bookmaker, "warn", "saved event link did not match canonical fixture; falling back to discovery", {
@@ -346,7 +348,7 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
             await sleep(env.COLLECT_DELAY_MS + Math.floor(Math.random() * 500));
             const details = await client.getEventDetails(event.id);
 
-            const matched = matchFixture(details, discoveryFixtures);
+            const matched = await matchFixture(details, discoveryFixtures, bookmaker.slug);
             if (!matched) {
               summary.eventsUnmatched += 1;
               await log(bookmaker, "warn", "bookmaker event did not match canonical fixture", {

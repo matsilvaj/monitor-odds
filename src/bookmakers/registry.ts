@@ -24,6 +24,13 @@ import { createVaidebetCollector } from "../services/vaidebet-collector.js";
 import { createVersusbetCollector } from "../services/versusbet-collector.js";
 import { cleanupStartedFixtures, formatStartedFixtureCleanupSummary } from "../services/fixture-cleanup.js";
 import {
+  discardStagedResidualIdentities,
+  flushResidualIdentityQueue,
+  resolveResidualIdentities,
+  type ResidualIdentitySummary
+} from "../services/residual-identity-worker.js";
+import { refreshLearnedTeamAliases } from "../services/team-alias-store.js";
+import {
   formatBookmakerResultLines,
   formatBookmakerStartLine,
   formatFixtureReportLines,
@@ -210,13 +217,86 @@ function createBookmakerCollector(bookmaker: BookmakerConfig): BookmakerCollecto
   };
 }
 
-export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((bookmaker) => bookmaker.enabled).map(createBookmakerCollector);
+function attachIdentityRecovery(
+  firstPass: unknown,
+  recovery: ResidualIdentitySummary,
+  secondPass?: unknown
+) {
+  if (!firstPass || typeof firstPass !== "object" || Array.isArray(firstPass)) return firstPass;
+  return {
+    ...(firstPass as Record<string, unknown>),
+    identityRecovery: { ...recovery, secondPass }
+  };
+}
+
+function withLearnedTeamAliases(collector: BookmakerCollector): BookmakerCollector {
+  return {
+    ...collector,
+    collect: async (options) => {
+      await refreshLearnedTeamAliases().catch((error) => {
+        console.warn(`[matching] Falha ao atualizar aliases aprendidos: ${errorMessage(error)}`);
+      });
+      const firstPassStartedAt = new Date().toISOString();
+      const firstPass = await collector.collect(options).catch((error) => {
+        discardStagedResidualIdentities(collector.slug);
+        throw error;
+      });
+      if (options?.identityRecovery === false) {
+        discardStagedResidualIdentities(collector.slug);
+        return firstPass;
+      }
+
+      let recovery: ResidualIdentitySummary;
+      try {
+        await flushResidualIdentityQueue(collector.slug);
+        recovery = await resolveResidualIdentities(collector.slug, firstPassStartedAt);
+      } catch (error) {
+        discardStagedResidualIdentities(collector.slug);
+        console.warn(`[matching] ${collector.slug}: falha ao processar pendencias: ${errorMessage(error)}`);
+        return firstPass;
+      }
+
+      if (recovery.queued > 0) {
+        console.log(
+          `[matching] ${collector.slug}: ${recovery.processed}/${recovery.queued} pendencias processadas, ` +
+            `${recovery.resolved} resolvidas, ${recovery.exhausted} esgotadas, ${recovery.conflicts} conflitos.`
+        );
+      }
+      if (recovery.resolvedFixtureIds.length === 0) return attachIdentityRecovery(firstPass, recovery);
+
+      await refreshLearnedTeamAliases().catch((error) => {
+        console.warn(`[matching] Falha ao carregar aliases resolvidos: ${errorMessage(error)}`);
+      });
+      const bet365FullRecovery = collector.slug === "bet365";
+      if (bet365FullRecovery) {
+        console.log(
+          `[matching] bet365: aliases aprendidos com o Chrome fechado; iniciando um novo ciclo completo.`
+        );
+      } else {
+        console.log(
+          `[matching] ${collector.slug}: segunda busca direcionada para ${recovery.resolvedFixtureIds.length} evento(s).`
+        );
+      }
+      const secondPass = await collector.collect({
+        ...options,
+        trigger: "recovery",
+        fixtureIds: bet365FullRecovery ? undefined : recovery.resolvedFixtureIds,
+        identityRecovery: false
+      }).finally(() => {
+        discardStagedResidualIdentities(collector.slug);
+      });
+      return attachIdentityRecovery(firstPass, recovery, secondPass);
+    }
+  };
+}
+
+export const BOOKMAKER_COLLECTORS: BookmakerCollector[] = BOOKMAKERS.filter((bookmaker) => bookmaker.enabled).map((bookmaker) => withLearnedTeamAliases(createBookmakerCollector(bookmaker)));
 
 export function findBookmakerCollectorForManualRun(slug: string) {
   const bookmaker = BOOKMAKERS.find((item) => item.slug === slug);
   if (!bookmaker) return null;
   if (!bookmaker.enabled && bookmaker.provider !== "bet365") return null;
-  return createBookmakerCollector(bookmaker);
+  return withLearnedTeamAliases(createBookmakerCollector(bookmaker));
 }
 
 export type CollectAllBookmakersOptions = {

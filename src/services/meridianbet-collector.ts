@@ -12,9 +12,11 @@ import {
   isMeridianEventPageUrl,
   MeridianbetBrowserClient,
   type MeridianCollectedEvent,
-  type MeridianFixtureTarget
+  type MeridianFixtureTarget,
+  type MeridianVisibleEventCandidate
 } from "../providers/meridianbet.js";
-
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 type CanonicalFixture = {
   id: string;
   api_football_fixture_id: number;
@@ -111,6 +113,8 @@ function formatConsoleLine(level: "info" | "warn" | "error", message: string, co
   if (message === "verificacao da meridianbet concluida") return "[meridianbet] Verificacao concluida.";
   if (message === "verificacao da meridianbet nao liberou dentro do tempo esperado") return "[meridianbet] Verificacao nao liberou dentro do tempo esperado.";
   if (message === "falha ao coletar jogo da meridianbet por URL cacheada; tentando pela liga") return "[meridianbet] URL cacheada falhou; tentando pela liga.";
+  if (message === "painel aberto da meridianbet nao corresponde ao evento esperado") return `[meridianbet] Evento aberto rejeitado: ${fixtureName(context)} | painel=${contextValue(context, "hasHeader")} casa=${contextValue(context, "hasHome")} fora=${contextValue(context, "hasAway")} horario=${contextValue(context, "timeMatches")} data=${contextValue(context, "dateMatches")}.`;
+  if (message === "link cacheado invalido da meridianbet removido") return `[meridianbet] Link/odds cacheados incorretos removidos: ${fixtureName(context)}.`;
   if (message === "filtro TUDO da meridianbet clicado") return `[meridianbet] Filtro TUDO clicado.`;
   if (message === "eventos alvo da meridianbet ja visiveis; filtro TUDO dispensado") return "[meridianbet] Jogos alvo já visíveis; filtro TUDO dispensado.";
   if (message === "filtro TUDO da meridianbet ja estava selecionado") return "[meridianbet] Filtro TUDO já estava selecionado.";
@@ -190,6 +194,90 @@ function fixtureTargetFromCanonical(fixture: CanonicalFixture): MeridianFixtureT
     startsAt: fixture.starts_at
   };
 }
+function saoPauloParts(value: string | number | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+  const read = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    year: read("year"),
+    month: read("month"),
+    day: read("day"),
+    hour: read("hour").replace(/^24$/, "00"),
+    minute: read("minute")
+  };
+}
+
+function visibleEventMatchesFixture(event: MeridianVisibleEventCandidate, fixture: CanonicalFixture) {
+  const parts = saoPauloParts(fixture.starts_at);
+  if (!parts) return false;
+  if (event.timeLabel && event.timeLabel !== `${parts.hour}:${parts.minute}`) return false;
+  if (!event.dateLabel) return Boolean(event.timeLabel);
+
+  const dateLabel = normalizeName(event.dateLabel);
+  const now = new Date();
+  const today = saoPauloParts(now);
+  const tomorrow = saoPauloParts(new Date(now.getTime() + 86_400_000));
+  if (dateLabel === "hoje") return Boolean(today && parts.year === today.year && parts.month === today.month && parts.day === today.day);
+  if (dateLabel === "amanha") return Boolean(tomorrow && parts.year === tomorrow.year && parts.month === tomorrow.month && parts.day === tomorrow.day);
+
+  const numeric = /^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?$/.exec(dateLabel);
+  if (!numeric) return true;
+  const [, day, month, year] = numeric;
+  const normalizedYear = year ? (year.length === 2 ? `20${year}` : year) : parts.year;
+  return parts.day === day.padStart(2, "0") && parts.month === month.padStart(2, "0") && parts.year === normalizedYear;
+}
+
+async function resolveVisibleMeridianAliases(
+  bookmaker: MeridianbetBookmakerConfig,
+  league: ActiveLeague,
+  fixtures: CanonicalFixture[],
+  events: MeridianVisibleEventCandidate[],
+  logger: Logger
+) {
+  let resolved = 0;
+
+  for (const event of events) {
+    const candidates = fixtures.filter((fixture) => visibleEventMatchesFixture(event, fixture));
+    if (!candidates.length) continue;
+
+    const match = await findBestCanonicalEventMatchOnline(
+      candidates.map((fixture) => ({ ...fixture, leagueName: league.name })),
+      {
+        id: event.eventKey,
+        startsAt: candidates[0].starts_at,
+        homeTeam: event.homeTeam,
+        awayTeam: event.awayTeam,
+        leagueName: league.name
+      },
+      {
+        context: "league-scoped",
+        trustedLeagueScope: true,
+        bookmakerSlug: bookmaker.slug,
+        leagueCountry: league.country
+      }
+    );
+
+    if (match?.reason === "matched-via-grounded-identity") resolved += 1;
+  }
+
+  if (events.length) {
+    await logger("info", "catalogo visivel da meridianbet reconciliado", {
+      leagueName: league.name,
+      visibleEvents: events.length,
+      aliasesResolvedOnline: resolved
+    });
+  }
+  return resolved;
+}
 
 async function getCachedEventUrls(bookmakerSlug: string, fixtureIds: string[]) {
   const urlByFixtureId = new Map<string, string>();
@@ -211,6 +299,17 @@ async function getCachedEventUrls(bookmakerSlug: string, fixtureIds: string[]) {
   return urlByFixtureId;
 }
 
+async function invalidateCachedEvent(bookmakerSlug: string, fixture: CanonicalFixture, logger: Logger) {
+  const { error: oddsError } = await supabase.from("odds").delete().eq("bookmaker_slug", bookmakerSlug).eq("fixture_id", fixture.id);
+  if (oddsError) throw oddsError;
+  const { error: linkError } = await supabase.from("bookmaker_event_links").delete().eq("bookmaker_slug", bookmakerSlug).eq("fixture_id", fixture.id);
+  if (linkError) throw linkError;
+  await logger("warn", "link cacheado invalido da meridianbet removido", {
+    fixtureId: fixture.id,
+    homeTeam: fixture.home_team,
+    awayTeam: fixture.away_team
+  });
+}
 async function getCachedLeagueLinks(bookmakerSlug: string, leagueIds: number[]) {
   const linksByLeagueId = new Map<number, LeagueLinkRow>();
   if (!leagueIds.length) return linksByLeagueId;
@@ -321,7 +420,7 @@ async function persistCollectedEvent(bookmaker: MeridianbetBookmakerConfig, fixt
 
   const link = buildBookmakerLink(bookmaker, fixture, event);
   const odds = buildMoneylineOdds(bookmaker, fixture, event);
-  const oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, [link], odds, { replaceExistingOdds: true });
+  const oddsUpserted = await OddsRepository.saveAll(bookmaker.slug, [link], odds, { replaceExistingOdds: false });
 
   await logger("info", "jogo da meridianbet salvo no banco", {
     fixtureId: fixture.id,
@@ -361,6 +460,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
       eventsWithoutOdds: 0,
       eventsSkippedStarted: 0,
       eventsUnmatched: 0,
+      aliasesResolvedOnline: 0,
       oddsFound: 0,
       oddsUpserted: 0,
       errors: 0,
@@ -368,7 +468,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
     };
 
     await ensureBaseRows(bookmaker);
-    const allFixtures = await getCanonicalFixtures(dateKeys);
+    const allFixtures = restrictFixturesToRequested(await getCanonicalFixtures(dateKeys), options.fixtureIds);
     summary.fixturesAvailable = allFixtures.length;
     const fixtures = allFixtures.filter((fixture) => {
       if (isPrematch(fixture.starts_at)) return true;
@@ -439,6 +539,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
                   await client.goToUrl(page, item.url, "abrindo jogo da meridianbet por URL em cache");
                   if (!(await client.verifyCurrentEvent(page, fixtureTargetFromCanonical(item.fixture)))) {
                     summary.eventsUnmatched += 1;
+                    await invalidateCachedEvent(bookmaker.slug, item.fixture, logger);
                     continue;
                   }
                   summary.eventsOpened += 1;
@@ -492,6 +593,8 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           await client.goToUrl(discoveryPage, leagueUrl, "navegando para URL de liga da meridianbet");
           const leagueTargets = leagueFixtures.map((fixture) => fixtureTargetFromCanonical(fixture));
           await client.selectAllPeriod(discoveryPage, leagueTargets);
+          const visibleEvents = await client.listVisibleEvents(discoveryPage);
+          summary.aliasesResolvedOnline += await resolveVisibleMeridianAliases(bookmaker, league, leagueFixtures, visibleEvents, logger);
           if (!(await client.pageHasAnyFixture(discoveryPage, leagueTargets))) {
             if (!(await client.pageLooksLikeLeague(discoveryPage))) {
               await emitLeagueUrlError(bookmaker, league, savedUrl ?? leagueUrl, savedUrl ? "saved-url-failed" : "league-not-found", logger);
@@ -517,7 +620,14 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           for (const fixture of leagueFixtures) {
             try {
               const target = fixtureTargetFromCanonical(fixture);
-              const opened = await client.openFixture(discoveryPage, target);
+              let opened = false;
+              for (let openAttempt = 0; openAttempt < 3 && !opened; openAttempt += 1) {
+                opened = await client.openFixture(discoveryPage, target);
+                if (!opened && openAttempt < 2) {
+                  await client.goToUrl(discoveryPage, leagueUrl, "recarregando liga da meridianbet para repetir abertura").catch(() => undefined);
+                  await client.selectAllPeriod(discoveryPage, leagueTargets).catch(() => undefined);
+                }
+              }
               if (!opened) {
                 summary.eventsUnmatched += 1;
                 await logger("warn", "jogo alvo da meridianbet encontrado na liga, mas nao foi possivel abrir", {
@@ -557,6 +667,15 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
         }
       } finally {
         await discoveryPage.close({ runBeforeUnload: false }).catch(() => undefined);
+      }
+
+      if (summary.errors === 0) {
+        const uncollectedFixtures = fixtures.filter((fixture) => !processedFixtureIds.has(fixture.id));
+        await pMap(
+          uncollectedFixtures,
+          async (fixture) => invalidateCachedEvent(bookmaker.slug, fixture, logger),
+          { concurrency: Math.min(5, Math.max(1, uncollectedFixtures.length)) }
+        );
       }
     } catch (error) {
       summary.errors += 1;
