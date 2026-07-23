@@ -55,6 +55,49 @@ create table if not exists team_aliases (
 create index if not exists team_aliases_normalized_alias_idx
   on team_aliases (normalized_alias);
 
+alter table team_aliases add column if not exists bookmaker_slug text references bookmakers(slug) on delete cascade;
+alter table team_aliases add column if not exists league_id uuid references leagues(id) on delete set null;
+alter table team_aliases add column if not exists verified_at timestamptz;
+
+create index if not exists team_aliases_bookmaker_alias_idx
+  on team_aliases (bookmaker_slug, normalized_alias);
+create index if not exists team_aliases_league_alias_idx
+  on team_aliases (league_id, normalized_alias);
+create unique index if not exists team_aliases_bookmaker_unique_alias_idx
+  on team_aliases (bookmaker_slug, normalized_alias)
+  where bookmaker_slug is not null;
+
+create table if not exists team_resolution_daily_usage (
+  usage_date date primary key,
+  request_count integer not null default 0 check (request_count >= 0),
+  updated_at timestamptz not null default now()
+);
+
+create or replace function try_consume_team_resolution_quota(p_daily_limit integer)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  consumed boolean;
+begin
+  if p_daily_limit < 1 then
+    return false;
+  end if;
+
+  insert into team_resolution_daily_usage (usage_date, request_count, updated_at)
+  values (current_date, 1, now())
+  on conflict (usage_date) do update
+    set request_count = team_resolution_daily_usage.request_count + 1,
+        updated_at = now()
+    where team_resolution_daily_usage.request_count < p_daily_limit
+  returning true into consumed;
+
+  return coalesce(consumed, false);
+end;
+$$;
+
 create table if not exists fixtures (
   id uuid primary key default gen_random_uuid(),
   api_football_fixture_id bigint not null unique,
@@ -74,6 +117,38 @@ create table if not exists fixtures (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create table if not exists team_resolution_attempts (
+  id uuid primary key default gen_random_uuid(),
+  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
+  event_key text not null,
+  event_hash text not null,
+  bookmaker_home_team text not null,
+  bookmaker_away_team text not null,
+  league_name text,
+  starts_at timestamptz,
+  status text not null default 'pending' check (status in ('pending', 'resolved', 'exhausted', 'conflict', 'disabled')),
+  attempt_count integer not null default 0 check (attempt_count >= 0),
+  model text,
+  fixture_id uuid references fixtures(id) on delete set null,
+  resolved_home_team_id uuid references teams(id) on delete set null,
+  resolved_away_team_id uuid references teams(id) on delete set null,
+  orientation text check (orientation is null or orientation in ('NORMAL', 'INVERTED')),
+  grounded_sources jsonb not null default '[]'::jsonb,
+  raw_request jsonb not null default '{}'::jsonb,
+  raw_response jsonb not null default '{}'::jsonb,
+  last_error text,
+  retry_after timestamptz,
+  resolved_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (bookmaker_slug, event_hash)
+);
+
+create index if not exists team_resolution_attempts_status_retry_idx
+  on team_resolution_attempts (status, retry_after);
+create index if not exists team_resolution_attempts_fixture_idx
+  on team_resolution_attempts (bookmaker_slug, fixture_id);
 
 create table if not exists bookmaker_event_links (
   id uuid primary key default gen_random_uuid(),
@@ -490,6 +565,8 @@ revoke all on
   leagues,
   teams,
   team_aliases,
+  team_resolution_daily_usage,
+  team_resolution_attempts,
   fixtures,
   bookmaker_event_links,
   bookmaker_league_links,
@@ -501,11 +578,15 @@ revoke all on
   bookmaker_collection_state
 from anon, authenticated;
 revoke all on function public.try_acquire_bookmaker_collection_lock(text, timestamptz) from anon, authenticated;
+revoke all on function public.try_consume_team_resolution_quota(integer) from public, anon, authenticated;
+grant execute on function public.try_consume_team_resolution_quota(integer) to service_role;
 
 alter table bookmakers enable row level security;
 alter table leagues enable row level security;
 alter table teams enable row level security;
 alter table team_aliases enable row level security;
+alter table team_resolution_daily_usage enable row level security;
+alter table team_resolution_attempts enable row level security;
 alter table fixtures enable row level security;
 alter table bookmaker_event_links enable row level security;
 alter table bookmaker_league_links enable row level security;

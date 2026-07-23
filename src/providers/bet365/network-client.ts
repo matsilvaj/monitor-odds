@@ -18,6 +18,16 @@ export type Bet365ClickTarget = {
   awayTeam: string | null;
 };
 
+export type Bet365VisibleFixtureCandidate = {
+  eventKey: string;
+  homeTeam: string;
+  awayTeam: string;
+  timeLabel: string | null;
+  dateLabel: string | null;
+  sourceUrl: string | null;
+  rawText: string;
+};
+
 export type Bet365NetworkTabSession = {
   collectEventOdds(url: string, waitMs: number, target?: Bet365ClickTarget | null, clickEvent?: boolean, forceNavigate?: boolean): Promise<Bet365NetworkCapture>;
 };
@@ -94,6 +104,35 @@ function normalizeText(value: string | null | undefined) {
     .toLowerCase()
     .replace(/[^a-z0-9.,]+/g, " ")
     .trim();
+}
+
+export function parseVisibleFixtureCandidate(
+  rawText: string,
+  sourceUrl: string | null,
+  index: number
+): Bet365VisibleFixtureCandidate | null {
+  const lines = rawText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const timeLabel = lines.find((line) => /^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(line)) ?? null;
+  const dateLabel = lines.find((line) => /^(?:hoje|amanh[ãa])$/i.test(line)) ?? null;
+  const teamLines = lines.filter((line) => {
+    const normalized = normalizeText(line);
+    if (!normalized || normalized.length < 2 || normalized.length > 90) return false;
+    if (!/[a-z]/.test(normalized)) return false;
+    if (/^(?:hoje|amanha|ao vivo|live|empate|draw|resultado final|pagamento antecipado|mais mercados|popular)$/.test(normalized)) {
+      return false;
+    }
+    if (/^\+?\d+$/.test(normalized)) return false;
+    return true;
+  });
+  if (teamLines.length < 2) return null;
+
+  const [homeTeam, awayTeam] = teamLines.slice(0, 2);
+  if (!homeTeam || !awayTeam || normalizeText(homeTeam) === normalizeText(awayTeam)) return null;
+  const eventKey = [normalizeText(homeTeam), normalizeText(awayTeam), timeLabel ?? "", sourceUrl ?? index].join("|");
+  return { eventKey, homeTeam, awayTeam, timeLabel, dateLabel, sourceUrl, rawText };
 }
 
 function textMatchesTokenGroups(rawText: string, groups: string[][]) {
@@ -363,11 +402,27 @@ export function parseFixtureRowMoneylineMarket(
 }
 
 class Bet365PageController {
+  private readonly observedFixtureCandidates = new Map<string, Bet365VisibleFixtureCandidate>();
+
   constructor(
     private readonly page: Page,
     private readonly logger?: Logger,
     private readonly closePageOnClose = false
   ) {}
+
+  private recordObservedFixtureRows(rows: string[]) {
+    const sourceUrl = this.page.url();
+    for (const [index, rawText] of rows.entries()) {
+      const parsed = parseVisibleFixtureCandidate(rawText, sourceUrl, index);
+      if (parsed) this.observedFixtureCandidates.set(parsed.eventKey, parsed);
+    }
+  }
+
+  takeObservedFixtureCandidates() {
+    const events = [...this.observedFixtureCandidates.values()];
+    this.observedFixtureCandidates.clear();
+    return events;
+  }
 
   async navigate(url: string, timeoutMs: number) {
     if (!this.page) throw new Error("Browser da Bet365 nao conectado via CDP.");
@@ -765,7 +820,7 @@ class Bet365PageController {
     await this.page.waitForTimeout(350);
 
     for (let pageDown = 0; pageDown < 18; pageDown += 1) {
-      const candidate = await this.page
+      const result = await this.page
         .evaluate(
           ({ homeGroups, awayGroups }) => {
             const normalize = (value: unknown) =>
@@ -794,16 +849,25 @@ class Bet365PageController {
             ];
             const nodes = [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))];
             const candidates: Array<{ text: string; area: number }> = [];
+            const observedRows = new Set<string>();
 
             for (const node of nodes) {
               const participant = node as HTMLElement;
               let cursor: HTMLElement | null = participant;
+              let observed = false;
               for (let depth = 0; cursor && depth < 8; depth += 1, cursor = cursor.parentElement) {
                 if (!isVisible(cursor)) continue;
                 const rect = cursor.getBoundingClientRect();
                 const text = (cursor.innerText || cursor.textContent || "").trim();
                 if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
                 if (rect.height > 180 || text.length > 700) break;
+                if (!observed && rect.width >= 180 && rect.height >= 24) {
+                  const alphaLines = text.split(/\n+/).filter((line) => /[A-Za-z\u00C0-\u024F]/.test(line));
+                  if (alphaLines.length >= 2) {
+                    observedRows.add(text);
+                    observed = true;
+                  }
+                }
                 if (!matchesGroup(text, homeGroups) || !matchesGroup(text, awayGroups)) continue;
                 if (priceCount(text) !== 3) continue;
                 candidates.push({ text, area: rect.width * rect.height });
@@ -811,18 +875,24 @@ class Bet365PageController {
             }
 
             const best = candidates.sort((left, right) => left.area - right.area)[0];
-            if (!best) return null;
             const bodyText = document.body.innerText || document.body.textContent || "";
             const normalizedBody = normalize(bodyText);
             return {
-              text: best.text,
-              hasEarlyPayout: normalizedBody.includes("pagamento antecipado") || normalizedBody.includes("early payout")
+              candidate: best
+                ? {
+                    text: best.text,
+                    hasEarlyPayout: normalizedBody.includes("pagamento antecipado") || normalizedBody.includes("early payout")
+                  }
+                : null,
+              observedRows: [...observedRows]
             };
           },
           { homeGroups, awayGroups }
         )
         .catch(() => null);
 
+      this.recordObservedFixtureRows(result?.observedRows ?? []);
+      const candidate = result?.candidate;
       if (candidate) {
         const market = parseFixtureRowMoneylineMarket(candidate.text, target, candidate.hasEarlyPayout);
         if (market) return market;
@@ -1218,6 +1288,10 @@ export class Bet365NetworkClient {
 
   async currentUrl() {
     return this.mainController?.currentUrl() ?? "";
+  }
+
+  takeObservedFixtureCandidates() {
+    return this.requireMainController().takeObservedFixtureCandidates();
   }
 
   async collectEventOdds(

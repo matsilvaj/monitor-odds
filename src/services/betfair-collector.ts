@@ -4,7 +4,9 @@ import type { BetfairBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { nationalTeamAliases } from "../domain/matching/team-aliases.js";
@@ -102,22 +104,18 @@ function eventTeams(event: BetfairSearchResult) {
   return { homeTeam: homeTeam?.trim() || null, awayTeam: awayTeam?.trim() || null };
 }
 
-function matchSearchResult(fixture: CanonicalFixture, event: BetfairSearchResult) {
+async function matchSearchResult(fixture: CanonicalFixture, event: BetfairSearchResult, bookmakerSlug: string) {
   const { homeTeam, awayTeam } = eventTeams(event);
-  return matchEvents(
-    {
-      id: fixture.id,
-      startsAt: fixture.starts_at,
-      homeTeam: fixture.home_team,
-      awayTeam: fixture.away_team
-    },
+  return findBestCanonicalEventMatchOnline(
+    [fixture],
     {
       id: event.urn,
       startsAt: event.sportevent?.openDate ?? "",
       homeTeam,
       awayTeam,
       leagueName: event.sportevent?.competition?.name ?? null
-    }
+    },
+    { context: "league-scoped", bookmakerSlug }
   );
 }
 
@@ -231,7 +229,7 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -264,8 +262,8 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
           if (!fixture || !event.url || !Number.isFinite(eventId) || eventId <= 0) return;
 
           try {
-            const matched = matchSearchResult(fixture, event);
-            if (!matched.matched) throw new Error(`saved event no longer matches fixture ${fixture.name}`);
+            const matched = await matchSearchResult(fixture, event, bookmaker.slug);
+            if (!matched) throw new Error(`saved event no longer matches fixture ${fixture.name}`);
 
             const markets = await client.getMatchOdds(eventId, event.url);
             const odds = buildMoneylineOdds(bookmaker, fixture.id, event, markets, matched.orientation);
@@ -313,8 +311,8 @@ export function createBetfairCollector(bookmaker: BetfairBookmakerConfig) {
             }
 
             for (const event of results) {
-              const result = matchSearchResult(fixture, event);
-              if (!result.matched) continue;
+              const result = await matchSearchResult(fixture, event, bookmaker.slug);
+              if (!result) continue;
 
               const previous = bestByFixtureId.get(fixture.id);
               if (!previous || result.score > previous.score) {

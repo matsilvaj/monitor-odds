@@ -9,7 +9,9 @@ export type BookmakerCollectOptions = {
   date?: "today" | "tomorrow" | string;
   logToConsole?: boolean;
   manualFallback?: boolean;
-  trigger?: "manual" | "sync" | "watch";
+  trigger?: "manual" | "sync" | "watch" | "recovery";
+  fixtureIds?: string[];
+  identityRecovery?: boolean;
 };
 
 export type BookmakerCollector = {

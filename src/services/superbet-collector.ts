@@ -3,7 +3,9 @@ import type { SuperbetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import type { Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { SuperbetClient, type SuperbetEvent, type SuperbetOdd } from "../providers/superbet.js";
@@ -60,9 +62,9 @@ function splitTeams(event: SuperbetEvent) {
   return { homeTeam: homeTeam?.trim() || null, awayTeam: awayTeam?.trim() || null };
 }
 
-function matchFixture(event: SuperbetEvent, fixtures: CanonicalFixture[]) {
+async function matchFixture(event: SuperbetEvent, fixtures: CanonicalFixture[], bookmakerSlug: string) {
   const { homeTeam, awayTeam } = splitTeams(event);
-  return findBestCanonicalEventMatch(
+  return findBestCanonicalEventMatchOnline(
     fixtures,
     {
       id: event.eventId,
@@ -71,7 +73,7 @@ function matchFixture(event: SuperbetEvent, fixtures: CanonicalFixture[]) {
       awayTeam,
       leagueName: null
     },
-    { context: "league-scoped" }
+    { context: "league-scoped", bookmakerSlug }
   );
 }
 
@@ -172,7 +174,7 @@ export function createSuperbetCollector(bookmaker: SuperbetBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -204,12 +206,12 @@ export function createSuperbetCollector(bookmaker: SuperbetBookmakerConfig) {
       const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, fixtures));
       summary.eventsInWindow = targetEvents.length;
 
-      const bestMatchByFixtureId = new Map<string, { event: SuperbetEvent; matched: NonNullable<ReturnType<typeof matchFixture>> }>();
+      const bestMatchByFixtureId = new Map<string, { event: SuperbetEvent; matched: NonNullable<Awaited<ReturnType<typeof matchFixture>>> }>();
       const linksToSave: BookmakerLinkRow[] = [];
       const oddsToSave: OddRow[] = [];
 
       for (const event of targetEvents) {
-        const matched = matchFixture(event, fixtures);
+        const matched = await matchFixture(event, fixtures, bookmaker.slug);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;

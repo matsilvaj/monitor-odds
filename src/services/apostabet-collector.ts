@@ -4,7 +4,9 @@ import type { ApostabetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import { normalizeForMatching, teamNameSimilarity, tokenSetSimilarity } from "../domain/matching/text-similarity.js";
 import { nationalTeamAliases } from "../domain/matching/team-aliases.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
@@ -204,9 +206,9 @@ function isNearCanonicalFixtureWindow(event: ApostabetEvent, fixtures: Canonical
   });
 }
 
-function findBestMatch(event: ApostabetEvent, fixtures: CanonicalFixture[]) {
+async function findBestMatch(event: ApostabetEvent, fixtures: CanonicalFixture[], bookmakerSlug: string) {
   const { homeTeam, awayTeam } = eventTeams(event);
-  return findBestCanonicalEventMatch(
+  return findBestCanonicalEventMatchOnline(
     fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
     {
       id: event.id,
@@ -215,7 +217,7 @@ function findBestMatch(event: ApostabetEvent, fixtures: CanonicalFixture[]) {
       awayTeam,
       leagueName: event.tournamentName ?? null
     },
-    { context: "league-scoped" }
+    { context: "league-scoped", bookmakerSlug }
   );
 }
 
@@ -267,6 +269,7 @@ async function searchMissingEvents(
   client: ApostabetClient,
   fixtures: CanonicalFixture[],
   alreadyMatchedFixtureIds: Set<string>,
+  bookmakerSlug: string,
   onError: (message: string, context: Record<string, unknown>) => Promise<void>
 ) {
   const eventsById = new Map<string, ApostabetEvent>();
@@ -306,7 +309,7 @@ async function searchMissingEvents(
             status: searchEvent.status
           };
 
-          const matched = findBestMatch(candidate, [fixture]);
+          const matched = await findBestMatch(candidate, [fixture], bookmakerSlug);
           if (!matched) continue;
 
           let detailEvent;
@@ -413,7 +416,7 @@ export function createApostabetCollector(bookmaker: ApostabetBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -449,7 +452,7 @@ export function createApostabetCollector(bookmaker: ApostabetBookmakerConfig) {
 
           try {
             const event = await client.getEventWithPrincipalMarkets(eventId);
-            const matched = findBestMatch(event, [fixture]);
+            const matched = await findBestMatch(event, [fixture], bookmaker.slug);
             if (!matched) throw new Error(`saved event no longer matches fixture ${fixture.name}`);
 
             const odds = buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation, earlyPayoutTournamentIds);
@@ -509,10 +512,10 @@ export function createApostabetCollector(bookmaker: ApostabetBookmakerConfig) {
       const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, discoveryFixtures));
       summary.eventsInWindow = targetEvents.length;
 
-      const bestMatchByFixtureId = new Map<string, { event: ApostabetEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+      const bestMatchByFixtureId = new Map<string, { event: ApostabetEvent; matched: NonNullable<Awaited<ReturnType<typeof findBestMatch>>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, discoveryFixtures);
+        const matched = await findBestMatch(event, discoveryFixtures, bookmaker.slug);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;
@@ -524,13 +527,13 @@ export function createApostabetCollector(bookmaker: ApostabetBookmakerConfig) {
         }
       }
 
-      const fallbackEvents = await searchMissingEvents(client, discoveryFixtures, new Set(bestMatchByFixtureId.keys()), async (message, context) => {
+      const fallbackEvents = await searchMissingEvents(client, discoveryFixtures, new Set(bestMatchByFixtureId.keys()), bookmaker.slug, async (message, context) => {
         summary.errors += 1;
         summary.lastError = errorMessage(context.error);
         await log(bookmaker, "error", message, context);
       });
       for (const event of fallbackEvents) {
-        const matched = findBestMatch(event, discoveryFixtures);
+        const matched = await findBestMatch(event, discoveryFixtures, bookmaker.slug);
         if (!matched) continue;
 
         const previous = bestMatchByFixtureId.get(matched.fixture.id);

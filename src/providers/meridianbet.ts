@@ -51,6 +51,15 @@ export type MeridianCollectedEvent = {
   markets: MeridianCollectedMarket[];
   rawText: string;
 };
+export type MeridianVisibleEventCandidate = {
+  eventKey: string;
+  homeTeam: string;
+  awayTeam: string;
+  timeLabel: string | null;
+  dateLabel: string | null;
+  sourceUrl: string | null;
+  rawText: string;
+};
 
 type ClickTarget = {
   text: string;
@@ -208,6 +217,35 @@ function looksLikeUsableLeagueText(rawText: string) {
     text.includes("principal") ||
     text.includes("futebol")
   );
+}
+export function parseVisibleEventCandidate(rawText: string, sourceUrl: string | null, index: number): MeridianVisibleEventCandidate | null {
+  const lines = rawText.split(/\n+/).map((line) => compactSpaces(line)).filter(Boolean);
+  const timeLabel = lines.find((line) => /^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(line)) ?? null;
+  const dateLabel =
+    lines.find((line) => /^(?:hoje|amanha|\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?|\d{4}-\d{2}-\d{2})$/i.test(normalizeVisibleText(line))) ?? null;
+  const teamLines = lines.filter((line) => {
+    const normalized = normalizeVisibleText(line);
+    if (!normalized || normalized.length < 2 || normalized.length > 90) return false;
+    if (!/[a-z]/.test(normalized)) return false;
+    if (/^(?:hoje|amanha|ao vivo|live|mais mercados|principal|futebol|resultado final)$/.test(normalized)) return false;
+    if (/^(?:[01]?\d|2[0-3]) [0-5]\d$/.test(normalized)) return false;
+    if (/^\+?\d+$/.test(normalized)) return false;
+    return true;
+  });
+
+  if (teamLines.length < 2) return null;
+  const [homeTeam, awayTeam] = teamLines.slice(-2);
+  if (!homeTeam || !awayTeam || normalizeVisibleText(homeTeam) === normalizeVisibleText(awayTeam)) return null;
+
+  return {
+    eventKey: String(parseMeridianEventId(sourceUrl ?? rawText, `visible:${index}`)),
+    homeTeam,
+    awayTeam,
+    timeLabel,
+    dateLabel,
+    sourceUrl,
+    rawText
+  };
 }
 
 export function isMeridianEventPageUrl(sourceUrl: string | null | undefined) {
@@ -494,6 +532,50 @@ export class MeridianbetBrowserClient {
         return [...document.querySelectorAll("standard-event, .c-event")].some((node) => isVisible(node));
       })
       .catch(() => false);
+  }
+  async listVisibleEvents(page: Page) {
+    const events = new Map<string, MeridianVisibleEventCandidate>();
+    await page.keyboard.press("Home").catch(() => undefined);
+    await page.waitForTimeout(500);
+
+    for (let attempt = 0; attempt < 18; attempt += 1) {
+      const rows = await page
+        .evaluate(() => {
+          const visible = (node: Element) => {
+            if (!(node instanceof HTMLElement)) return false;
+            const rect = node.getBoundingClientRect();
+            const style = window.getComputedStyle(node);
+            return rect.width >= 200 && rect.height >= 28 && rect.height <= 220 && rect.bottom >= 0 && rect.top <= window.innerHeight && style.visibility !== "hidden" && style.display !== "none";
+          };
+
+          return [...document.querySelectorAll("standard-event, .c-event")]
+            .filter(visible)
+            .map((node) => {
+              const element = node as HTMLElement;
+              const anchor = element.matches("a[href]") ? element : element.querySelector("a[href]");
+              return {
+                rawText: (element.innerText || element.textContent || "").trim(),
+                sourceUrl: anchor instanceof HTMLAnchorElement ? anchor.href : null
+              };
+            });
+        })
+        .catch(() => [] as Array<{ rawText: string; sourceUrl: string | null }>);
+
+      for (const [index, row] of rows.entries()) {
+        const parsed = parseVisibleEventCandidate(row.rawText, row.sourceUrl, attempt * 100 + index);
+        if (!parsed) continue;
+        const key = [normalizeVisibleText(parsed.homeTeam), normalizeVisibleText(parsed.awayTeam), parsed.timeLabel ?? "", parsed.dateLabel ?? ""].join("|");
+        if (!events.has(key)) events.set(key, parsed);
+      }
+
+      await page.keyboard.press("PageDown").catch(() => undefined);
+      await this.scrollMainContent(page, 750);
+      await page.waitForTimeout(300);
+    }
+
+    await page.keyboard.press("Home").catch(() => undefined);
+    await page.waitForTimeout(300);
+    return [...events.values()];
   }
   async pageHasAnyFixture(page: Page, fixtures: MeridianFixtureTarget[]) {
     if (!fixtures.length) return false;

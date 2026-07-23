@@ -12,9 +12,11 @@ import {
   isMeridianEventPageUrl,
   MeridianbetBrowserClient,
   type MeridianCollectedEvent,
-  type MeridianFixtureTarget
+  type MeridianFixtureTarget,
+  type MeridianVisibleEventCandidate
 } from "../providers/meridianbet.js";
-
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 type CanonicalFixture = {
   id: string;
   api_football_fixture_id: number;
@@ -191,6 +193,90 @@ function fixtureTargetFromCanonical(fixture: CanonicalFixture): MeridianFixtureT
     leagueCountry: league?.country ?? null,
     startsAt: fixture.starts_at
   };
+}
+function saoPauloParts(value: string | number | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+  const read = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    year: read("year"),
+    month: read("month"),
+    day: read("day"),
+    hour: read("hour").replace(/^24$/, "00"),
+    minute: read("minute")
+  };
+}
+
+function visibleEventMatchesFixture(event: MeridianVisibleEventCandidate, fixture: CanonicalFixture) {
+  const parts = saoPauloParts(fixture.starts_at);
+  if (!parts) return false;
+  if (event.timeLabel && event.timeLabel !== `${parts.hour}:${parts.minute}`) return false;
+  if (!event.dateLabel) return Boolean(event.timeLabel);
+
+  const dateLabel = normalizeName(event.dateLabel);
+  const now = new Date();
+  const today = saoPauloParts(now);
+  const tomorrow = saoPauloParts(new Date(now.getTime() + 86_400_000));
+  if (dateLabel === "hoje") return Boolean(today && parts.year === today.year && parts.month === today.month && parts.day === today.day);
+  if (dateLabel === "amanha") return Boolean(tomorrow && parts.year === tomorrow.year && parts.month === tomorrow.month && parts.day === tomorrow.day);
+
+  const numeric = /^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?$/.exec(dateLabel);
+  if (!numeric) return true;
+  const [, day, month, year] = numeric;
+  const normalizedYear = year ? (year.length === 2 ? `20${year}` : year) : parts.year;
+  return parts.day === day.padStart(2, "0") && parts.month === month.padStart(2, "0") && parts.year === normalizedYear;
+}
+
+async function resolveVisibleMeridianAliases(
+  bookmaker: MeridianbetBookmakerConfig,
+  league: ActiveLeague,
+  fixtures: CanonicalFixture[],
+  events: MeridianVisibleEventCandidate[],
+  logger: Logger
+) {
+  let resolved = 0;
+
+  for (const event of events) {
+    const candidates = fixtures.filter((fixture) => visibleEventMatchesFixture(event, fixture));
+    if (!candidates.length) continue;
+
+    const match = await findBestCanonicalEventMatchOnline(
+      candidates.map((fixture) => ({ ...fixture, leagueName: league.name })),
+      {
+        id: event.eventKey,
+        startsAt: candidates[0].starts_at,
+        homeTeam: event.homeTeam,
+        awayTeam: event.awayTeam,
+        leagueName: league.name
+      },
+      {
+        context: "league-scoped",
+        trustedLeagueScope: true,
+        bookmakerSlug: bookmaker.slug,
+        leagueCountry: league.country
+      }
+    );
+
+    if (match?.reason === "matched-via-grounded-identity") resolved += 1;
+  }
+
+  if (events.length) {
+    await logger("info", "catalogo visivel da meridianbet reconciliado", {
+      leagueName: league.name,
+      visibleEvents: events.length,
+      aliasesResolvedOnline: resolved
+    });
+  }
+  return resolved;
 }
 
 async function getCachedEventUrls(bookmakerSlug: string, fixtureIds: string[]) {
@@ -374,6 +460,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
       eventsWithoutOdds: 0,
       eventsSkippedStarted: 0,
       eventsUnmatched: 0,
+      aliasesResolvedOnline: 0,
       oddsFound: 0,
       oddsUpserted: 0,
       errors: 0,
@@ -381,7 +468,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
     };
 
     await ensureBaseRows(bookmaker);
-    const allFixtures = await getCanonicalFixtures(dateKeys);
+    const allFixtures = restrictFixturesToRequested(await getCanonicalFixtures(dateKeys), options.fixtureIds);
     summary.fixturesAvailable = allFixtures.length;
     const fixtures = allFixtures.filter((fixture) => {
       if (isPrematch(fixture.starts_at)) return true;
@@ -506,6 +593,8 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           await client.goToUrl(discoveryPage, leagueUrl, "navegando para URL de liga da meridianbet");
           const leagueTargets = leagueFixtures.map((fixture) => fixtureTargetFromCanonical(fixture));
           await client.selectAllPeriod(discoveryPage, leagueTargets);
+          const visibleEvents = await client.listVisibleEvents(discoveryPage);
+          summary.aliasesResolvedOnline += await resolveVisibleMeridianAliases(bookmaker, league, leagueFixtures, visibleEvents, logger);
           if (!(await client.pageHasAnyFixture(discoveryPage, leagueTargets))) {
             if (!(await client.pageLooksLikeLeague(discoveryPage))) {
               await emitLeagueUrlError(bookmaker, league, savedUrl ?? leagueUrl, savedUrl ? "saved-url-failed" : "league-not-found", logger);

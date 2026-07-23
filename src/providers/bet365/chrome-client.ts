@@ -132,6 +132,10 @@ export class ChromeClient {
     return this.networkClient.currentUrl();
   }
 
+  takeObservedFixtureCandidates() {
+    return this.networkClient.takeObservedFixtureCandidates();
+  }
+
   async reset(competitionUrl: string) {
     await this.navigateTo(competitionUrl);
   }

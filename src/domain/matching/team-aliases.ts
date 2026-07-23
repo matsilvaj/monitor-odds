@@ -419,6 +419,7 @@ const MANUAL_ALIAS_GROUPS = [
 
 const displayNamesByLocale = new Map<string, Intl.DisplayNames>();
 let aliasIndex: Map<string, Set<string>> | null = null;
+let learnedAliasIndex = new Map<string, Set<string>>();
 const SAFE_SHORT_ALIAS_TOKENS = new Set(["u17", "u18", "u19", "u20", "u21", "u22", "u23", "usa", "eua", "uae"]);
 
 function displayNames(locale: string) {
@@ -458,6 +459,21 @@ function addAliasGroup(index: Map<string, Set<string>>, aliases: unknown[]) {
   }
 }
 
+export type LearnedTeamAlias = {
+  canonicalName: string;
+  alias: string;
+};
+
+export function replaceLearnedTeamAliases(rows: LearnedTeamAlias[]) {
+  const next = new Map<string, Set<string>>();
+  for (const row of rows) addAliasGroup(next, [row.canonicalName, row.alias]);
+  learnedAliasIndex = next;
+}
+
+export function addLearnedTeamAliases(rows: LearnedTeamAlias[]) {
+  for (const row of rows) addAliasGroup(learnedAliasIndex, [row.canonicalName, row.alias]);
+}
+
 function buildAliasIndex() {
   const index = new Map<string, Set<string>>();
 
@@ -495,6 +511,17 @@ export function nationalTeamAliases(value: unknown) {
       aliases.add(`${alias} sub ${age}`);
     } else {
       aliases.add(alias);
+    }
+  }
+
+  for (const candidate of new Set([...aliases, baseName])) {
+    for (const learnedAlias of learnedAliasIndex.get(candidate) ?? []) {
+      if (age) {
+        aliases.add(`${learnedAlias} u${age}`);
+        aliases.add(`${learnedAlias} sub ${age}`);
+      } else {
+        aliases.add(learnedAlias);
+      }
     }
   }
 

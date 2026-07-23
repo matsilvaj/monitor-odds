@@ -4,7 +4,9 @@ import type { NovibetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { matchEvents, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import { nationalTeamAliases } from "../domain/matching/team-aliases.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -72,41 +74,33 @@ function eventTeams(event: NovibetEventDetails) {
   };
 }
 
-function matchDocument(fixture: CanonicalFixture, document: NovibetSearchDocument) {
+async function matchDocument(fixture: CanonicalFixture, document: NovibetSearchDocument, bookmakerSlug: string) {
   const { homeTeam, awayTeam } = documentTeams(document);
-  return matchEvents(
-    {
-      id: fixture.id,
-      startsAt: fixture.starts_at,
-      homeTeam: fixture.home_team,
-      awayTeam: fixture.away_team
-    },
+  return findBestCanonicalEventMatchOnline(
+    [fixture],
     {
       id: document.betContextId,
       startsAt: document.startTimeUTC ?? "",
       homeTeam,
       awayTeam,
       leagueName: document.pathLocations?.map((item) => item.caption).join(" ") ?? null
-    }
+    },
+    { context: "league-scoped", bookmakerSlug }
   );
 }
 
-function matchEventDetails(fixture: CanonicalFixture, event: NovibetEventDetails) {
+async function matchEventDetails(fixture: CanonicalFixture, event: NovibetEventDetails, bookmakerSlug: string) {
   const { homeTeam, awayTeam } = eventTeams(event);
-  return matchEvents(
-    {
-      id: fixture.id,
-      startsAt: fixture.starts_at,
-      homeTeam: fixture.home_team,
-      awayTeam: fixture.away_team
-    },
+  return findBestCanonicalEventMatchOnline(
+    [fixture],
     {
       id: event.betContextId,
       startsAt: event.startTimeUTC ?? "",
       homeTeam,
       awayTeam,
       leagueName: event.pathLocations?.map((item) => item.caption).join(" ") ?? null
-    }
+    },
+    { context: "league-scoped", bookmakerSlug }
   );
 }
 
@@ -273,7 +267,7 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -309,8 +303,8 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
           try {
             const raw = objectRaw(link.raw);
             const event = await client.getEventDetails(Number(link.external_event_id), typeof raw.path === "string" ? raw.path : null);
-            const result = matchEventDetails(fixture, event);
-            if (!result.matched) {
+            const result = await matchEventDetails(fixture, event, bookmaker.slug);
+            if (!result) {
               summary.directEventsFailed += 1;
               await log(bookmaker, "warn", "saved event link did not match canonical fixture; falling back to search", {
                 fixtureId: fixture.id,
@@ -361,8 +355,8 @@ export function createNovibetCollector(bookmaker: NovibetBookmakerConfig) {
               summary.eventsSeen += documents.length;
 
               for (const document of documents.filter((item) => !item.isLive)) {
-                const result = matchDocument(fixture, document);
-                if (!result.matched) continue;
+                const result = await matchDocument(fixture, document, bookmaker.slug);
+                if (!result) continue;
 
                 const previous = bestByFixtureId.get(fixture.id);
                 if (!previous || result.score > previous.score) {

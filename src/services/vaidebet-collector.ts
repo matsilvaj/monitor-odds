@@ -4,7 +4,9 @@ import type { VaidebetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import { normalizeName } from "../domain/text.js";
@@ -97,9 +99,9 @@ function fixtureLeague(fixture: CanonicalFixture) {
   return Array.isArray(fixture.league) ? fixture.league[0] ?? null : fixture.league;
 }
 
-function findBestMatch(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
+async function findBestMatch(event: VaidebetFixture, fixtures: CanonicalFixture[], bookmakerSlug: string) {
   const leagueName = event.sourceLeagueName ?? event.sourceSeasonName ?? null;
-  const best = findBestCanonicalEventMatch(
+  const best = await findBestCanonicalEventMatchOnline(
     fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
     {
       id: event.fId,
@@ -110,6 +112,7 @@ function findBestMatch(event: VaidebetFixture, fixtures: CanonicalFixture[]) {
     },
     {
       context: "league-scoped",
+      bookmakerSlug,
       maxTimeDiffMs: RELAXED_DELTA_TIME_WINDOW_MINUTES * 60 * 1000
     }
   );
@@ -255,7 +258,7 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -281,12 +284,12 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
         const targetEvents = events.filter((event) => event.vld !== false && event.frz !== true && isNearCanonicalFixtureWindow(event, fixtures, RELAXED_DELTA_TIME_WINDOW_MINUTES));
         summary.eventsInWindow = targetEvents.length;
 
-        const bestMatchByFixtureId = new Map<string, { event: VaidebetFixture; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+        const bestMatchByFixtureId = new Map<string, { event: VaidebetFixture; matched: NonNullable<Awaited<ReturnType<typeof findBestMatch>>> }>();
         const linksToSave: BookmakerLinkRow[] = [];
         const oddsToSave: OddRow[] = [];
 
         for (const event of targetEvents) {
-          const matched = findBestMatch(event, fixtures);
+          const matched = await findBestMatch(event, fixtures, bookmaker.slug);
           if (!matched) {
             summary.eventsUnmatched += 1;
             continue;
@@ -338,12 +341,12 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
       const targetEvents = events.filter((event) => event.vld !== false && event.frz !== true && isNearCanonicalFixtureWindow(event, fixtures));
       summary.eventsInWindow = targetEvents.length;
 
-      const bestMatchByFixtureId = new Map<string, { event: VaidebetFixture; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+      const bestMatchByFixtureId = new Map<string, { event: VaidebetFixture; matched: NonNullable<Awaited<ReturnType<typeof findBestMatch>>> }>();
       const linksToSave: BookmakerLinkRow[] = [];
       const oddsToSave: OddRow[] = [];
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, fixtures);
+        const matched = await findBestMatch(event, fixtures, bookmaker.slug);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;
@@ -371,7 +374,7 @@ export function createVaidebetCollector(bookmaker: VaidebetBookmakerConfig) {
       summary.eventsSeen += cachedEvents.length;
 
       for (const event of cachedEvents.filter((event) => event.vld !== false && event.frz !== true && isNearCanonicalFixtureWindow(event, fixtures))) {
-        const matched = findBestMatch(event, fixtures);
+        const matched = await findBestMatch(event, fixtures, bookmaker.slug);
         if (!matched) continue;
 
         const previous = bestMatchByFixtureId.get(matched.fixture.id);

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isExpectedMeridianEvent,
+  parseVisibleEventCandidate,
   meridianEventDisplayOrder,
   type MeridianFixtureTarget
 } from "../src/providers/meridianbet.js";
@@ -115,4 +116,18 @@ test("finds the event header even with promotional content before the Principal 
   };
 
   assert.equal(isExpectedMeridianEvent(rawText, "https://meridianbet.example/agf-aarhus-kks-lech-poznan/69", aarhusFixture, new Date("2026-07-20T15:00:00.000Z")), true);
+});
+
+test("extracts both unknown bookmaker names from a visible Meridian event", () => {
+  const event = parseVisibleEventCandidate(
+    ["14:00", "Amanha", "FC Dinamo Tbilisi", "VMFD Zalgiris", "+2"].join("\n"),
+    "https://meridianbet.example/fc-dinamo-tbilisi-vmfd-zalgiris/1400",
+    0
+  );
+
+  assert.ok(event);
+  assert.equal(event.homeTeam, "FC Dinamo Tbilisi");
+  assert.equal(event.awayTeam, "VMFD Zalgiris");
+  assert.equal(event.timeLabel, "14:00");
+  assert.equal(event.dateLabel, "Amanha");
 });

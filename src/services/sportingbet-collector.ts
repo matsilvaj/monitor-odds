@@ -3,7 +3,9 @@ import type { SportingbetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import { normalizeName } from "../domain/text.js";
@@ -66,9 +68,9 @@ function teamNames(fixture: SportingbetFixture) {
   return { homeTeam: parts[0]?.trim() || null, awayTeam: parts[1]?.trim() || null };
 }
 
-function matchFixture(event: SportingbetFixture, fixtures: CanonicalFixture[]) {
+async function matchFixture(event: SportingbetFixture, fixtures: CanonicalFixture[], bookmakerSlug: string) {
   const { homeTeam, awayTeam } = teamNames(event);
-  const best = findBestCanonicalEventMatch(
+  const best = await findBestCanonicalEventMatchOnline(
     fixtures,
     {
       id: event.id,
@@ -77,7 +79,7 @@ function matchFixture(event: SportingbetFixture, fixtures: CanonicalFixture[]) {
       awayTeam,
       leagueName: null
     },
-    { context: "league-scoped" }
+    { context: "league-scoped", bookmakerSlug }
   );
   if (!best) return null;
   return { ...best, homeTeam, awayTeam };
@@ -235,7 +237,7 @@ export function createSportingbetCollector(bookmaker: SportingbetBookmakerConfig
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -257,13 +259,13 @@ export function createSportingbetCollector(bookmaker: SportingbetBookmakerConfig
       summary.eventsSeen = events.length;
       const targetEvents = events.filter((event) => event.stage === "PreMatch" && isNearCanonicalFixtureWindow(event, fixtures));
       summary.eventsInWindow = targetEvents.length;
-      const bestMatchByFixtureId = new Map<string, { event: SportingbetFixture; matched: NonNullable<ReturnType<typeof matchFixture>> }>();
+      const bestMatchByFixtureId = new Map<string, { event: SportingbetFixture; matched: NonNullable<Awaited<ReturnType<typeof matchFixture>>> }>();
       const linksToSave: BookmakerLinkRow[] = [];
       const oddsToSave: OddRow[] = [];
 
       for (const event of targetEvents) {
         try {
-          const matched = matchFixture(event, fixtures);
+          const matched = await matchFixture(event, fixtures, bookmaker.slug);
 
           if (!matched) {
             summary.eventsUnmatched += 1;

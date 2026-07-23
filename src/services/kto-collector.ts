@@ -4,7 +4,9 @@ import type { KtoBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import { normalizeForMatching, teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -103,8 +105,8 @@ function isNearCanonicalFixtureWindow(event: KtoEvent, fixtures: CanonicalFixtur
   });
 }
 
-function findBestMatch(event: KtoEvent, fixtures: CanonicalFixture[]) {
-  return findBestCanonicalEventMatch(
+async function findBestMatch(event: KtoEvent, fixtures: CanonicalFixture[], bookmakerSlug: string) {
+  return findBestCanonicalEventMatchOnline(
     fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
     {
       id: event.id,
@@ -113,7 +115,7 @@ function findBestMatch(event: KtoEvent, fixtures: CanonicalFixture[]) {
       awayTeam: event.awayName ?? null,
       leagueName: event.group ?? null
     },
-    { context: "league-scoped" }
+    { context: "league-scoped", bookmakerSlug }
   );
 }
 
@@ -255,7 +257,7 @@ export function createKtoCollector(bookmaker: KtoBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -289,7 +291,7 @@ export function createKtoCollector(bookmaker: KtoBookmakerConfig) {
           try {
             const detailPage = await client.getEventBetOffers([savedEvent.id]);
             const detailEvent = detailPage.events.find((event) => event.id === savedEvent.id) ?? savedEvent;
-            const matched = findBestMatch(detailEvent, [fixture]);
+            const matched = await findBestMatch(detailEvent, [fixture], bookmaker.slug);
             if (!matched) throw new Error(`saved event no longer matches fixture ${fixture.name}`);
 
             const offers = detailPage.betOffers.filter((offer) => offer.eventId === savedEvent.id);
@@ -340,10 +342,10 @@ export function createKtoCollector(bookmaker: KtoBookmakerConfig) {
       const targetEvents = events.filter((event) => event.state === "NOT_STARTED" && isNearCanonicalFixtureWindow(event, discoveryFixtures));
       summary.eventsInWindow = targetEvents.length;
 
-      const bestMatchByFixtureId = new Map<string, { event: KtoEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+      const bestMatchByFixtureId = new Map<string, { event: KtoEvent; matched: NonNullable<Awaited<ReturnType<typeof findBestMatch>>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, discoveryFixtures);
+        const matched = await findBestMatch(event, discoveryFixtures, bookmaker.slug);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;

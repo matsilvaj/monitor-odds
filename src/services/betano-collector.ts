@@ -4,7 +4,9 @@ import type { BetanoBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
-import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatchOnline } from "./event-identity-resolver.js";
+import { restrictFixturesToRequested } from "./collector-fixture-scope.js";
 import { matchingTokens, normalizeForMatching } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -245,9 +247,9 @@ function isNearCanonicalFixtureWindow(event: BetanoEvent, fixtures: CanonicalFix
   });
 }
 
-function findBestMatch(event: BetanoEvent, fixtures: CanonicalFixture[]) {
+async function findBestMatch(event: BetanoEvent, fixtures: CanonicalFixture[], bookmakerSlug: string) {
   const { homeTeam, awayTeam } = eventTeams(event);
-  return findBestCanonicalEventMatch(
+  return findBestCanonicalEventMatchOnline(
     fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
     {
       id: event.id,
@@ -256,7 +258,7 @@ function findBestMatch(event: BetanoEvent, fixtures: CanonicalFixture[]) {
       awayTeam,
       leagueName: event.leagueName ?? event.leagueDescription ?? null
     },
-    { context: "league-scoped" }
+    { context: "league-scoped", bookmakerSlug }
   );
 }
 
@@ -390,7 +392,7 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
     };
 
     await ensureBaseRows(bookmaker);
-    let fixtures = await getCanonicalFixtures();
+    let fixtures = restrictFixturesToRequested(await getCanonicalFixtures(), options.fixtureIds);
     if (!fixtures.length) {
       await log(bookmaker, "warn", "no canonical fixtures; run api-football sync first");
       return summary;
@@ -427,7 +429,7 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
           try {
             const details = await client.getEventDetails(savedEvent);
             const detailEvent = details.data?.event ?? savedEvent;
-            const matched = findBestMatch(detailEvent, [fixture]);
+            const matched = await findBestMatch(detailEvent, [fixture], bookmaker.slug);
             if (!matched) {
               summary.directEventsFailed += 1;
               await log(bookmaker, "warn", "saved event link did not match canonical fixture; falling back to discovery", {
@@ -509,10 +511,10 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
       const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, discoveryFixtures));
       summary.eventsInWindow = targetEvents.length;
 
-      const bestMatchByFixtureId = new Map<string, { event: BetanoEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
+      const bestMatchByFixtureId = new Map<string, { event: BetanoEvent; matched: NonNullable<Awaited<ReturnType<typeof findBestMatch>>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, discoveryFixtures);
+        const matched = await findBestMatch(event, discoveryFixtures, bookmaker.slug);
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;
@@ -548,7 +550,7 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
           }
 
           for (const event of [...new Map(searchEvents.map((item) => [item.id, item])).values()]) {
-            const matched = findBestMatch(event, [fixture]);
+            const matched = await findBestMatch(event, [fixture], bookmaker.slug);
             if (!matched) continue;
 
             const previous = bestMatchByFixtureId.get(fixture.id);

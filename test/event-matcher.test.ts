@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { findBestCanonicalEventMatch, matchEvents } from "../src/domain/matching/event-matcher.js";
+import { replaceLearnedTeamAliases } from "../src/domain/matching/team-aliases.js";
 
 const startsAt = "2026-07-14T18:45:00.000Z";
 
@@ -70,5 +71,41 @@ test("keeps legitimate aliases and expanded club names", () => {
       { startsAt, homeTeam: bookmakerHome, awayTeam: bookmakerAway }
     );
     assert.equal(result.matched, true, `${homeTeam} x ${awayTeam} did not match ${bookmakerHome} x ${bookmakerAway}`);
+  }
+});
+
+test("uses a grounded alias on later collections without another lookup", () => {
+  replaceLearnedTeamAliases([
+    { canonicalName: "FK Zalgiris Vilnius", alias: "VMFD Zalgiris" },
+    { canonicalName: "Dinamo Tbilisi", alias: "FC Dinamo Tbilisi" }
+  ]);
+
+  try {
+    const result = matchEvents(
+      { startsAt, homeTeam: "Dinamo Tbilisi", awayTeam: "FK Zalgiris Vilnius", leagueName: "Conference League" },
+      { startsAt, homeTeam: "FC Dinamo Tbilisi", awayTeam: "VMFD Zalgiris", leagueName: "Conference League" },
+      { context: "league-scoped", trustedLeagueScope: true }
+    );
+
+    assert.equal(result.matched, true);
+    assert.equal(result.orientation, "NORMAL");
+  } finally {
+    replaceLearnedTeamAliases([]);
+  }
+});
+
+test("learned aliases still require the full pair and do not merge LAFC with Galaxy", () => {
+  replaceLearnedTeamAliases([{ canonicalName: "Los Angeles FC", alias: "LAFC" }]);
+
+  try {
+    const result = matchEvents(
+      { startsAt, homeTeam: "Los Angeles Galaxy", awayTeam: "St. Louis City", leagueName: "MLS" },
+      { startsAt, homeTeam: "LAFC", awayTeam: "Real Salt Lake", leagueName: "MLS" },
+      { context: "league-scoped", trustedLeagueScope: true }
+    );
+
+    assert.equal(result.matched, false);
+  } finally {
+    replaceLearnedTeamAliases([]);
   }
 });
