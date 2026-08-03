@@ -19,6 +19,7 @@
     "sync:odds": "tsx src/jobs/sync-odds.ts",
     "collect": "tsx src/jobs/collect-bookmaker.ts",
     "collect:bookmaker": "tsx src/jobs/collect-bookmaker.ts",
+    "match:bet365": "tsx src/jobs/match-bet365-snapshots.ts",
     "sync:all": "tsx src/jobs/sync-all.ts",
     "sync:watch": "tsx src/jobs/sync-watch.ts",
     "sync:watch:worker": "tsx src/jobs/sync-watch-worker.ts",

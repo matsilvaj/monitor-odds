@@ -293,3 +293,37 @@ export function buildBet365EventFromDomMarkets(fixture: Bet365FixtureTarget, sou
     rawText
   };
 }
+
+function rawEventIdentity(event: Bet365Event, sourceUrl: string) {
+  const market = event.markets.find((item) => item.selections.length >= 3) ?? event.markets[0];
+  const labels = market?.selections.map((selection) => selection.label.trim()).filter(Boolean) ?? [];
+  const homeTeam = labels[0] ?? null;
+  const awayTeam = labels.length >= 3 ? labels[2] : labels.at(-1) ?? null;
+  const eventName = [homeTeam, awayTeam].filter(Boolean).join(" x ") || event.eventName || sourceUrl;
+  const urlEventId = sourceUrl.match(/\/D8\/E(\d+)\//i)?.[1];
+  return {
+    ...event,
+    externalEventId: urlEventId ? Number(urlEventId) : hashToPositiveInt(`bet365:raw:${sourceUrl}:${eventName}`),
+    sourceUrl,
+    eventName,
+    bookmakerHomeTeam: homeTeam,
+    bookmakerAwayTeam: awayTeam
+  };
+}
+
+function unmatchedTarget(sourceUrl: string): Bet365FixtureTarget {
+  return {
+    id: `raw:${sourceUrl}`,
+    homeTeam: null,
+    awayTeam: null,
+    startsAt: new Date(0).toISOString()
+  };
+}
+
+export function buildBet365UnmatchedEvent(sourceUrl: string, payloads: string[] | string) {
+  return rawEventIdentity(buildBet365Event(unmatchedTarget(sourceUrl), sourceUrl, payloads), sourceUrl);
+}
+
+export function buildBet365UnmatchedEventFromDomMarkets(sourceUrl: string, domMarkets: Bet365DomMarket[]) {
+  return rawEventIdentity(buildBet365EventFromDomMarkets(unmatchedTarget(sourceUrl), sourceUrl, domMarkets), sourceUrl);
+}
