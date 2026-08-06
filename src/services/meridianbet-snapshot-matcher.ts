@@ -124,17 +124,17 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
     { data: linkRows, error: linkError },
     { data: oddRows, error: oddError }
   ] = await Promise.all([
-    supabase.from("bookmaker_event_snapshots")
+    supabase.from("capturas_eventos")
       .select("id,external_event_id,league_api_football_id,league_name,event_name,home_team,away_team,starts_at,date_key,source_url,markets,raw")
       .eq("bookmaker_slug", "meridianbet")
       .in("date_key", dates),
-    supabase.from("fixtures")
-      .select("id,home_team_id,away_team_id,home_team,away_team,starts_at,date_key,league:leagues!inner(name,api_football_league_id,enabled)")
+    supabase.from("jogos")
+      .select("id,home_team_id,away_team_id,home_team,away_team,starts_at,date_key,league:campeonatos!inner(name,api_football_league_id,enabled)")
       .in("date_key", dates).eq("leagues.enabled", true),
-    supabase.from("bookmaker_event_links")
+    supabase.from("links_eventos")
       .select("fixture_id,external_event_id,match_confidence_score,raw")
       .eq("bookmaker_slug", "meridianbet"),
-    supabase.from("odds")
+    supabase.from("cotacoes")
       .select("fixture_id")
       .eq("bookmaker_slug", "meridianbet")
   ]);
@@ -242,7 +242,7 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
 
   for (let offset = 0; offset < processed.length; offset += 20) {
     await Promise.all(processed.slice(offset, offset + 20).map(async (item) => {
-      const { error } = await supabase.from("bookmaker_event_snapshots").update({
+      const { error } = await supabase.from("capturas_eventos").update({
         raw: {
           ...(item.snapshot.raw ?? {}),
           stage: "matched",

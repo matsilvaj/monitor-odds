@@ -103,7 +103,7 @@ export async function getFixtureReport(buckets = defaultSyncDateBuckets()): Prom
   const fixtureDateById = new Map<string, string>();
   for (const bucket of buckets) byDate.set(bucket.key, { fixtures: 0, fixtureIds: [] });
 
-  const { data, error } = await supabase.from("fixtures").select("id,date_key").in(
+  const { data, error } = await supabase.from("jogos").select("id,date_key").in(
     "date_key",
     buckets.map((bucket) => bucket.key)
   );
@@ -142,7 +142,7 @@ export async function getBookmakerOddsReport(bookmakerSlug: string, fixtureRepor
   }
 
   const { data, error } = await supabase
-    .from("odds")
+    .from("cotacoes")
     .select("fixture_id")
     .eq("bookmaker_slug", bookmakerSlug)
     .eq("market_code", "1X2")

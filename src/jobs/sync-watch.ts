@@ -419,7 +419,7 @@ async function resetLaneCollectionState(lane: WatchLane) {
   if (lane === "fast" || SMOKE_MODE) return;
 
   const { error } = await supabase
-    .from("bookmaker_collection_state")
+    .from("estado_coletas")
     .update({
       status: "idle",
       lease_until: null,

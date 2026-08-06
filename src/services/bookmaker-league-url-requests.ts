@@ -28,7 +28,7 @@ function isMissingRequestsTable(error: unknown) {
 export async function requestBookmakerLeagueUrl(input: RequestLeagueUrlInput, logger?: LeagueUrlRequestLogger) {
   const now = new Date().toISOString();
   const mode = input.previousUrl ? "update" : "add";
-  const { error } = await supabase.from("bookmaker_league_url_requests").upsert(
+  const { error } = await supabase.from("pendencias_links_campeonatos").upsert(
     {
       bookmaker_slug: input.bookmakerSlug,
       api_football_league_id: input.league.api_football_league_id,
@@ -83,7 +83,7 @@ export async function resolveBookmakerLeagueUrlRequest(
 ) {
   const now = new Date().toISOString();
   const { error } = await supabase
-    .from("bookmaker_league_url_requests")
+    .from("pendencias_links_campeonatos")
     .delete()
     .eq("bookmaker_slug", bookmakerSlug)
     .eq("api_football_league_id", league.api_football_league_id);

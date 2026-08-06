@@ -28,7 +28,7 @@ export async function getSavedBookmakerEventLinks(bookmakerSlug: string, fixture
 
   for (const fixtureIdBatch of chunks(uniqueFixtureIds, BATCH_SIZE)) {
     const { data, error } = await supabase
-      .from("bookmaker_event_links")
+      .from("links_eventos")
       .select("fixture_id,external_event_id,source_url,bookmaker_home_team,bookmaker_away_team,starts_at,raw,updated_at")
       .eq("bookmaker_slug", bookmakerSlug)
       .in("fixture_id", fixtureIdBatch)

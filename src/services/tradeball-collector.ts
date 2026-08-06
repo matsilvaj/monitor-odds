@@ -52,7 +52,7 @@ async function log(bookmaker: TradeballBookmakerConfig, level: "info" | "warn" |
 }
 
 async function ensureBaseRows(bookmaker: TradeballBookmakerConfig) {
-  const { error } = await supabase.from("bookmakers").upsert(
+  const { error } = await supabase.from("casas_apostas").upsert(
     [
       { slug: bookmaker.slug, name: bookmaker.name },
       { slug: EXCHANGE_BOOKMAKER_SLUG, name: EXCHANGE_BOOKMAKER_NAME }
@@ -67,8 +67,8 @@ async function getCanonicalFixtures() {
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2, 0, 0, 0, 0);
 
   const { data, error } = await supabase
-    .from("fixtures")
-    .select("id,api_football_fixture_id,name,league:leagues(name,slug,api_football_league_id),home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
+    .from("jogos")
+    .select("id,api_football_fixture_id,name,league:campeonatos(name,slug,api_football_league_id),home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
     .gt("starts_at", now.toISOString())
     .lt("starts_at", end.toISOString())
     .order("starts_at", { ascending: true });

@@ -38,7 +38,7 @@ export async function loadBookmakerAliasIndex(fixtures: FixtureTeamIdentity[]): 
   if (!teamIds.length) return new Map();
 
   const { data, error } = await supabase
-    .from("team_aliases")
+    .from("apelidos_times")
     .select("team_id,alias,normalized_alias")
     .in("team_id", teamIds);
   if (error) throw error;
@@ -85,7 +85,7 @@ async function learnOneAlias(
   if (!alias || !normalizedAlias || normalizedAlias === normalizeName(canonicalName)) return false;
 
   const { data, error } = await supabase
-    .from("team_aliases")
+    .from("apelidos_times")
     .select("team_id,source")
     .eq("normalized_alias", normalizedAlias);
   if (error) throw error;
@@ -101,7 +101,7 @@ async function learnOneAlias(
   }
   if (rows.some((row) => row.team_id === teamId)) return false;
 
-  const { error: insertError } = await supabase.from("team_aliases").insert({
+  const { error: insertError } = await supabase.from("apelidos_times").insert({
     team_id: teamId,
     alias,
     normalized_alias: normalizedAlias,

@@ -178,10 +178,10 @@ function createLogger(logToConsole: boolean): Logger {
 }
 
 async function ensureBaseRows(bookmaker: MeridianbetBookmakerConfig) {
-  const { error } = await supabase.from("bookmakers").upsert({ slug: bookmaker.slug, name: bookmaker.name }, { onConflict: "slug" });
+  const { error } = await supabase.from("casas_apostas").upsert({ slug: bookmaker.slug, name: bookmaker.name }, { onConflict: "slug" });
   if (error) throw error;
 
-  const { error: stateError } = await supabase.from("bookmaker_collection_state").upsert(
+  const { error: stateError } = await supabase.from("estado_coletas").upsert(
     {
       bookmaker_slug: bookmaker.slug,
       status: "idle",
@@ -194,7 +194,7 @@ async function ensureBaseRows(bookmaker: MeridianbetBookmakerConfig) {
 
 async function updateCollectionState(bookmaker: MeridianbetBookmakerConfig, values: Record<string, unknown>) {
   const { error } = await supabase
-    .from("bookmaker_collection_state")
+    .from("estado_coletas")
     .update({
       status: "idle",
       lease_until: null,
@@ -207,8 +207,8 @@ async function updateCollectionState(bookmaker: MeridianbetBookmakerConfig, valu
 
 async function getCanonicalFixtures(dateKeys: string[]) {
   const { data, error } = await supabase
-    .from("fixtures")
-    .select("id,api_football_fixture_id,name,league:leagues!inner(name,slug,country,api_football_league_id,enabled),home_team,away_team,starts_at,date_key")
+    .from("jogos")
+    .select("id,api_football_fixture_id,name,league:campeonatos!inner(name,slug,country,api_football_league_id,enabled),home_team,away_team,starts_at,date_key")
     .in("date_key", dateKeys)
     .eq("leagues.enabled", true)
     .order("starts_at", { ascending: true });
@@ -226,7 +226,7 @@ async function getCachedEventLinks(bookmakerSlug: string, fixtureIds: string[], 
   if (!fixtureIds.length) return linkByFixtureId;
 
   const { data, error } = await supabase
-    .from("bookmaker_event_links")
+    .from("links_eventos")
     .select("fixture_id,external_event_id,bookmaker_home_team,bookmaker_away_team,source_url,raw,updated_at")
     .eq("bookmaker_slug", bookmakerSlug)
     .in("fixture_id", fixtureIds)
@@ -249,7 +249,7 @@ async function getCachedEventLinks(bookmakerSlug: string, fixtureIds: string[], 
   if (linkByFixtureId.size < fixtureIds.length) {
     const fixtureIdSet = new Set(fixtureIds);
     const { data: snapshots, error: snapshotError } = await supabase
-      .from("bookmaker_event_snapshots")
+      .from("capturas_eventos")
       .select("external_event_id,home_team,away_team,source_url,raw,updated_at")
       .eq("bookmaker_slug", bookmakerSlug)
       .in("date_key", dateKeys)
@@ -292,7 +292,7 @@ async function getCachedLeagueLinks(bookmakerSlug: string, leagueIds: number[]) 
   if (!leagueIds.length) return linksByLeagueId;
 
   const { data, error } = await supabase
-    .from("bookmaker_league_links")
+    .from("links_campeonatos")
     .select("api_football_league_id,source_url,bookmaker_league_name,source")
     .eq("bookmaker_slug", bookmakerSlug)
     .in("api_football_league_id", leagueIds);
@@ -306,7 +306,7 @@ async function getCachedLeagueLinks(bookmakerSlug: string, leagueIds: number[]) 
 
 async function saveLeagueLink(bookmaker: MeridianbetBookmakerConfig, league: ActiveLeague, sourceUrl: string, label: string, source: string) {
   const updatedAt = new Date().toISOString();
-  const { error } = await supabase.from("bookmaker_league_links").upsert(
+  const { error } = await supabase.from("links_campeonatos").upsert(
     {
       bookmaker_slug: bookmaker.slug,
       api_football_league_id: league.api_football_league_id,
@@ -333,7 +333,7 @@ async function persistEventSnapshot(
   logger: Logger,
   association?: { fixtureId: string; orientation: "NORMAL" | "INVERTED" | null }
 ) {
-  const { error } = await supabase.from("bookmaker_event_snapshots").upsert({
+  const { error } = await supabase.from("capturas_eventos").upsert({
     bookmaker_slug: bookmaker.slug,
     external_event_id: event.externalEventId,
     league_api_football_id: league.api_football_league_id,

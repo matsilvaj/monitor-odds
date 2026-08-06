@@ -90,7 +90,7 @@ function duplicateBet365LinkIds(links: ExistingLinkRow[]) {
 async function removeDuplicateBet365Links(links: ExistingLinkRow[]) {
   const ids = duplicateBet365LinkIds(links);
   for (let offset = 0; offset < ids.length; offset += 100) {
-    const { error } = await supabase.from("bookmaker_event_links").delete().in("id", ids.slice(offset, offset + 100));
+    const { error } = await supabase.from("links_eventos").delete().in("id", ids.slice(offset, offset + 100));
     if (error) throw error;
   }
   return ids.length;
@@ -193,21 +193,21 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
     { data: oddData, error: oddError }
   ] = await Promise.all([
     supabase
-      .from("bookmaker_event_snapshots")
+      .from("capturas_eventos")
       .select("id,external_event_id,league_api_football_id,league_name,event_name,home_team,away_team,starts_at,date_key,source_url,markets,raw")
       .eq("bookmaker_slug", "bet365")
       .in("date_key", dates),
     supabase
-      .from("fixtures")
-      .select("id,home_team_id,away_team_id,home_team,away_team,starts_at,date_key,league:leagues!inner(name,api_football_league_id,enabled)")
+      .from("jogos")
+      .select("id,home_team_id,away_team_id,home_team,away_team,starts_at,date_key,league:campeonatos!inner(name,api_football_league_id,enabled)")
       .in("date_key", dates)
       .eq("leagues.enabled", true),
     supabase
-      .from("bookmaker_event_links")
+      .from("links_eventos")
       .select("id,fixture_id,external_event_id,match_confidence_score,source_url,raw")
       .eq("bookmaker_slug", "bet365"),
     supabase
-      .from("odds")
+      .from("cotacoes")
       .select("fixture_id")
       .eq("bookmaker_slug", "bet365")
   ]);
@@ -329,7 +329,7 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
     : 0;
 
   const { data: currentLinkData, error: currentLinkError } = await supabase
-    .from("bookmaker_event_links")
+    .from("links_eventos")
     .select("id,fixture_id,external_event_id,match_confidence_score,source_url,raw")
     .eq("bookmaker_slug", "bet365");
   if (currentLinkError) throw currentLinkError;
@@ -338,7 +338,7 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
   for (let offset = 0; offset < processed.length; offset += 20) {
     await Promise.all(processed.slice(offset, offset + 20).map(async (item) => {
       const { error } = await supabase
-        .from("bookmaker_event_snapshots")
+        .from("capturas_eventos")
         .update({
           raw: {
             ...(item.snapshot.raw ?? {}),

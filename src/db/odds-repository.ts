@@ -217,7 +217,7 @@ async function fetchExistingLinks(bookmakerSlug: string, fixtureIds: string[]) {
 
   for (const fixtureIdBatch of chunks(fixtureIds, SELECT_BATCH_SIZE)) {
     const { data, error } = await supabase
-      .from("bookmaker_event_links")
+      .from("links_eventos")
       .select(
         "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,raw,updated_at"
       )
@@ -243,7 +243,7 @@ async function fetchExistingLinksByEventIds(bookmakerSlug: string, externalEvent
 
   for (const eventIdBatch of chunks(eventIds, SELECT_BATCH_SIZE)) {
     const { data, error } = await supabase
-      .from("bookmaker_event_links")
+      .from("links_eventos")
       .select(
         "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,raw,updated_at"
       )
@@ -262,7 +262,7 @@ async function fetchExistingOdds(bookmakerSlug: string, fixtureIds: string[], ma
 
   for (const fixtureIdBatch of chunks(fixtureIds, SELECT_BATCH_SIZE)) {
     const { data, error } = await supabase
-      .from("odds")
+      .from("cotacoes")
       .select(
         "id,fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,raw_odd_type,source_odd_id,updated_at,last_seen_at"
       )
@@ -277,7 +277,7 @@ async function fetchExistingOdds(bookmakerSlug: string, fixtureIds: string[], ma
   return rows;
 }
 
-async function deleteRowsById(table: "bookmaker_event_links" | "odds", label: string, ids: string[]) {
+async function deleteRowsById(table: "links_eventos" | "cotacoes", label: string, ids: string[]) {
   for (const idBatch of chunks(ids, DELETE_ROW_BATCH_SIZE)) {
     await withStatementTimeoutRetry(label, async () => await supabase.from(table).delete().in("id", idBatch));
   }
@@ -286,7 +286,7 @@ async function deleteRowsById(table: "bookmaker_event_links" | "odds", label: st
 async function deleteExistingOdds(bookmakerSlug: string, fixtureIds: string[], marketCodes: string[], paCategories?: string[]) {
   for (const fixtureIdBatch of chunks(fixtureIds, SELECT_BATCH_SIZE)) {
     await withStatementTimeoutRetry("substituicao de odds antigas", async () => {
-      let query = supabase.from("odds").delete().eq("bookmaker_slug", bookmakerSlug).in("fixture_id", fixtureIdBatch).in("market_code", marketCodes);
+      let query = supabase.from("cotacoes").delete().eq("bookmaker_slug", bookmakerSlug).in("fixture_id", fixtureIdBatch).in("market_code", marketCodes);
       if (paCategories?.length) query = query.in("pa_category", paCategories);
       return await query;
     });
@@ -296,7 +296,7 @@ async function deleteExistingOdds(bookmakerSlug: string, fixtureIds: string[], m
 async function touchSeenOdds(ids: string[], seenAt: string) {
   for (const idBatch of chunks(ids, DELETE_ROW_BATCH_SIZE)) {
     await withStatementTimeoutRetry("atualizacao de last_seen_at das odds", async () =>
-      await supabase.from("odds").update({ last_seen_at: seenAt }).in("id", idBatch)
+      await supabase.from("cotacoes").update({ last_seen_at: seenAt }).in("id", idBatch)
     );
   }
 }
@@ -322,7 +322,7 @@ export class OddsRepository {
     for (const fixtureIdBatch of chunks(uniqueFixtureIds, SELECT_BATCH_SIZE)) {
       const result = await withStatementTimeoutRetry("limpeza de odds nao vistas no ciclo", async () =>
         await supabase
-          .from("odds")
+          .from("cotacoes")
           .delete({ count: "exact" })
           .eq("bookmaker_slug", bookmakerSlug)
           .in("fixture_id", fixtureIdBatch)
@@ -384,7 +384,7 @@ export class OddsRepository {
 
     for (const linkBatch of chunks(changedLinks, DEFAULT_BATCH_SIZE)) {
       await withStatementTimeoutRetry("upsert de links de eventos", async () =>
-        await supabase.from("bookmaker_event_links").upsert(linkBatch, {
+        await supabase.from("links_eventos").upsert(linkBatch, {
           onConflict: "bookmaker_slug,external_event_id"
         })
       );
@@ -404,11 +404,11 @@ export class OddsRepository {
 
     if (replaceExistingOdds) {
       for (const oddBatch of chunks(uniqueOdds, DEFAULT_BATCH_SIZE)) {
-        await withStatementTimeoutRetry("insert de odds", async () => await supabase.from("odds").insert(oddBatch));
+        await withStatementTimeoutRetry("insert de odds", async () => await supabase.from("cotacoes").insert(oddBatch));
       }
 
       if (fixtureIds.length) {
-        await deleteRowsById("bookmaker_event_links", "limpeza de links antigos", staleLinkIds);
+        await deleteRowsById("links_eventos", "limpeza de links antigos", staleLinkIds);
       }
 
       return uniqueOdds.length;
@@ -430,7 +430,7 @@ export class OddsRepository {
 
     for (const oddBatch of chunks(changedOdds, DEFAULT_BATCH_SIZE)) {
       await withStatementTimeoutRetry("upsert de odds", async () =>
-        await supabase.from("odds").upsert(oddBatch, {
+        await supabase.from("cotacoes").upsert(oddBatch, {
           onConflict: "fixture_id,bookmaker_slug,market_code,selection,pa_category,source_odd_id"
         })
       );
@@ -439,8 +439,8 @@ export class OddsRepository {
     await touchSeenOdds(seenUnchangedOddIds, saveStartedAt);
 
     if (fixtureIds.length) {
-      await deleteRowsById("odds", "limpeza de odds antigas", staleOddIds);
-      await deleteRowsById("bookmaker_event_links", "limpeza de links antigos", staleLinkIds);
+      await deleteRowsById("cotacoes", "limpeza de odds antigas", staleOddIds);
+      await deleteRowsById("links_eventos", "limpeza de links antigos", staleLinkIds);
     }
 
     return changedOdds.length;

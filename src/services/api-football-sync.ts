@@ -54,7 +54,7 @@ async function log(level: "info" | "warn" | "error", message: string, context: R
 
 async function hasTargetFixturesForDate(key: string) {
   const { count, error } = await supabase
-    .from("fixtures")
+    .from("jogos")
     .select("id,leagues!inner(api_football_league_id)", { count: "exact", head: true })
     .eq("date_key", key)
     .in("leagues.api_football_league_id", [...TARGET_LEAGUE_IDS]);
@@ -92,7 +92,7 @@ function catalogSeason(row: ApiFootballLeagueCatalogRow) {
 async function deactivateRemovedLeagues() {
   const now = new Date().toISOString();
   const { data, error } = await supabase
-    .from("leagues")
+    .from("campeonatos")
     .update({
       enabled: false,
       deleted_at: now,
@@ -110,7 +110,7 @@ async function shouldSyncConfiguredLeaguesCatalog(key: string, forceSync: boolea
   if (forceSync) return true;
 
   const { data, error } = await supabase
-    .from("fixture_sync_runs")
+    .from("execucoes_sync_jogos")
     .select("synced_at,status,league_ids_hash")
     .eq("date_key", key)
     .eq("source", LEAGUE_CATALOG_SYNC_SOURCE)
@@ -162,13 +162,13 @@ async function syncConfiguredLeaguesCatalog(client: ApiFootballClient, forceSync
   });
 
   if (payload.length) {
-    const { error } = await supabase.from("leagues").upsert(payload, { onConflict: "api_football_league_id" });
+    const { error } = await supabase.from("campeonatos").upsert(payload, { onConflict: "api_football_league_id" });
     if (error) throw error;
   }
 
   const disabled = await deactivateRemovedLeagues();
 
-  const { error: syncRunError } = await supabase.from("fixture_sync_runs").upsert(
+  const { error: syncRunError } = await supabase.from("execucoes_sync_jogos").upsert(
     {
       date_key: key,
       source: LEAGUE_CATALOG_SYNC_SOURCE,
@@ -196,7 +196,7 @@ async function upsertLeague(row: ApiFootballFixtureRow) {
   if ("flag" in row.league) mediaFields.country_flag_url = row.league.flag ?? null;
 
   const { data, error } = await supabase
-    .from("leagues")
+    .from("campeonatos")
     .upsert(
       {
         api_football_league_id: row.league.id,
@@ -221,7 +221,7 @@ async function upsertLeague(row: ApiFootballFixtureRow) {
 
 async function upsertTeam(team: ApiFootballFixtureRow["teams"]["home"]) {
   const { data, error } = await supabase
-    .from("teams")
+    .from("times")
     .upsert(
       {
         api_football_team_id: team.id,
@@ -243,7 +243,7 @@ async function upsertTeam(team: ApiFootballFixtureRow["teams"]["home"]) {
 async function upsertFixture(row: ApiFootballFixtureRow, leagueId: string, homeTeamId: string, awayTeamId: string) {
   const startsAt = new Date(row.fixture.date);
   const { data, error } = await supabase
-    .from("fixtures")
+    .from("jogos")
     .upsert(
       {
         api_football_fixture_id: row.fixture.id,
@@ -272,12 +272,12 @@ async function upsertFixture(row: ApiFootballFixtureRow, leagueId: string, homeT
 }
 
 async function deleteExistingFixtureByApiFootballId(apiFootballFixtureId: number) {
-  const { data: existing, error: selectError } = await supabase.from("fixtures").select("id").eq("api_football_fixture_id", apiFootballFixtureId).maybeSingle();
+  const { data: existing, error: selectError } = await supabase.from("jogos").select("id").eq("api_football_fixture_id", apiFootballFixtureId).maybeSingle();
   if (selectError) throw selectError;
 
   if (!existing?.id) return false;
 
-  const { error } = await supabase.from("fixtures").delete().eq("id", existing.id);
+  const { error } = await supabase.from("jogos").delete().eq("id", existing.id);
   if (error) throw error;
   return true;
 }
@@ -349,7 +349,7 @@ export async function syncApiFootballFixtures(options: SyncApiFootballFixturesOp
 
     try {
       const { data: syncRun, error: syncRunError } = await supabase
-        .from("fixture_sync_runs")
+        .from("execucoes_sync_jogos")
         .select("synced_at,status,league_ids_hash")
         .eq("date_key", key)
         .eq("source", "api-football")
@@ -394,7 +394,7 @@ export async function syncApiFootballFixtures(options: SyncApiFootballFixturesOp
         summary.fixturesKept += 1;
       }
 
-      await supabase.from("fixture_sync_runs").upsert(
+      await supabase.from("execucoes_sync_jogos").upsert(
         {
           date_key: key,
           source: "api-football",

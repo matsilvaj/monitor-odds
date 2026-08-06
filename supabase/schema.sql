@@ -1,6 +1,6 @@
 create extension if not exists pgcrypto;
 
-create table if not exists bookmakers (
+create table if not exists casas_apostas (
   id uuid primary key default gen_random_uuid(),
   slug text not null unique,
   name text not null,
@@ -8,7 +8,7 @@ create table if not exists bookmakers (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists leagues (
+create table if not exists campeonatos (
   id uuid primary key default gen_random_uuid(),
   api_football_league_id bigint not null unique,
   name text not null,
@@ -24,11 +24,11 @@ create table if not exists leagues (
   updated_at timestamptz not null default now()
 );
 
-alter table leagues add column if not exists logo_url text;
-alter table leagues add column if not exists country_flag_url text;
-alter table leagues add column if not exists deleted_at timestamptz;
+alter table campeonatos add column if not exists logo_url text;
+alter table campeonatos add column if not exists country_flag_url text;
+alter table campeonatos add column if not exists deleted_at timestamptz;
 
-create table if not exists teams (
+create table if not exists times (
   id uuid primary key default gen_random_uuid(),
   api_football_team_id bigint not null unique,
   name text not null,
@@ -39,9 +39,9 @@ create table if not exists teams (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists team_aliases (
+create table if not exists apelidos_times (
   id uuid primary key default gen_random_uuid(),
-  team_id uuid not null references teams(id) on delete cascade,
+  team_id uuid not null references times(id) on delete cascade,
   alias text not null,
   normalized_alias text not null,
   source text not null default 'generated',
@@ -53,14 +53,14 @@ create table if not exists team_aliases (
 );
 
 create index if not exists team_aliases_normalized_alias_idx
-  on team_aliases (normalized_alias);
+  on apelidos_times (normalized_alias);
 
-create table if not exists fixtures (
+create table if not exists jogos (
   id uuid primary key default gen_random_uuid(),
   api_football_fixture_id bigint not null unique,
-  league_id uuid not null references leagues(id) on delete cascade,
-  home_team_id uuid not null references teams(id) on delete restrict,
-  away_team_id uuid not null references teams(id) on delete restrict,
+  league_id uuid not null references campeonatos(id) on delete cascade,
+  home_team_id uuid not null references times(id) on delete restrict,
+  away_team_id uuid not null references times(id) on delete restrict,
   name text not null,
   home_team text not null,
   away_team text not null,
@@ -75,10 +75,10 @@ create table if not exists fixtures (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists bookmaker_event_links (
+create table if not exists links_eventos (
   id uuid primary key default gen_random_uuid(),
-  fixture_id uuid not null references fixtures(id) on delete cascade,
-  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
+  fixture_id uuid not null references jogos(id) on delete cascade,
+  bookmaker_slug text not null references casas_apostas(slug) on delete cascade,
   external_event_id bigint not null,
   bookmaker_event_name text not null,
   bookmaker_home_team text,
@@ -94,9 +94,9 @@ create table if not exists bookmaker_event_links (
   unique (bookmaker_slug, external_event_id)
 );
 
-create table if not exists bookmaker_league_links (
+create table if not exists links_campeonatos (
   id uuid primary key default gen_random_uuid(),
-  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
+  bookmaker_slug text not null references casas_apostas(slug) on delete cascade,
   api_football_league_id bigint not null,
   league_name text not null,
   league_country text,
@@ -110,9 +110,9 @@ create table if not exists bookmaker_league_links (
   unique (bookmaker_slug, api_football_league_id)
 );
 
-create table if not exists bookmaker_league_url_requests (
+create table if not exists pendencias_links_campeonatos (
   id uuid primary key default gen_random_uuid(),
-  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
+  bookmaker_slug text not null references casas_apostas(slug) on delete cascade,
   api_football_league_id bigint not null,
   league_name text not null,
   league_country text,
@@ -129,10 +129,10 @@ create table if not exists bookmaker_league_url_requests (
 );
 
 
-create table if not exists odds (
+create table if not exists cotacoes (
   id uuid primary key default gen_random_uuid(),
-  fixture_id uuid not null references fixtures(id) on delete cascade,
-  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
+  fixture_id uuid not null references jogos(id) on delete cascade,
+  bookmaker_slug text not null references casas_apostas(slug) on delete cascade,
   market_code text not null,
   market_name text not null,
   selection text not null,
@@ -150,8 +150,8 @@ create table if not exists odds (
   unique (fixture_id, bookmaker_slug, market_code, selection, pa_category, source_odd_id)
 );
 
-alter table odds add column if not exists last_seen_at timestamptz not null default now();
-update odds
+alter table cotacoes add column if not exists last_seen_at timestamptz not null default now();
+update cotacoes
 set last_seen_at = coalesce(last_seen_at, updated_at, now());
 
 create or replace function set_database_updated_at()
@@ -160,7 +160,7 @@ language plpgsql
 as $$
 begin
   if TG_OP = 'UPDATE'
-     and TG_TABLE_NAME = 'odds'
+     and TG_TABLE_NAME = 'cotacoes'
      and (to_jsonb(new) - 'updated_at' - 'last_seen_at') = (to_jsonb(old) - 'updated_at' - 'last_seen_at') then
     new.updated_at = old.updated_at;
     return new;
@@ -171,33 +171,33 @@ begin
 end;
 $$;
 
-drop trigger if exists odds_set_database_updated_at on odds;
+drop trigger if exists odds_set_database_updated_at on cotacoes;
 create trigger odds_set_database_updated_at
-before insert or update on odds
+before insert or update on cotacoes
 for each row
 execute function set_database_updated_at();
 
-drop trigger if exists bookmaker_event_links_set_database_updated_at on bookmaker_event_links;
+drop trigger if exists bookmaker_event_links_set_database_updated_at on links_eventos;
 create trigger bookmaker_event_links_set_database_updated_at
-before insert or update on bookmaker_event_links
+before insert or update on links_eventos
 for each row
 execute function set_database_updated_at();
 
-drop trigger if exists team_aliases_set_database_updated_at on team_aliases;
+drop trigger if exists team_aliases_set_database_updated_at on apelidos_times;
 create trigger team_aliases_set_database_updated_at
-before insert or update on team_aliases
+before insert or update on apelidos_times
 for each row
 execute function set_database_updated_at();
 
-update odds
+update cotacoes
 set updated_at = now()
 where updated_at > now();
 
-update bookmaker_event_links
+update links_eventos
 set updated_at = now()
 where updated_at > now();
 
-create table if not exists fixture_sync_runs (
+create table if not exists execucoes_sync_jogos (
   id uuid primary key default gen_random_uuid(),
   date_key date not null,
   source text not null,
@@ -209,11 +209,11 @@ create table if not exists fixture_sync_runs (
   unique (date_key, source)
 );
 
-alter table fixture_sync_runs add column if not exists league_ids_hash text;
+alter table execucoes_sync_jogos add column if not exists league_ids_hash text;
 
-create table if not exists bookmaker_event_snapshots (
+create table if not exists capturas_eventos (
   id uuid primary key default gen_random_uuid(),
-  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
+  bookmaker_slug text not null references casas_apostas(slug) on delete cascade,
   external_event_id bigint not null,
   league_api_football_id bigint,
   league_name text,
@@ -234,8 +234,8 @@ create table if not exists bookmaker_event_snapshots (
   unique (bookmaker_slug, external_event_id)
 );
 
-create table if not exists bookmaker_collection_state (
-  bookmaker_slug text primary key references bookmakers(slug) on delete cascade,
+create table if not exists estado_coletas (
+  bookmaker_slug text primary key references casas_apostas(slug) on delete cascade,
   status text not null default 'idle',
   last_started_at timestamptz,
   last_finished_at timestamptz,
@@ -256,61 +256,61 @@ as $$
 declare
   acquired boolean;
 begin
-  insert into bookmaker_collection_state (bookmaker_slug, status, lease_until, last_started_at, updated_at)
+  insert into estado_coletas (bookmaker_slug, status, lease_until, last_started_at, updated_at)
   values (p_bookmaker_slug, 'running', p_lease_until, now(), now())
   on conflict (bookmaker_slug) do update
     set status = 'running',
         lease_until = p_lease_until,
         last_started_at = now(),
         updated_at = now()
-    where bookmaker_collection_state.lease_until is null
-       or bookmaker_collection_state.lease_until < now()
-       or bookmaker_collection_state.status <> 'running'
+    where estado_coletas.lease_until is null
+       or estado_coletas.lease_until < now()
+       or estado_coletas.status <> 'running'
   returning true into acquired;
 
   return coalesce(acquired, false);
 end;
 $$;
 
-create index if not exists fixtures_search_idx on fixtures using gin (
+create index if not exists fixtures_search_idx on jogos using gin (
   to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(home_team, '') || ' ' || coalesce(away_team, ''))
 );
 
-create index if not exists fixtures_starts_at_idx on fixtures (starts_at);
-create index if not exists fixtures_date_key_idx on fixtures (date_key);
-create index if not exists fixtures_league_id_idx on fixtures (league_id);
-create index if not exists teams_normalized_name_idx on teams (normalized_name);
-create index if not exists odds_fixture_id_idx on odds (fixture_id);
-create index if not exists odds_bookmaker_market_fixture_idx on odds (bookmaker_slug, market_code, fixture_id);
-create index if not exists bookmaker_event_links_fixture_id_idx on bookmaker_event_links (fixture_id);
-create index if not exists bookmaker_event_links_bookmaker_fixture_idx on bookmaker_event_links (bookmaker_slug, fixture_id);
-create index if not exists bookmaker_league_links_slug_league_idx on bookmaker_league_links (bookmaker_slug, api_football_league_id);
-create index if not exists bookmaker_league_url_requests_status_idx on bookmaker_league_url_requests (status, updated_at);
-create index if not exists bookmaker_league_url_requests_slug_league_idx on bookmaker_league_url_requests (bookmaker_slug, api_football_league_id);
-create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on bookmaker_event_snapshots (bookmaker_slug, date_key);
-create index if not exists bookmaker_event_snapshots_league_idx on bookmaker_event_snapshots (league_api_football_id);
-create index if not exists bookmaker_collection_state_next_run_idx on bookmaker_collection_state (next_run_at);
+create index if not exists fixtures_starts_at_idx on jogos (starts_at);
+create index if not exists fixtures_date_key_idx on jogos (date_key);
+create index if not exists fixtures_league_id_idx on jogos (league_id);
+create index if not exists teams_normalized_name_idx on times (normalized_name);
+create index if not exists odds_fixture_id_idx on cotacoes (fixture_id);
+create index if not exists odds_bookmaker_market_fixture_idx on cotacoes (bookmaker_slug, market_code, fixture_id);
+create index if not exists bookmaker_event_links_fixture_id_idx on links_eventos (fixture_id);
+create index if not exists bookmaker_event_links_bookmaker_fixture_idx on links_eventos (bookmaker_slug, fixture_id);
+create index if not exists bookmaker_league_links_slug_league_idx on links_campeonatos (bookmaker_slug, api_football_league_id);
+create index if not exists bookmaker_league_url_requests_status_idx on pendencias_links_campeonatos (status, updated_at);
+create index if not exists bookmaker_league_url_requests_slug_league_idx on pendencias_links_campeonatos (bookmaker_slug, api_football_league_id);
+create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on capturas_eventos (bookmaker_slug, date_key);
+create index if not exists bookmaker_event_snapshots_league_idx on capturas_eventos (league_api_football_id);
+create index if not exists bookmaker_collection_state_next_run_idx on estado_coletas (next_run_at);
 
-drop view if exists public.public_odds_feed;
-drop view if exists public.public_odds_snapshot;
-drop view if exists public.public_odds_fixtures;
+drop view if exists public.public_feed_cotacoes;
+drop view if exists public.public_snapshot_cotacoes;
+drop view if exists public.public_jogos_com_cotacoes;
 drop view if exists public.public_odds_feed_compact;
-drop view if exists public.public_odds_feed_status;
+drop view if exists public.public_status_feed_cotacoes;
 
-create view public.public_odds_feed_status
+create view public.public_status_feed_cotacoes
 with (security_invoker = true)
 as
 with upcoming_fixtures as (
   select
     f.id,
     greatest(f.updated_at, l.updated_at) as fixture_version
-  from fixtures f
-  join leagues l on l.id = f.league_id
+  from jogos f
+  join campeonatos l on l.id = f.league_id
   where f.starts_at > now()
     and l.enabled = true
     and exists (
       select 1
-      from odds o
+      from cotacoes o
       where o.fixture_id = f.id
         and o.market_code = '1X2'
     )
@@ -319,7 +319,7 @@ upcoming_odds as (
   select
     o.fixture_id,
     greatest(o.updated_at, o.last_seen_at) as odds_version
-  from odds o
+  from cotacoes o
   join upcoming_fixtures uf on uf.id = o.fixture_id
 )
 select
@@ -331,7 +331,7 @@ select
   (select count(*) from upcoming_odds) as odd_count
 ;
 
-create view public.public_odds_fixtures
+create view public.public_jogos_com_cotacoes
 with (security_invoker = true)
 as
 select
@@ -350,18 +350,18 @@ select
   l.logo_url as league_logo_url,
   l.country_flag_url as league_country_flag_url,
   greatest(f.updated_at, l.updated_at) as fixture_updated_at
-from fixtures f
-join leagues l on l.id = f.league_id
+from jogos f
+join campeonatos l on l.id = f.league_id
 where f.starts_at > now()
   and l.enabled = true
   and exists (
     select 1
-    from odds o
+    from cotacoes o
     where o.fixture_id = f.id
       and o.market_code = '1X2'
   );
 
-create view public.public_odds_snapshot
+create view public.public_snapshot_cotacoes
 with (security_invoker = true)
 as
 select
@@ -416,11 +416,11 @@ select
       'odd_last_seen_at', o.last_seen_at
     )
     order by o.bookmaker_slug, o.market_code, o.pa_category, o.selection
-  ) as odds
-from fixtures f
-join leagues l on l.id = f.league_id
-join odds o on o.fixture_id = f.id
-join bookmakers b on b.slug = o.bookmaker_slug
+  ) as cotacoes
+from jogos f
+join campeonatos l on l.id = f.league_id
+join cotacoes o on o.fixture_id = f.id
+join casas_apostas b on b.slug = o.bookmaker_slug
 left join lateral (
   select
     updated_at,
@@ -430,18 +430,18 @@ left join lateral (
       when bookmaker_slug = 'sportybet' and source_url ~* '/br/sport/football/?$' then null
       else source_url
     end as source_url
-  from bookmaker_event_links
-  where bookmaker_event_links.fixture_id = f.id
-    and bookmaker_event_links.bookmaker_slug = o.bookmaker_slug
-    and bookmaker_event_links.source_url is not null
-  order by bookmaker_event_links.updated_at desc
+  from links_eventos
+  where links_eventos.fixture_id = f.id
+    and links_eventos.bookmaker_slug = o.bookmaker_slug
+    and links_eventos.source_url is not null
+  order by links_eventos.updated_at desc
   limit 1
 ) bel on true
 where f.starts_at > now()
   and l.enabled = true
 group by f.id;
 
-create view public.public_odds_feed
+create view public.public_feed_cotacoes
 with (security_invoker = true)
 as
 select
@@ -459,9 +459,9 @@ select
   f.league_country,
   f.league_logo_url,
   f.league_country_flag_url,
-  s.odds
-from public.public_odds_fixtures f
-join public.public_odds_snapshot s on s.fixture_id = f.fixture_id
+  s.cotacoes
+from public.public_jogos_com_cotacoes f
+join public.public_snapshot_cotacoes s on s.fixture_id = f.fixture_id
 where f.starts_at > now();
 
 -- Security baseline: external Supabase consumers get read-only access to safe columns only.
@@ -469,95 +469,95 @@ where f.starts_at > now();
 grant usage on schema public to anon, authenticated;
 
 revoke all on
-  bookmakers,
-  leagues,
-  teams,
-  team_aliases,
-  fixtures,
-  bookmaker_event_links,
-  bookmaker_league_links,
-  bookmaker_league_url_requests,
-  odds,
-  fixture_sync_runs,
-  bookmaker_event_snapshots,
-  bookmaker_collection_state
+  casas_apostas,
+  campeonatos,
+  times,
+  apelidos_times,
+  jogos,
+  links_eventos,
+  links_campeonatos,
+  pendencias_links_campeonatos,
+  cotacoes,
+  execucoes_sync_jogos,
+  capturas_eventos,
+  estado_coletas
 from anon, authenticated;
 revoke all on function public.try_acquire_bookmaker_collection_lock(text, timestamptz) from anon, authenticated;
 
-alter table bookmakers enable row level security;
-alter table leagues enable row level security;
-alter table teams enable row level security;
-alter table team_aliases enable row level security;
-alter table fixtures enable row level security;
-alter table bookmaker_event_links enable row level security;
-alter table bookmaker_league_links enable row level security;
-alter table bookmaker_league_url_requests enable row level security;
-alter table odds enable row level security;
-alter table fixture_sync_runs enable row level security;
-alter table bookmaker_event_snapshots enable row level security;
-alter table bookmaker_collection_state enable row level security;
+alter table casas_apostas enable row level security;
+alter table campeonatos enable row level security;
+alter table times enable row level security;
+alter table apelidos_times enable row level security;
+alter table jogos enable row level security;
+alter table links_eventos enable row level security;
+alter table links_campeonatos enable row level security;
+alter table pendencias_links_campeonatos enable row level security;
+alter table cotacoes enable row level security;
+alter table execucoes_sync_jogos enable row level security;
+alter table capturas_eventos enable row level security;
+alter table estado_coletas enable row level security;
 
-drop policy if exists public_read_bookmakers on bookmakers;
+drop policy if exists public_read_bookmakers on casas_apostas;
 create policy public_read_bookmakers
-  on bookmakers
+  on casas_apostas
   for select
   to anon, authenticated
   using (true);
 
-drop policy if exists public_read_enabled_leagues on leagues;
+drop policy if exists public_read_enabled_leagues on campeonatos;
 create policy public_read_enabled_leagues
-  on leagues
+  on campeonatos
   for select
   to anon, authenticated
   using (enabled = true);
 
-drop policy if exists public_read_upcoming_fixtures on fixtures;
+drop policy if exists public_read_upcoming_fixtures on jogos;
 create policy public_read_upcoming_fixtures
-  on fixtures
+  on jogos
   for select
   to anon, authenticated
   using (starts_at > now());
 
-drop policy if exists public_read_upcoming_odds on odds;
+drop policy if exists public_read_upcoming_odds on cotacoes;
 create policy public_read_upcoming_odds
-  on odds
+  on cotacoes
   for select
   to anon, authenticated
   using (
     exists (
       select 1
-      from fixtures
-      where fixtures.id = odds.fixture_id
-        and fixtures.starts_at > now()
+      from jogos
+      where jogos.id = cotacoes.fixture_id
+        and jogos.starts_at > now()
     )
   );
 
-drop policy if exists public_read_upcoming_bookmaker_event_links on bookmaker_event_links;
+drop policy if exists public_read_upcoming_bookmaker_event_links on links_eventos;
 create policy public_read_upcoming_bookmaker_event_links
-  on bookmaker_event_links
+  on links_eventos
   for select
   to anon, authenticated
   using (
     source_url is not null
     and exists (
       select 1
-      from fixtures
-      join leagues on leagues.id = fixtures.league_id
-      where fixtures.id = bookmaker_event_links.fixture_id
-        and fixtures.starts_at > now()
-        and leagues.enabled = true
+      from jogos
+      join campeonatos on campeonatos.id = jogos.league_id
+      where jogos.id = links_eventos.fixture_id
+        and jogos.starts_at > now()
+        and campeonatos.enabled = true
     )
   );
 
-drop policy if exists public_read_fixture_sync_status on fixture_sync_runs;
+drop policy if exists public_read_fixture_sync_status on execucoes_sync_jogos;
 create policy public_read_fixture_sync_status
-  on fixture_sync_runs
+  on execucoes_sync_jogos
   for select
   to anon, authenticated
   using (source = 'api-football');
 
-grant select (slug, name, updated_at) on bookmakers to anon, authenticated;
-grant select (id, api_football_league_id, name, slug, country, logo_url, country_flag_url, season, enabled, updated_at) on leagues to anon, authenticated;
+grant select (slug, name, updated_at) on casas_apostas to anon, authenticated;
+grant select (id, api_football_league_id, name, slug, country, logo_url, country_flag_url, season, enabled, updated_at) on campeonatos to anon, authenticated;
 grant select (
   id,
   api_football_fixture_id,
@@ -570,13 +570,13 @@ grant select (
   status,
   round,
   updated_at
-) on fixtures to anon, authenticated;
+) on jogos to anon, authenticated;
 grant select (
   fixture_id,
   bookmaker_slug,
   source_url,
   updated_at
-) on bookmaker_event_links to anon, authenticated;
+) on links_eventos to anon, authenticated;
 grant select (
   fixture_id,
   bookmaker_slug,
@@ -588,9 +588,9 @@ grant select (
   confidence_score,
   updated_at,
   last_seen_at
-) on odds to anon, authenticated;
-grant select (date_key, source, status, fixtures_seen, synced_at) on fixture_sync_runs to anon, authenticated;
-grant select on public.public_odds_fixtures to anon, authenticated;
-grant select on public.public_odds_snapshot to anon, authenticated;
-grant select on public.public_odds_feed to anon, authenticated;
-grant select on public.public_odds_feed_status to anon, authenticated;
+) on cotacoes to anon, authenticated;
+grant select (date_key, source, status, fixtures_seen, synced_at) on execucoes_sync_jogos to anon, authenticated;
+grant select on public.public_jogos_com_cotacoes to anon, authenticated;
+grant select on public.public_snapshot_cotacoes to anon, authenticated;
+grant select on public.public_feed_cotacoes to anon, authenticated;
+grant select on public.public_status_feed_cotacoes to anon, authenticated;

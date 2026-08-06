@@ -53,7 +53,7 @@ async function log(bookmaker: BetanoBookmakerConfig, level: "info" | "warn" | "e
 }
 
 async function ensureBaseRows(bookmaker: BetanoBookmakerConfig) {
-  const { error } = await supabase.from("bookmakers").upsert({ slug: bookmaker.slug, name: bookmaker.name }, { onConflict: "slug" });
+  const { error } = await supabase.from("casas_apostas").upsert({ slug: bookmaker.slug, name: bookmaker.name }, { onConflict: "slug" });
   if (error) throw error;
 }
 
@@ -62,8 +62,8 @@ async function getCanonicalFixtures() {
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2, 0, 0, 0, 0);
 
   const { data, error } = await supabase
-    .from("fixtures")
-    .select("id,api_football_fixture_id,name,league:leagues(name,slug,api_football_league_id,country),home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
+    .from("jogos")
+    .select("id,api_football_fixture_id,name,league:campeonatos(name,slug,api_football_league_id,country),home_team,away_team,normalized_home_team,normalized_away_team,starts_at")
     .gt("starts_at", now.toISOString())
     .lt("starts_at", end.toISOString())
     .order("starts_at", { ascending: true });

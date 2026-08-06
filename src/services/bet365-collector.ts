@@ -327,8 +327,8 @@ function createLogger(logToConsole: boolean): Logger {
 
 async function getCanonicalFixtures(dateKeys: string[], leagueSlug: string, limit: number) {
   const { data, error } = await supabase
-    .from("fixtures")
-    .select("id,api_football_fixture_id,name,league:leagues!inner(name,slug,country,api_football_league_id,enabled),home_team_id,away_team_id,home_team,away_team,starts_at,date_key")
+    .from("jogos")
+    .select("id,api_football_fixture_id,name,league:campeonatos!inner(name,slug,country,api_football_league_id,enabled),home_team_id,away_team_id,home_team,away_team,starts_at,date_key")
     .in("date_key", dateKeys)
     .eq("leagues.enabled", true)
     .eq("leagues.slug", leagueSlug)
@@ -341,7 +341,7 @@ async function getCanonicalFixtures(dateKeys: string[], leagueSlug: string, limi
 
 async function getSavedBet365LeagueIds(bookmakerSlug: string) {
   const { data, error } = await supabase
-    .from("bookmaker_league_links")
+    .from("links_campeonatos")
     .select("api_football_league_id,source_url")
     .eq("bookmaker_slug", bookmakerSlug);
 
@@ -357,8 +357,8 @@ async function getSavedBet365LeagueIds(bookmakerSlug: string) {
 
 async function discoverBet365TargetLeagueSlugs(bookmaker: Bet365BookmakerConfig, dateKeys: string[], logger: Logger) {
   const { data, error } = await supabase
-    .from("fixtures")
-    .select("id,api_football_fixture_id,name,league:leagues!inner(name,slug,country,api_football_league_id,enabled),home_team_id,away_team_id,home_team,away_team,starts_at,date_key")
+    .from("jogos")
+    .select("id,api_football_fixture_id,name,league:campeonatos!inner(name,slug,country,api_football_league_id,enabled),home_team_id,away_team_id,home_team,away_team,starts_at,date_key")
     .in("date_key", dateKeys)
     .eq("leagues.enabled", true)
     .order("starts_at", { ascending: true })
@@ -416,7 +416,7 @@ async function discoverBet365TargetLeagueSlugs(bookmaker: Bet365BookmakerConfig,
 
 async function getSavedLeagueLink(bookmakerSlug: string, apiFootballLeagueId: number) {
   const { data, error } = await supabase
-    .from("bookmaker_league_links")
+    .from("links_campeonatos")
     .select("api_football_league_id,source_url,bookmaker_league_name,source")
     .eq("bookmaker_slug", bookmakerSlug)
     .eq("api_football_league_id", apiFootballLeagueId)
@@ -455,7 +455,7 @@ function leagueUrlCandidates(league: CanonicalLeague, savedLink: LeagueLinkRow |
 
 async function saveLeagueLink(bookmaker: Bet365BookmakerConfig, league: CanonicalLeague, candidate: Bet365LeagueUrlCandidate, logger: Logger) {
   const updatedAt = new Date().toISOString();
-  const { error } = await supabase.from("bookmaker_league_links").upsert(
+  const { error } = await supabase.from("links_campeonatos").upsert(
     {
       bookmaker_slug: bookmaker.slug,
       api_football_league_id: Number(league.api_football_league_id),
@@ -597,7 +597,7 @@ async function markCachedEventDirectFailure(bookmakerSlug: string, link: SavedBo
   };
 
   const { error } = await supabase
-    .from("bookmaker_event_links")
+    .from("links_eventos")
     .update({ raw: nextRaw, updated_at: now })
     .eq("bookmaker_slug", bookmakerSlug)
     .eq("fixture_id", link.fixture_id)
@@ -1567,7 +1567,7 @@ export class Bet365Collector {
         index: market.index,
         selections: market.selections
       }));
-      const { error } = await supabase.from("bookmaker_event_snapshots").upsert(
+      const { error } = await supabase.from("capturas_eventos").upsert(
         {
           bookmaker_slug: this.config.slug,
           external_event_id: externalEventId,

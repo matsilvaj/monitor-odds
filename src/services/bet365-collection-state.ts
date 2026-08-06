@@ -3,10 +3,10 @@ import { supabase } from "../db/supabase.js";
 
 export class Bet365CollectionStateRepository {
   async ensureBaseRows(bookmaker: Bet365BookmakerConfig) {
-    const { error } = await supabase.from("bookmakers").upsert({ slug: bookmaker.slug, name: bookmaker.name }, { onConflict: "slug" });
+    const { error } = await supabase.from("casas_apostas").upsert({ slug: bookmaker.slug, name: bookmaker.name }, { onConflict: "slug" });
     if (error) throw error;
 
-    const { error: stateError } = await supabase.from("bookmaker_collection_state").upsert(
+    const { error: stateError } = await supabase.from("estado_coletas").upsert(
       {
         bookmaker_slug: bookmaker.slug,
         status: "idle",
@@ -47,7 +47,7 @@ export class Bet365CollectionStateRepository {
 
   async update(slug: string, values: Record<string, unknown>) {
     const { error } = await supabase
-      .from("bookmaker_collection_state")
+      .from("estado_coletas")
       .update({
         ...values,
         updated_at: new Date().toISOString()

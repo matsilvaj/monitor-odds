@@ -16,7 +16,7 @@ const ELIGIBILITY_LEAGUES = MVP_LEAGUES.filter((league) => league.eligibility);
 const ELIGIBILITY_LEAGUE_IDS = ELIGIBILITY_LEAGUES.map((league) => league.apiFootballLeagueId);
 const ELIGIBILITY_LEAGUE_BY_API_ID = new Map(ELIGIBILITY_LEAGUES.map((league) => [league.apiFootballLeagueId, league]));
 
-async function deleteRowsById(table: "fixtures" | "bookmaker_event_snapshots", ids: string[]) {
+async function deleteRowsById(table: "jogos" | "capturas_eventos", ids: string[]) {
   for (let index = 0; index < ids.length; index += 100) {
     const batch = ids.slice(index, index + 100);
     const { error } = await supabase.from(table).delete().in("id", batch);
@@ -26,19 +26,19 @@ async function deleteRowsById(table: "fixtures" | "bookmaker_event_snapshots", i
 
 export async function cleanupStartedFixtures(now = new Date()): Promise<StartedFixtureCleanupSummary> {
   const cutoff = now.toISOString();
-  const { data, error } = await supabase.from("fixtures").select("id").lte("starts_at", cutoff);
+  const { data, error } = await supabase.from("jogos").select("id").lte("starts_at", cutoff);
 
   if (error) throw error;
 
   const fixtureIds = (data ?? []).map((row) => row.id);
 
   if (fixtureIds.length) {
-    const { error: deleteError } = await supabase.from("fixtures").delete().in("id", fixtureIds);
+    const { error: deleteError } = await supabase.from("jogos").delete().in("id", fixtureIds);
     if (deleteError) throw deleteError;
   }
 
   const { count: snapshotsDeleted, error: snapshotsError } = await supabase
-    .from("bookmaker_event_snapshots")
+    .from("capturas_eventos")
     .delete({ count: "exact" })
     .lte("starts_at", cutoff);
 
@@ -56,9 +56,9 @@ export async function cleanupIneligibleFixtures(): Promise<IneligibleFixtureClea
   }
 
   const { data: fixtures, error: fixturesError } = await supabase
-    .from("fixtures")
-    .select("id,home_team,away_team,round,league:leagues!inner(name,api_football_league_id)")
-    .in("leagues.api_football_league_id", ELIGIBILITY_LEAGUE_IDS);
+    .from("jogos")
+    .select("id,home_team,away_team,round,league:campeonatos!inner(name,api_football_league_id)")
+    .in("campeonatos.api_football_league_id", ELIGIBILITY_LEAGUE_IDS);
 
   if (fixturesError) throw fixturesError;
 
@@ -76,11 +76,11 @@ export async function cleanupIneligibleFixtures(): Promise<IneligibleFixtureClea
     .map((fixture) => String(fixture.id));
 
   if (fixtureIds.length) {
-    await deleteRowsById("fixtures", fixtureIds);
+    await deleteRowsById("jogos", fixtureIds);
   }
 
   const { data: snapshots, error: snapshotsError } = await supabase
-    .from("bookmaker_event_snapshots")
+    .from("capturas_eventos")
     .select("id,league_api_football_id,league_name,event_name,home_team,away_team")
     .in("league_api_football_id", ELIGIBILITY_LEAGUE_IDS);
 
@@ -99,7 +99,7 @@ export async function cleanupIneligibleFixtures(): Promise<IneligibleFixtureClea
     .map((snapshot) => String(snapshot.id));
 
   if (snapshotIds.length) {
-    await deleteRowsById("bookmaker_event_snapshots", snapshotIds);
+    await deleteRowsById("capturas_eventos", snapshotIds);
   }
 
   return {

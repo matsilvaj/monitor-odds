@@ -299,7 +299,7 @@ async function resetBrowserCollectionState() {
   if (!supabase || browserCollectorSlugs.length === 0) return;
 
   const now = new Date().toISOString();
-  const { error } = await supabase.from("bookmaker_collection_state").upsert(
+  const { error } = await supabase.from("estado_coletas").upsert(
     browserCollectorSlugs.map((bookmakerSlug) => ({
       bookmaker_slug: bookmakerSlug,
       status: "idle",
@@ -568,7 +568,7 @@ function normalizeRequest(row) {
 async function refreshPendingRequests() {
   if (!supabase) return;
 
-  const { data: bookmakers, error: bookmakerError } = await supabase.from("bookmakers").select("slug,name");
+  const { data: bookmakers, error: bookmakerError } = await supabase.from("casas_apostas").select("slug,name");
   if (!bookmakerError) {
     for (const row of bookmakers ?? []) {
       if (row.slug && row.name) bookmakerNames[row.slug] = row.name;
@@ -581,7 +581,7 @@ async function refreshPendingRequests() {
   }
 
   const { data, error } = await supabase
-    .from("bookmaker_league_url_requests")
+    .from("pendencias_links_campeonatos")
     .select("id,bookmaker_slug,api_football_league_id,league_name,league_country,mode,reason,previous_url,created_at,updated_at")
     .eq("status", "pending")
     .order("updated_at", { ascending: false });
@@ -608,7 +608,7 @@ async function saveCompetitionUrl({ requestId, url }) {
   }
 
   const { data: request, error: requestError } = await supabase
-    .from("bookmaker_league_url_requests")
+    .from("pendencias_links_campeonatos")
     .select("id,bookmaker_slug,api_football_league_id,league_name,league_country,mode,reason,previous_url")
     .eq("id", requestId)
     .maybeSingle();
@@ -617,7 +617,7 @@ async function saveCompetitionUrl({ requestId, url }) {
   if (!request) return { ok: false, error: "Pendência não encontrada." };
 
   const updatedAt = new Date().toISOString();
-  const { error: linkError } = await supabase.from("bookmaker_league_links").upsert(
+  const { error: linkError } = await supabase.from("links_campeonatos").upsert(
     {
       bookmaker_slug: request.bookmaker_slug,
       api_football_league_id: Number(request.api_football_league_id),
@@ -640,7 +640,7 @@ async function saveCompetitionUrl({ requestId, url }) {
   if (linkError) return { ok: false, error: linkError.message };
 
   const { error: resolveError } = await supabase
-    .from("bookmaker_league_url_requests")
+    .from("pendencias_links_campeonatos")
     .delete()
     .eq("id", request.id);
 
