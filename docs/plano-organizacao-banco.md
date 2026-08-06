@@ -130,3 +130,29 @@ Para evitar quebra, a recomendacao e fazer em uma etapa separada:
 6. Rodar coleta completa.
 
 Enquanto isso, este documento define a nomenclatura oficial em portugues.
+
+## Etapa Aplicada em 2026-08-06
+
+Foi aplicada a primeira limpeza segura no Supabase:
+
+- `bookmaker_payload_cache` foi removida porque estava vazia e sem uso no codigo.
+- `bookmaker_discovery_state` foi movida para `archive.bookmaker_discovery_state`, preservando 6 registros.
+- `team_resolution_attempts` foi movida para `archive.team_resolution_attempts`, preservando 4218 registros.
+- `team_resolution_daily_usage` foi movida para `archive.team_resolution_daily_usage`, preservando 15 registros.
+
+Tabelas ativas restantes no schema `public`:
+
+- `bookmaker_collection_state`
+- `bookmaker_event_links`
+- `bookmaker_event_snapshots`
+- `bookmaker_league_links`
+- `bookmaker_league_url_requests`
+- `bookmakers`
+- `fixture_sync_runs`
+- `fixtures`
+- `leagues`
+- `odds`
+- `team_aliases`
+- `teams`
+
+A renomeacao fisica para portugues ainda nao foi aplicada. Por enquanto, os nomes em portugues ficam como nomenclatura oficial planejada neste documento.

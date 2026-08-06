@@ -128,20 +128,6 @@ create table if not exists bookmaker_league_url_requests (
   unique (bookmaker_slug, api_football_league_id)
 );
 
-create table if not exists bookmaker_payload_cache (
-  bookmaker_slug text not null references bookmakers(slug) on delete cascade,
-  endpoint text not null,
-  url text not null,
-  pd text,
-  body text not null,
-  body_length integer not null default 0,
-  captured_at timestamptz not null,
-  expires_at timestamptz not null,
-  raw jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  primary key (bookmaker_slug, endpoint, url)
-);
 
 create table if not exists odds (
   id uuid primary key default gen_random_uuid(),
@@ -301,8 +287,6 @@ create index if not exists bookmaker_event_links_bookmaker_fixture_idx on bookma
 create index if not exists bookmaker_league_links_slug_league_idx on bookmaker_league_links (bookmaker_slug, api_football_league_id);
 create index if not exists bookmaker_league_url_requests_status_idx on bookmaker_league_url_requests (status, updated_at);
 create index if not exists bookmaker_league_url_requests_slug_league_idx on bookmaker_league_url_requests (bookmaker_slug, api_football_league_id);
-create index if not exists bookmaker_payload_cache_expires_at_idx on bookmaker_payload_cache (expires_at);
-create index if not exists bookmaker_payload_cache_bookmaker_endpoint_idx on bookmaker_payload_cache (bookmaker_slug, endpoint);
 create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on bookmaker_event_snapshots (bookmaker_slug, date_key);
 create index if not exists bookmaker_event_snapshots_league_idx on bookmaker_event_snapshots (league_api_football_id);
 create index if not exists bookmaker_collection_state_next_run_idx on bookmaker_collection_state (next_run_at);
@@ -493,7 +477,6 @@ revoke all on
   bookmaker_event_links,
   bookmaker_league_links,
   bookmaker_league_url_requests,
-  bookmaker_payload_cache,
   odds,
   fixture_sync_runs,
   bookmaker_event_snapshots,
@@ -509,7 +492,6 @@ alter table fixtures enable row level security;
 alter table bookmaker_event_links enable row level security;
 alter table bookmaker_league_links enable row level security;
 alter table bookmaker_league_url_requests enable row level security;
-alter table bookmaker_payload_cache enable row level security;
 alter table odds enable row level security;
 alter table fixture_sync_runs enable row level security;
 alter table bookmaker_event_snapshots enable row level security;
