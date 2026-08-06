@@ -6,6 +6,9 @@ export type SavedBookmakerEventLink = {
   fixture_id: string;
   external_event_id: string | number;
   source_url: string | null;
+  bookmaker_home_team: string | null;
+  bookmaker_away_team: string | null;
+  starts_at: string | null;
   raw: unknown;
   updated_at: string;
 };
@@ -26,7 +29,7 @@ export async function getSavedBookmakerEventLinks(bookmakerSlug: string, fixture
   for (const fixtureIdBatch of chunks(uniqueFixtureIds, BATCH_SIZE)) {
     const { data, error } = await supabase
       .from("bookmaker_event_links")
-      .select("fixture_id,external_event_id,source_url,raw,updated_at")
+      .select("fixture_id,external_event_id,source_url,bookmaker_home_team,bookmaker_away_team,starts_at,raw,updated_at")
       .eq("bookmaker_slug", bookmakerSlug)
       .in("fixture_id", fixtureIdBatch)
       .order("updated_at", { ascending: false });

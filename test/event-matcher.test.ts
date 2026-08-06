@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findBestCanonicalEventMatch, matchEvents } from "../src/domain/matching/event-matcher.js";
+import { findBestCanonicalEventMatch, matchEvents, selectionForCanonicalOrientation } from "../src/domain/matching/event-matcher.js";
+import { parseBet365LeaguePageEvents } from "../src/services/bet365-collector.js";
+import { canonicalNameFromAlias, linkOrientation } from "../src/services/bookmaker-match-memory.js";
 
 const startsAt = "2026-07-14T18:45:00.000Z";
 
@@ -49,4 +51,48 @@ test("keeps legitimate aliases and expanded club names", () => {
     );
     assert.equal(result.matched, true, `${homeTeam} x ${awayTeam} did not match ${bookmakerHome} x ${bookmakerAway}`);
   }
+});
+
+test("matches Meridian display order when home and away are inverted", () => {
+  const result = findBestCanonicalEventMatch(
+    [{ id: "fixture", starts_at: startsAt, home_team: "Celtic", away_team: "Aberdeen", league_name: "Premiership" }],
+    { startsAt, homeTeam: "Aberdeen", awayTeam: "Celtic", leagueName: "Premiership" },
+    { context: "league-scoped", trustedLeagueScope: true }
+  );
+
+  assert.ok(result);
+  assert.equal(result.orientation, "INVERTED");
+  assert.equal(selectionForCanonicalOrientation("HOME", result.orientation), "AWAY");
+  assert.equal(selectionForCanonicalOrientation("DRAW", result.orientation), "DRAW");
+  assert.equal(selectionForCanonicalOrientation("AWAY", result.orientation), "HOME");
+});
+
+test("discovers Bet365 D0/D1 events without using league-row odds", () => {
+  const rawText = [
+    "Qua 05 Ago", "1", "X", "2",
+    "19:00", "Boca Juniors", "Estudiantes", "8", "2.15", "2.87", "4.00",
+    "21:15", "Tigre", "Belgrano", "8", "2.55", "2.75", "3.40"
+  ].join("\n");
+
+  const events = parseBet365LeaguePageEvents(rawText, ["2026-08-05"]);
+
+  assert.equal(events.length, 2);
+  assert.equal(events[0]?.homeTeam, "Boca Juniors");
+  assert.equal(events[0]?.awayTeam, "Estudiantes");
+  assert.equal(events[1]?.homeTeam, "Tigre");
+  assert.equal(events[1]?.awayTeam, "Belgrano");
+});
+test("reuses only persisted valid event orientations", () => {
+  assert.equal(linkOrientation({ orientation: "NORMAL" }), "NORMAL");
+  assert.equal(linkOrientation({ orientation: "INVERTED" }), "INVERTED");
+  assert.equal(linkOrientation({ orientation: "UNKNOWN" }), null);
+  assert.equal(linkOrientation(null), null);
+});
+
+test("resolves a learned bookmaker alias to the canonical team name", () => {
+  const aliases = new Map([
+    ["estudiantes la plata", { teamId: "team-1", canonicalName: "Estudiantes L.P." }]
+  ]);
+  assert.equal(canonicalNameFromAlias(aliases, "Estudiantes de La Plata"), "Estudiantes L.P.");
+  assert.equal(canonicalNameFromAlias(aliases, "Boca Juniors"), "Boca Juniors");
 });

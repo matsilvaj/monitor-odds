@@ -955,6 +955,44 @@ class Bet365PageController {
         if (state) pageState = state.name;
       }
 
+      if (
+        target &&
+        !pageStateIsTargetEvent(state) &&
+        state?.name !== "LEAGUE" &&
+        (state?.name === "HOME" || state?.name === "UNKNOWN" || (state?.name === "WRONG_EVENT" && pageLooksLikeHome(state.pageText)))
+      ) {
+        await this.logger?.("warn", "conteudo da bet365 nao carregou para a URL solicitada; reiniciando a rota da pagina", {
+          requestedUrl: url,
+          sourceUrl: state?.sourceUrl,
+          state: state?.name
+        });
+        const baseUrl = `${new URL(url).origin}/`;
+        await this.navigate(baseUrl, Math.max(waitMs, 10_000));
+        await this.page.waitForTimeout(750);
+        await this.navigate(url, waitMs);
+        state = await this.waitForPageState(
+          target,
+          (candidate) => pageStateIsTargetEvent(candidate) || (clickEvent && candidate.name === "LEAGUE"),
+          Math.max(4_000, Math.min(waitMs, 10_000))
+        );
+        pageState = state.name;
+
+        if (!pageStateIsTargetEvent(state) && (!clickEvent || state.name !== "LEAGUE")) {
+          await this.logger?.("warn", "rota recuperada da bet365 ainda sem conteudo; ativando a URL solicitada novamente", {
+            requestedUrl: url,
+            sourceUrl: state.sourceUrl,
+            state: state.name
+          });
+          await this.navigate(url, waitMs);
+          state = await this.waitForPageState(
+            target,
+            (candidate) => pageStateIsTargetEvent(candidate) || (clickEvent && candidate.name === "LEAGUE"),
+            Math.max(4_000, Math.min(waitMs, 10_000))
+          );
+          pageState = state.name;
+        }
+      }
+
       if (target && clickEvent) {
         if (!pageStateIsTargetEvent(state)) {
           if (state?.name !== "LEAGUE") {

@@ -1,9 +1,16 @@
+import { createHash } from "node:crypto";
 import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation } from "../domain/matching/event-matcher.js";
 import { normalizeName } from "../domain/text.js";
 import type { Bet365Market, Logger } from "../providers/bet365/types.js";
+import {
+  canonicalNameFromAlias,
+  learnConfirmedEventAliases,
+  linkOrientation,
+  loadBookmakerAliasIndex
+} from "./bookmaker-match-memory.js";
 
 type SnapshotRow = {
   id: string;
@@ -22,11 +29,22 @@ type SnapshotRow = {
 
 type CanonicalFixtureRow = {
   id: string;
+  home_team_id: string;
+  away_team_id: string;
   home_team: string;
   away_team: string;
   starts_at: string;
   date_key: string;
   league: { name: string; api_football_league_id: number } | Array<{ name: string; api_football_league_id: number }> | null;
+};
+
+type ExistingLinkRow = {
+  id: string;
+  fixture_id: string;
+  external_event_id: number;
+  match_confidence_score: number;
+  source_url: string | null;
+  raw: Record<string, unknown> | null;
 };
 
 function dateKey(date: Date) {
@@ -45,6 +63,40 @@ function targetDateKeys(date: BookmakerCollectOptions["date"]) {
 
 function fixtureLeague(fixture: CanonicalFixtureRow) {
   return Array.isArray(fixture.league) ? fixture.league[0] ?? null : fixture.league;
+}
+
+function duplicateBet365LinkIds(links: ExistingLinkRow[]) {
+  const byFixtureAndUrl = new Map<string, ExistingLinkRow[]>();
+  for (const link of links) {
+    if (!link.source_url) continue;
+    const key = `${link.fixture_id}:${link.source_url}`;
+    const group = byFixtureAndUrl.get(key) ?? [];
+    group.push(link);
+    byFixtureAndUrl.set(key, group);
+  }
+
+  const duplicateIds: string[] = [];
+  for (const group of byFixtureAndUrl.values()) {
+    if (group.length < 2) continue;
+    const urlEventId = group[0].source_url?.match(/\/D8\/E(\d+)\//i)?.[1];
+    if (!urlEventId) continue;
+    const keeper = group.find((link) => String(link.external_event_id) === urlEventId);
+    if (!keeper) continue;
+    duplicateIds.push(...group.filter((link) => link.id !== keeper.id).map((link) => link.id));
+  }
+  return duplicateIds;
+}
+
+async function removeDuplicateBet365Links(links: ExistingLinkRow[]) {
+  const ids = duplicateBet365LinkIds(links);
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const { error } = await supabase.from("bookmaker_event_links").delete().in("id", ids.slice(offset, offset + 100));
+    if (error) throw error;
+  }
+  return ids.length;
+}
+function snapshotOddsSignature(value: unknown) {
+  return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 }
 
 function snapshotMarkets(value: unknown): Bet365Market[] {
@@ -68,7 +120,13 @@ function snapshotMarkets(value: unknown): Bet365Market[] {
   }) as Bet365Market[];
 }
 
-function buildLink(snapshot: SnapshotRow, fixture: CanonicalFixtureRow, score: number): BookmakerLinkRow {
+function buildLink(
+  snapshot: SnapshotRow,
+  fixture: CanonicalFixtureRow,
+  score: number,
+  orientation: "NORMAL" | "INVERTED",
+  previousRaw: Record<string, unknown> | null = null
+): BookmakerLinkRow {
   const updatedAt = new Date().toISOString();
   return {
     bookmaker_slug: "bet365",
@@ -82,7 +140,14 @@ function buildLink(snapshot: SnapshotRow, fixture: CanonicalFixtureRow, score: n
     starts_at: snapshot.starts_at ?? fixture.starts_at,
     match_confidence_score: Number(score.toFixed(3)),
     source_url: snapshot.source_url,
-    raw: { stage: "matched-from-snapshot", snapshotId: snapshot.id, snapshotRaw: snapshot.raw },
+    raw: {
+      ...(previousRaw ?? {}),
+      stage: "matched-from-snapshot",
+      snapshotId: snapshot.id,
+      snapshotRaw: snapshot.raw,
+      orientation,
+      associationConfirmed: true
+    },
     updated_at: updatedAt
   };
 }
@@ -112,7 +177,12 @@ function buildOdds(snapshot: SnapshotRow, fixture: CanonicalFixtureRow, orientat
 
 export async function matchBet365Snapshots(options: { date?: BookmakerCollectOptions["date"]; logger?: Logger } = {}) {
   const dates = targetDateKeys(options.date);
-  const [{ data: snapshotData, error: snapshotError }, { data: fixtureData, error: fixtureError }] = await Promise.all([
+  const [
+    { data: snapshotData, error: snapshotError },
+    { data: fixtureData, error: fixtureError },
+    { data: linkData, error: linkError },
+    { data: oddData, error: oddError }
+  ] = await Promise.all([
     supabase
       .from("bookmaker_event_snapshots")
       .select("id,external_event_id,league_api_football_id,league_name,event_name,home_team,away_team,starts_at,date_key,source_url,markets,raw")
@@ -120,26 +190,66 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
       .in("date_key", dates),
     supabase
       .from("fixtures")
-      .select("id,home_team,away_team,starts_at,date_key,league:leagues!inner(name,api_football_league_id,enabled)")
+      .select("id,home_team_id,away_team_id,home_team,away_team,starts_at,date_key,league:leagues!inner(name,api_football_league_id,enabled)")
       .in("date_key", dates)
-      .eq("leagues.enabled", true)
+      .eq("leagues.enabled", true),
+    supabase
+      .from("bookmaker_event_links")
+      .select("id,fixture_id,external_event_id,match_confidence_score,source_url,raw")
+      .eq("bookmaker_slug", "bet365"),
+    supabase
+      .from("odds")
+      .select("fixture_id")
+      .eq("bookmaker_slug", "bet365")
   ]);
   if (snapshotError) throw snapshotError;
   if (fixtureError) throw fixtureError;
+  if (linkError) throw linkError;
+  if (oddError) throw oddError;
 
-  const snapshots = (snapshotData ?? []).map((row) => ({ ...row, markets: snapshotMarkets(row.markets) })) as unknown as SnapshotRow[];
   const fixtures = (fixtureData ?? []) as unknown as CanonicalFixtureRow[];
-  let matched = 0;
+  const fixtureById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
+  const existingLinks = (linkData ?? []) as ExistingLinkRow[];
+  const linksByEventId = new Map(existingLinks.map((link) => [String(link.external_event_id), link]));
+  const linksBySourceUrl = new Map(existingLinks.filter((link) => link.source_url).map((link) => [link.source_url as string, link]));
+  const rememberedLinkForSnapshot = (row: { external_event_id: string | number; source_url: string | null }) =>
+    linksByEventId.get(String(row.external_event_id)) ?? (row.source_url ? linksBySourceUrl.get(row.source_url) : undefined);
+  const oddFixtureIds = new Set((oddData ?? []).map((row) => row.fixture_id));
+  const snapshots = (snapshotData ?? [])
+    .filter((row) => {
+      const raw = row.raw as Record<string, unknown> | null;
+      const link = rememberedLinkForSnapshot(row);
+      const oddsMissingForCurrentSnapshot = !oddFixtureIds.has(link?.fixture_id ?? "") && raw?.oddsSnapshotSignature !== snapshotOddsSignature(row.markets);
+      return raw?.stage !== "matched" || !link || !fixtureById.has(link.fixture_id) || oddsMissingForCurrentSnapshot;
+    })
+    .map((row) => ({ ...row, markets: snapshotMarkets(row.markets) })) as unknown as SnapshotRow[];
+  const aliasIndex = await loadBookmakerAliasIndex(fixtures);
   let unmatched = 0;
   let invalid = 0;
-  let oddsUpserted = 0;
+  const processed: Array<{
+    snapshot: SnapshotRow;
+    fixture: CanonicalFixtureRow;
+    orientation: "NORMAL" | "INVERTED";
+    score: number;
+    reused: boolean;
+    link: BookmakerLinkRow;
+    odds: OddRow[];
+  }> = [];
 
   for (const snapshot of snapshots) {
     if (!snapshot.markets.length) {
       invalid += 1;
       continue;
     }
-    const candidates = fixtures
+    const existingLink = rememberedLinkForSnapshot(snapshot);
+    const linkedFixture = existingLink ? fixtureById.get(existingLink.fixture_id) : null;
+    const snapshotOrientation = linkOrientation(snapshot.raw);
+    const rememberedOrientation = linkOrientation(existingLink?.raw) ?? snapshotOrientation;
+    const rememberedFixtureId = typeof snapshot.raw?.fixtureId === "string" ? snapshot.raw.fixtureId : null;
+    const associatedFixture = linkedFixture ?? (rememberedFixtureId ? fixtureById.get(rememberedFixtureId) : null);
+    const matchedHomeTeam = canonicalNameFromAlias(aliasIndex, snapshot.home_team);
+    const matchedAwayTeam = canonicalNameFromAlias(aliasIndex, snapshot.away_team);
+    const candidates = (associatedFixture ? [associatedFixture] : fixtures)
       .filter((fixture) => {
         const league = fixtureLeague(fixture);
         return !snapshot.league_api_football_id || Number(league?.api_football_league_id) === Number(snapshot.league_api_football_id);
@@ -151,18 +261,28 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
         awayTeam: fixture.away_team,
         leagueName: fixtureLeague(fixture)?.name ?? null
       }));
-    const result = findBestCanonicalEventMatch(
-      candidates,
-      {
-        id: snapshot.external_event_id,
-        startsAt: snapshot.starts_at ?? "",
-        homeTeam: snapshot.home_team,
-        awayTeam: snapshot.away_team,
-        leagueName: snapshot.league_name
-      },
-      { context: "league-scoped" }
-    );
-    if (!result) {
+    const result = associatedFixture && rememberedOrientation
+      ? {
+          fixture: associatedFixture,
+          orientation: rememberedOrientation,
+          score: Number(existingLink?.match_confidence_score ?? snapshot.raw?.score ?? 1),
+          reused: true
+        }
+      : findBestCanonicalEventMatch(
+          candidates,
+          {
+            id: snapshot.external_event_id,
+            startsAt: snapshot.starts_at ?? "",
+            homeTeam: matchedHomeTeam,
+            awayTeam: matchedAwayTeam,
+            leagueName: snapshot.league_name
+          },
+          { context: "league-scoped" }
+        );
+    const confirmedResult = result
+      ? { ...result, reused: "reused" in result ? result.reused : Boolean(associatedFixture || (snapshot.raw?.stage === "matched" && snapshotOrientation)) }
+      : null;
+    if (!confirmedResult) {
       unmatched += 1;
       await options.logger?.("warn", "evento bet365 pendente no matching", {
         eventName: snapshot.event_name,
@@ -173,38 +293,100 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
       continue;
     }
 
-    const link = buildLink(snapshot, result.fixture, result.score);
-    const odds = buildOdds(snapshot, result.fixture, result.orientation);
-    const oddsSaved = await OddsRepository.saveAll("bet365", [link], odds, {
-      replaceExistingOdds: true,
-      cleanupPaCategories: [...new Set(snapshot.markets.map((market) => market.paCategory))]
+    processed.push({
+      snapshot,
+      fixture: confirmedResult.fixture,
+      orientation: confirmedResult.orientation,
+      score: confirmedResult.score,
+      reused: confirmedResult.reused,
+      link: buildLink(
+        snapshot,
+        confirmedResult.fixture,
+        confirmedResult.score,
+        confirmedResult.orientation,
+        existingLink?.raw ?? null
+      ),
+      odds: buildOdds(snapshot, confirmedResult.fixture, confirmedResult.orientation)
     });
-    oddsUpserted += oddsSaved;
-    const { error: linkRawError } = await supabase
-      .from("bookmaker_event_links")
-      .update({ source_url: link.source_url, raw: link.raw, updated_at: link.updated_at })
-      .eq("bookmaker_slug", link.bookmaker_slug)
-      .eq("external_event_id", link.external_event_id);
-    if (linkRawError) throw linkRawError;
-    const { error: updateError } = await supabase
-      .from("bookmaker_event_snapshots")
-      .update({
-        raw: { ...(snapshot.raw ?? {}), stage: "matched", fixtureId: result.fixture.id, score: result.score, orientation: result.orientation },
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", snapshot.id);
-    if (updateError) throw updateError;
-    await options.logger?.("info", "evento bet365 confirmado no matching", {
-      eventName: snapshot.event_name,
-      externalEventId: snapshot.external_event_id,
-      fixtureId: result.fixture.id,
-      sourceUrl: snapshot.source_url,
-      oddsSaved
-    });
-    matched += 1;
   }
 
-  const summary = { dates, snapshots: snapshots.length, matched, unmatched, invalid, oddsUpserted };
+  const oddsUpserted = processed.length
+    ? await OddsRepository.saveAll(
+        "bet365",
+        processed.map((item) => item.link),
+        processed.flatMap((item) => item.odds),
+        { replaceExistingOdds: false, replaceExistingLinks: false }
+      )
+    : 0;
+
+  const { data: currentLinkData, error: currentLinkError } = await supabase
+    .from("bookmaker_event_links")
+    .select("id,fixture_id,external_event_id,match_confidence_score,source_url,raw")
+    .eq("bookmaker_slug", "bet365");
+  if (currentLinkError) throw currentLinkError;
+  const duplicateLinksRemoved = await removeDuplicateBet365Links((currentLinkData ?? []) as ExistingLinkRow[]);
+
+  for (let offset = 0; offset < processed.length; offset += 20) {
+    await Promise.all(processed.slice(offset, offset + 20).map(async (item) => {
+      const { error } = await supabase
+        .from("bookmaker_event_snapshots")
+        .update({
+          raw: {
+            ...(item.snapshot.raw ?? {}),
+            stage: "matched",
+            fixtureId: item.fixture.id,
+            score: item.score,
+            orientation: item.orientation,
+            associationReused: item.reused,
+            oddsSnapshotSignature: snapshotOddsSignature(item.snapshot.markets)
+          },
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", item.snapshot.id);
+      if (error) throw error;
+    }));
+  }
+
+  const newMatches = processed.filter((item) => !item.reused);
+  for (const item of newMatches) {
+    await learnConfirmedEventAliases({
+      bookmakerSlug: "bet365",
+      fixture: item.fixture,
+      bookmakerHomeTeam: item.snapshot.home_team,
+      bookmakerAwayTeam: item.snapshot.away_team,
+      orientation: item.orientation,
+      externalEventId: item.snapshot.external_event_id,
+      leagueApiFootballId: item.snapshot.league_api_football_id,
+      logger: options.logger
+    }).catch(async (error) => {
+      await options.logger?.("warn", "falha ao aprender aliases confirmados da bet365", {
+        externalEventId: item.snapshot.external_event_id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+    await options.logger?.("info", "evento bet365 confirmado no matching", {
+      eventName: item.snapshot.event_name,
+      externalEventId: item.snapshot.external_event_id,
+      fixtureId: item.fixture.id,
+      orientation: item.orientation,
+      sourceUrl: item.snapshot.source_url,
+      oddsSaved: item.odds.length
+    });
+  }
+
+  const reused = processed.length - newMatches.length;
+  const summary = {
+    dates,
+    snapshots: snapshots.length,
+    matched: processed.length,
+    reused,
+    newMatches: newMatches.length,
+    unmatched,
+    invalid,
+    oddsProcessed: processed.reduce((total, item) => total + item.odds.length, 0),
+    duplicateLinksRemoved,
+    oddsUpserted
+  };
   await options.logger?.("info", "matching externo da bet365 finalizado", summary);
   return summary;
 }

@@ -43,7 +43,7 @@ export type OddRow = {
   last_seen_at?: string;
 };
 
-type ExistingBookmakerLinkRow = Omit<BookmakerLinkRow, "raw"> & {
+type ExistingBookmakerLinkRow = BookmakerLinkRow & {
   id: string;
 };
 
@@ -142,7 +142,8 @@ function sameLink(existing: ExistingBookmakerLinkRow, next: BookmakerLinkRow) {
     existing.normalized_bookmaker_away_team === next.normalized_bookmaker_away_team &&
     timestampValue(existing.starts_at) === timestampValue(next.starts_at) &&
     numericValue(existing.match_confidence_score, 3) === numericValue(next.match_confidence_score, 3) &&
-    existing.source_url === next.source_url
+    existing.source_url === next.source_url &&
+    JSON.stringify(existing.raw ?? null) === JSON.stringify(next.raw ?? null)
   );
 }
 
@@ -218,7 +219,7 @@ async function fetchExistingLinks(bookmakerSlug: string, fixtureIds: string[]) {
     const { data, error } = await supabase
       .from("bookmaker_event_links")
       .select(
-        "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,updated_at"
+        "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,raw,updated_at"
       )
       .eq("bookmaker_slug", bookmakerSlug)
       .in("fixture_id", fixtureIdBatch);
@@ -244,7 +245,7 @@ async function fetchExistingLinksByEventIds(bookmakerSlug: string, externalEvent
     const { data, error } = await supabase
       .from("bookmaker_event_links")
       .select(
-        "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,updated_at"
+        "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,raw,updated_at"
       )
       .eq("bookmaker_slug", bookmakerSlug)
       .in("external_event_id", eventIdBatch);
@@ -338,7 +339,13 @@ export class OddsRepository {
     bookmakerSlug: string,
     links: BookmakerLinkRow[],
     odds: OddRow[],
-    options: { marketCodes?: string[]; cleanupFixtureIds?: string[]; replaceExistingOdds?: boolean; cleanupPaCategories?: string[] } = {}
+    options: {
+      marketCodes?: string[];
+      cleanupFixtureIds?: string[];
+      replaceExistingOdds?: boolean;
+      cleanupPaCategories?: string[];
+      replaceExistingLinks?: boolean;
+    } = {}
   ) {
     const saveStartedAt = new Date().toISOString();
     const marketCodes = options.marketCodes?.length ? options.marketCodes : ["1X2"];
@@ -370,7 +377,10 @@ export class OddsRepository {
       const existing = existingLinksByKey.get(linkKey(link));
       return !existing || !sameLink(existing, link);
     });
-    const staleLinkIds = existingLinks.filter((link) => !currentLinkKeys.has(linkKey(link))).map((link) => link.id);
+    const replaceExistingLinks = options.replaceExistingLinks ?? true;
+    const staleLinkIds = replaceExistingLinks
+      ? existingLinks.filter((link) => !currentLinkKeys.has(linkKey(link))).map((link) => link.id)
+      : [];
 
     for (const linkBatch of chunks(changedLinks, DEFAULT_BATCH_SIZE)) {
       await withStatementTimeoutRetry("upsert de links de eventos", async () =>

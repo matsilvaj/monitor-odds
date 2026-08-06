@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import type { MeridianbetBookmakerConfig } from "../config/bookmakers.js";
-import { nationalTeamAliases, nationalTeamTokenGroups, tokenGroupMatchesText } from "../domain/matching/team-aliases.js";
+import { nationalTeamTokenGroups, tokenGroupMatchesText } from "../domain/matching/team-aliases.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 
 type Logger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
@@ -52,6 +52,17 @@ export type MeridianCollectedEvent = {
   rawText: string;
 };
 
+export type MeridianLeagueEvent = {
+  externalEventId: number;
+  sourceUrl: string;
+  eventName: string;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  rawText: string;
+  dateLabel: string | null;
+  timeLabel: string | null;
+};
+
 type ClickTarget = {
   text: string;
   href: string | null;
@@ -63,7 +74,6 @@ type ClickTarget = {
 };
 
 const PRICE_RE = /^(?:[1-9]\d{0,2}|0)(?:[.,]\d{1,3})?$/;
-const SAFE_SHORT_TEAM_TOKENS = new Set(["dr", "rd", "u17", "u18", "u19", "u20", "u21", "u22", "usa", "eua", "uae"]);
 
 function findChromeExecutable(configuredPath: string | undefined) {
   const candidates = [
@@ -199,21 +209,12 @@ function classifyMarket(rawText: string): { category: PaCategory; confidence: nu
     : { category: "SEM_PA", confidence: 1 };
 }
 
-function canonicalSelectionForDisplayOrder(selection: Selection, orientation: "NORMAL" | "INVERTED"): Selection {
-  if (orientation !== "INVERTED") return selection;
-  if (selection === "HOME") return "AWAY";
-  if (selection === "AWAY") return "HOME";
-  return selection;
-}
-
-function parseMoneylineMarket(rawText: string, fixture: MeridianFixtureTarget, orientation: "NORMAL" | "INVERTED", index: number) {
+function parseMoneylineMarket(rawText: string, homeTeam: string | null, awayTeam: string | null, index: number) {
   if (!/resultado\s+final/i.test(rawText)) return null;
   const odds = moneylinePricesFromBlock(rawText);
   if (odds.length < 3) return null;
 
   const pa = classifyMarket(rawText);
-  const displayHomeTeam = orientation === "INVERTED" ? fixture.awayTeam : fixture.homeTeam;
-  const displayAwayTeam = orientation === "INVERTED" ? fixture.homeTeam : fixture.awayTeam;
   return {
     marketName: "MoneyLine",
     paCategory: pa.category,
@@ -221,9 +222,9 @@ function parseMoneylineMarket(rawText: string, fixture: MeridianFixtureTarget, o
     rawText: rawText.slice(0, 1500),
     index,
     selections: [
-      { selection: canonicalSelectionForDisplayOrder("HOME", orientation), label: displayHomeTeam ?? "Home", price: odds[0], index: 0 },
+      { selection: "HOME" as Selection, label: homeTeam ?? "Home", price: odds[0], index: 0 },
       { selection: "DRAW" as Selection, label: "Draw", price: odds[1], index: 1 },
-      { selection: canonicalSelectionForDisplayOrder("AWAY", orientation), label: displayAwayTeam ?? "Away", price: odds[2], index: 2 }
+      { selection: "AWAY" as Selection, label: awayTeam ?? "Away", price: odds[2], index: 2 }
     ]
   } satisfies MeridianCollectedMarket;
 }
@@ -246,62 +247,6 @@ function moneylineBlocksFromText(rawText: string) {
     }
     return lines.slice(index, end).join("\n");
   });
-}
-
-function significantTokensFromText(value: string) {
-  return normalizeVisibleText(value).split(/\s+/).filter((token) => token.length >= 3 || SAFE_SHORT_TEAM_TOKENS.has(token));
-}
-
-function orderedTokenPosition(textTokens: string[], candidateTokens: string[]) {
-  let firstPosition: number | null = null;
-  let cursor = 0;
-  for (const token of candidateTokens) {
-    const foundAt = textTokens.indexOf(token, cursor);
-    if (foundAt < 0) return null;
-    if (firstPosition == null) firstPosition = foundAt;
-    cursor = foundAt + 1;
-  }
-  return firstPosition;
-}
-
-function teamPositionInText(text: string, teamName: unknown) {
-  const normalizedText = normalizeVisibleText(text);
-  if (!normalizedText) return null;
-  const textTokens = normalizedText.split(/\s+/).filter(Boolean);
-  const searchable = ` ${normalizedText} `;
-
-  for (const alias of nationalTeamAliases(teamName)) {
-    const normalizedAlias = normalizeVisibleText(alias);
-    if (!normalizedAlias) continue;
-    const exactPosition = searchable.indexOf(` ${normalizedAlias} `);
-    if (exactPosition >= 0) return textTokens.indexOf(normalizedAlias.split(/\s+/)[0]);
-    const position = orderedTokenPosition(textTokens, significantTokensFromText(alias).slice(0, 4));
-    if (position != null) return position;
-  }
-  return null;
-}
-
-function eventOrderTextFromUrl(sourceUrl: string) {
-  try {
-    const pathParts = new URL(sourceUrl).pathname.split("/").filter(Boolean);
-    const eventIdIndex = pathParts.findIndex((part) => /^\d+$/.test(part));
-    const slug = eventIdIndex > 0 ? pathParts[eventIdIndex - 1] : null;
-    return slug ? decodeURIComponent(slug).replace(/[-_]+/g, " ") : "";
-  } catch {
-    return "";
-  }
-}
-
-function eventDisplayOrder(sourceUrl: string, fixture: MeridianFixtureTarget) {
-  const text = eventOrderTextFromUrl(sourceUrl);
-  const homePosition = teamPositionInText(text, fixture.homeTeam);
-  const awayPosition = teamPositionInText(text, fixture.awayTeam);
-  const orientation = homePosition != null && awayPosition != null && awayPosition < homePosition ? "INVERTED" : "NORMAL";
-  return {
-    orientation: orientation as "NORMAL" | "INVERTED",
-    bookmakerHomeTeam: orientation === "INVERTED" ? fixture.awayTeam : fixture.homeTeam,
-    bookmakerAwayTeam: orientation === "INVERTED" ? fixture.homeTeam : fixture.awayTeam
-  };
 }
 
 export class MeridianbetBrowserClient {
@@ -407,18 +352,19 @@ export class MeridianbetBrowserClient {
   }
 
   private async pageHasVisibleEvents(page: Page) {
-    return page
-      .evaluate(() => {
-        const isVisible = (node: Element) => {
+    const checks = await Promise.all(
+      page.frames().map((frame) =>
+        frame.evaluate(() => [...document.querySelectorAll(".c-event__game")].some((node) => {
           if (!(node instanceof HTMLElement)) return false;
           const rect = node.getBoundingClientRect();
           const style = window.getComputedStyle(node);
-          return rect.width >= 260 && rect.height >= 32 && rect.height <= 220 && rect.bottom >= 100 && rect.top <= window.innerHeight - 8 && style.visibility !== "hidden" && style.display !== "none";
-        };
-        return [...document.querySelectorAll("standard-event, .c-event")].some((node) => isVisible(node));
-      })
-      .catch(() => false);
+          return rect.width > 80 && rect.height > 20 && rect.bottom > 80 && rect.top < window.innerHeight && style.visibility !== "hidden" && style.display !== "none";
+        })).catch(() => false)
+      )
+    );
+    return checks.some(Boolean);
   }
+
   async pageHasAnyFixture(page: Page, fixtures: MeridianFixtureTarget[]) {
     if (!fixtures.length) return false;
     await page.keyboard.press("Home").catch(() => undefined);
@@ -453,6 +399,103 @@ export class MeridianbetBrowserClient {
     } catch {
       return false;
     }
+  }
+
+  async listLeagueEvents(page: Page): Promise<MeridianLeagueEvent[]> {
+    const found = new Map<number, MeridianLeagueEvent>();
+    await page.keyboard.press("Home").catch(() => undefined);
+    await page.waitForTimeout(500);
+
+    const script = String.raw`
+(() => {
+  const eventUrl = (href) => {
+    if (!href) return null;
+    try {
+      const url = new URL(href, window.location.href);
+      return /\/\d+\/?$/.test(url.pathname) ? url.href : null;
+    } catch {
+      return null;
+    }
+  };
+  return [...document.querySelectorAll(".c-event")].flatMap((node) => {
+    if (!(node instanceof HTMLElement)) return [];
+    const rect = node.getBoundingClientRect();
+    const style = window.getComputedStyle(node);
+    if (rect.width < 300 || rect.height < 30 || rect.height > 160 || rect.bottom < 80 || rect.top > window.innerHeight || style.visibility === "hidden" || style.display === "none") return [];
+    const homeTeam = node.querySelector(".c-event__rivals--home span")?.textContent?.trim() || null;
+    const awayTeam = node.querySelector(".c-event__rivals--away span")?.textContent?.trim() || null;
+    if (!homeTeam || !awayTeam) return [];
+    const rawText = node.innerText || node.textContent || "";
+    const dateLabel = node.querySelector(".c-event__period-min")?.textContent?.trim() || null;
+    const timeLabel = node.querySelector(".c-event__period-time")?.textContent?.trim() || null;
+    if ((rawText.match(/\b\d{1,3}[.,]\d{2,3}\b/g) || []).length < 3) return [];
+    const anchor = [...node.querySelectorAll("a[href]")].find((item) => eventUrl(item.getAttribute("href")));
+    return [{ sourceUrl: eventUrl(anchor?.getAttribute("href") || null) || "", rawText, homeTeam, awayTeam, dateLabel, timeLabel }];
+  });
+})()
+`;
+
+    for (let attempt = 0; attempt < 18; attempt += 1) {
+      const rows = (await page.mainFrame().evaluate(script)) as Array<{ sourceUrl: string; rawText: string; homeTeam: string; awayTeam: string; dateLabel: string | null; timeLabel: string | null }>;
+      for (const row of rows) {
+        const externalEventId = parseMeridianEventId(row.sourceUrl, row.rawText);
+        if (found.has(externalEventId)) continue;
+        found.set(externalEventId, {
+          externalEventId,
+          sourceUrl: row.sourceUrl,
+          eventName: `${row.homeTeam} x ${row.awayTeam}`,
+          homeTeam: row.homeTeam,
+          awayTeam: row.awayTeam,
+          rawText: row.rawText,
+          dateLabel: row.dateLabel,
+          timeLabel: row.timeLabel
+        });
+      }
+      await page.keyboard.press("PageDown").catch(() => undefined);
+      await this.scrollMainContent(page, 750);
+      await page.waitForTimeout(350);
+    }
+    await page.keyboard.press("Home").catch(() => undefined);
+    await page.waitForTimeout(300);
+    return [...found.values()];
+  }
+
+  async openLeagueEvent(page: Page, event: MeridianLeagueEvent) {
+    if (event.sourceUrl) {
+      await this.goToUrl(page, event.sourceUrl, "abrindo evento bruto da meridianbet por link da linha");
+      return true;
+    }
+    const payload = JSON.stringify({ homeTeam: normalizeVisibleText(event.homeTeam), awayTeam: normalizeVisibleText(event.awayTeam) });
+    const script = String.raw`
+(() => {
+  const expected = ${payload};
+  const norm = (value) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  for (const row of [...document.querySelectorAll(".c-event")]) {
+    const home = norm(row.querySelector(".c-event__rivals--home span")?.textContent);
+    const away = norm(row.querySelector(".c-event__rivals--away span")?.textContent);
+    if (home !== expected.homeTeam || away !== expected.awayTeam) continue;
+    const target = row.querySelector(".c-event-action__bottom") || row.querySelector(".c-event__info") || row;
+    if (!(target instanceof HTMLElement)) return false;
+    target.click();
+    return true;
+  }
+  return false;
+})()
+`;
+    await page.keyboard.press("Home").catch(() => undefined);
+    await page.waitForTimeout(400);
+    for (let attempt = 0; attempt < 18; attempt += 1) {
+      const clicked = Boolean(await page.mainFrame().evaluate(script));
+      if (clicked) {
+        await page.waitForTimeout(1500);
+        await this.waitForUi(page);
+        return page.frames().some((frame) => isMeridianEventPageUrl(frame.url()));
+      }
+      await page.keyboard.press("PageDown").catch(() => undefined);
+      await this.scrollMainContent(page, 750);
+      await page.waitForTimeout(350);
+    }
+    return false;
   }
 
   async openFixture(page: Page, fixture: MeridianFixtureTarget) {
@@ -494,40 +537,40 @@ export class MeridianbetBrowserClient {
     return evidence.hasAny && (isMeridianEventPageUrl(page.url()) || text.includes("resultado final"));
   }
 
-  async collectCurrentEvent(page: Page, fixture: MeridianFixtureTarget): Promise<MeridianCollectedEvent> {
+  async collectCurrentEvent(page: Page, fixture?: MeridianFixtureTarget): Promise<MeridianCollectedEvent> {
     await this.waitForUi(page);
-    if (!(await this.verifyCurrentEvent(page, fixture))) {
-      throw new Error(`MeridianBet não abriu a página do evento: ${fixture.homeTeam} x ${fixture.awayTeam}`);
-    }
+    const eventFrame = page.frames().find((frame) => isMeridianEventPageUrl(frame.url()));
+    if (!eventFrame) throw new Error("MeridianBet não abriu uma página de evento válida");
 
-    await page.getByText("PRINCIPAL", { exact: true }).first().click({ timeout: 1500 }).catch(() => undefined);
+    await eventFrame.getByText("PRINCIPAL", { exact: true }).first().click({ timeout: 1500 }).catch(() => undefined);
     await page.waitForTimeout(500);
-    const sourceUrl = (await this.eventSourceUrlFromPage(page, fixture)) ?? page.url();
-    const rawText = await this.visibleText(page);
-    const displayOrder = eventDisplayOrder(sourceUrl, fixture);
+    const sourceUrl = eventFrame.url();
+    const rawText = await eventFrame.locator("body").innerText().catch(() => "");
+    const bookmakerHomeTeam = fixture?.homeTeam ?? null;
+    const bookmakerAwayTeam = fixture?.awayTeam ?? null;
     const rawMarkets = [
       ...new Map(moneylineBlocksFromText(rawText).map((text) => [compactSpaces(text).slice(0, 220), text])).values()
     ];
     const markets = rawMarkets
-      .map((text, index) => parseMoneylineMarket(text, fixture, displayOrder.orientation, index))
+      .map((text, index) => parseMoneylineMarket(text, bookmakerHomeTeam, bookmakerAwayTeam, index))
       .filter((market): market is MeridianCollectedMarket => Boolean(market));
 
     await this.logger("info", "odds lidas na página do jogo da meridianbet", {
-      fixtureId: fixture.id,
+      fixtureId: fixture?.id ?? null,
       sourceUrl,
-      orientation: displayOrder.orientation,
+      orientation: "DISPLAY_ORDER",
       markets: markets.length,
       odds: markets.reduce((total, market) => total + market.selections.length, 0),
       categories: markets.map((market) => market.paCategory)
     });
 
     return {
-      externalEventId: parseMeridianEventId(sourceUrl, fixture.id),
+      externalEventId: parseMeridianEventId(sourceUrl, fixture?.id ?? rawText.slice(0, 100)),
       sourceUrl,
-      eventName: [displayOrder.bookmakerHomeTeam, displayOrder.bookmakerAwayTeam].filter(Boolean).join(" x "),
-      bookmakerHomeTeam: displayOrder.bookmakerHomeTeam,
-      bookmakerAwayTeam: displayOrder.bookmakerAwayTeam,
-      orientation: displayOrder.orientation,
+      eventName: [bookmakerHomeTeam, bookmakerAwayTeam].filter(Boolean).join(" x ") || `MeridianBet ${parseMeridianEventId(sourceUrl, rawText.slice(0, 100))}`,
+      bookmakerHomeTeam,
+      bookmakerAwayTeam,
+      orientation: "NORMAL",
       markets,
       rawText
     };
