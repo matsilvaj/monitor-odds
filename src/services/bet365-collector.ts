@@ -622,7 +622,7 @@ function buildBookmakerLink(bookmaker: Bet365BookmakerConfig, fixture: Canonical
   const nextRawSourceUrl = isBet365EventUrl(context.rawSourceUrl) ? context.rawSourceUrl : previousCollectionUrl ?? context.rawSourceUrl;
   const sourceUrl = isBet365EventUrl(event.sourceUrl) ? event.sourceUrl : nextCollectionUrl;
   const raw = {
-    ...previousRaw,
+    stage: typeof previousRaw.stage === "string" ? previousRaw.stage : "confirmed-cache",
     sourceUrl: event.sourceUrl,
     collectionUrl: nextCollectionUrl,
     rawSourceUrl: nextRawSourceUrl,
@@ -634,8 +634,9 @@ function buildBookmakerLink(bookmaker: Bet365BookmakerConfig, fixture: Canonical
     lastFailReason: null,
     marketsSeen: marketsSeen(event),
     missingMarkets: missingBet365MarketCategories(event),
-    rawText: event.rawText.slice(0, 2500),
-    markets: event.markets
+    orientation: previousRaw.orientation,
+    associationConfirmed: previousRaw.associationConfirmed === true,
+    snapshotId: previousRaw.snapshotId
   };
 
   return {
@@ -1589,7 +1590,11 @@ export class Bet365Collector {
             candidateFixtureId: fixture.id,
             orientation: rememberedOrientation ?? undefined,
             associationReused: associationPreserved,
-            context
+            layer: context.layer,
+            collectionUrl: context.collectionUrl,
+            rawSourceUrl: context.rawSourceUrl,
+            discoveredFromLeagueUrl: context.discoveredFromLeagueUrl ?? null,
+            previousAssociationConfirmed: associationPreserved
           },
           updated_at: updatedAt
         },

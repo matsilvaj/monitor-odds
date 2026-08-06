@@ -66,6 +66,7 @@ function buildLink(
   orientation: "NORMAL" | "INVERTED",
   previousRaw: Record<string, unknown> | null = null
 ): BookmakerLinkRow {
+  const raw = previousRaw ?? {};
   return {
     bookmaker_slug: "meridianbet",
     external_event_id: snapshot.external_event_id,
@@ -79,11 +80,15 @@ function buildLink(
     match_confidence_score: Number(score.toFixed(3)),
     source_url: snapshot.source_url,
     raw: {
-      ...(previousRaw ?? {}),
       stage: "matched-from-snapshot",
-      collectionUrl: snapshot.source_url,
+      collectionUrl: typeof raw.collectionUrl === "string" ? raw.collectionUrl : snapshot.source_url,
+      rawSourceUrl: typeof raw.rawSourceUrl === "string" ? raw.rawSourceUrl : snapshot.source_url,
       snapshotId: snapshot.id,
-      snapshotRaw: snapshot.raw,
+      lastDirectOkAt: typeof raw.lastDirectOkAt === "string" ? raw.lastDirectOkAt : null,
+      lastDirectFailAt: typeof raw.lastDirectFailAt === "string" ? raw.lastDirectFailAt : null,
+      lastFailReason: typeof raw.lastFailReason === "string" ? raw.lastFailReason : null,
+      failCount: Number.isFinite(Number(raw.failCount)) ? Number(raw.failCount) : 0,
+      marketsSeen: snapshot.markets.map((market) => market.paCategory),
       orientation,
       associationConfirmed: true
     },
