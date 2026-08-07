@@ -184,7 +184,6 @@ export function parseBet365LeaguePageEvents(rawText: string, allowedDateKeys: st
   const pricePattern = /^(?:[1-9]\d{0,2})[.,]\d{2,3}$/;
   const events: Bet365LeaguePageEvent[] = [];
   let currentDateKey: string | null = null;
-  let lastValidDateKey: string | null = null;
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -192,23 +191,21 @@ export function parseBet365LeaguePageEvents(rawText: string, allowedDateKeys: st
       const extractedDateKey = dateKeyFromLeagueHeader(line, allowedDateKeys);
       if (extractedDateKey) {
         currentDateKey = extractedDateKey;
-        lastValidDateKey = extractedDateKey;
+      } else {
+        currentDateKey = null;
       }
       continue;
     }
 
-    if (!timePattern.test(line)) continue;
-
-    const dateKeyToUse = currentDateKey ?? lastValidDateKey;
-    if (!dateKeyToUse) continue;
+    if (!currentDateKey || !timePattern.test(line)) continue;
 
     const homeTeam = lines[index + 1] ?? "";
     const awayTeam = lines[index + 2] ?? "";
     if (!/[A-Za-z\u00C0-\u024F]/.test(homeTeam) || !/[A-Za-z\u00C0-\u024F]/.test(awayTeam)) continue;
     if (timePattern.test(homeTeam) || timePattern.test(awayTeam) || pricePattern.test(homeTeam) || pricePattern.test(awayTeam)) continue;
     const [hour, minute] = line.split(":").map(Number);
-    const startsAt = new Date(`${dateKeyToUse}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00-03:00`).toISOString();
-    events.push({ homeTeam, awayTeam, startsAt, dateKey: dateKeyToUse });
+    const startsAt = new Date(`${currentDateKey}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00-03:00`).toISOString();
+    events.push({ homeTeam, awayTeam, startsAt, dateKey: currentDateKey });
   }
 
   return [...new Map(events.map((event) => [`${event.dateKey}:${event.startsAt}:${normalizeName(event.homeTeam)}:${normalizeName(event.awayTeam)}`, event])).values()];
@@ -229,7 +226,15 @@ function sameBet365TeamName(expected: string | null | undefined, actual: string 
   const right = normalizeName(actual ?? "");
   if (!left || !right) return false;
   if (left === right) return true;
-  return Math.min(left.length, right.length) >= 4 && (left.includes(right) || right.includes(left));
+  const minLen = Math.min(left.length, right.length);
+  if (minLen < 4) return false;
+  if (left.length === right.length) {
+    return left.includes(right) || right.includes(left);
+  }
+  if (Math.abs(left.length - right.length) <= 2) {
+    return left.startsWith(right) || right.startsWith(left);
+  }
+  return false;
 }
 
 function eventMatchesBet365Target(event: Bet365Event, target: Bet365FixtureTarget) {
