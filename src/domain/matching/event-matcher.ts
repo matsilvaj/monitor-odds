@@ -24,6 +24,7 @@ export type MatchEventsOptions = {
   context?: "strict" | "league-scoped";
   trustedLeagueScope?: boolean;
   maxTimeDiffMs?: number;
+  teamOnlyMinScore?: number;
   singleTeamMinScore?: number;
   singleTeamMinTimeScore?: number;
   pairScoreMargin?: number;
@@ -158,6 +159,11 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
     selectedScore.minSideScore >= MIN_SIDE_TEAM_SCORE &&
     teamScore >= MIN_TEAM_SCORE &&
     score >= threshold;
+
+  const teamOnlyMinScore = options.teamOnlyMinScore;
+  if (teamOnlyMinScore !== undefined && hasPairIdentityEvidence && selectedScore.minSideScore >= MIN_SIDE_TEAM_SCORE && teamScore >= teamOnlyMinScore) {
+    return { matched: true, score: teamScore, timeScore, teamScore, bestSingleTeamScore: evidence.bestSingleTeamScore, orientation, reason: "matched" };
+  }
 
   if (pairMatched) {
     return {

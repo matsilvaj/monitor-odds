@@ -195,8 +195,7 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
     supabase
       .from("capturas_eventos")
       .select("id,external_event_id,league_api_football_id,league_name,event_name,home_team,away_team,starts_at,date_key,source_url,markets,raw")
-      .eq("bookmaker_slug", "bet365")
-      .in("date_key", dates),
+      .eq("bookmaker_slug", "bet365"),
     supabase
       .from("jogos")
       .select("id,home_team_id,away_team_id,home_team,away_team,starts_at,date_key,league:campeonatos!inner(name,api_football_league_id,enabled)")
@@ -261,7 +260,9 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
     const snapshotOrientation = linkOrientation(snapshot.raw);
     const rememberedOrientation = linkOrientation(existingLink?.raw) ?? snapshotOrientation;
     const rememberedFixtureId = typeof snapshot.raw?.fixtureId === "string" ? snapshot.raw.fixtureId : null;
+    const confirmedFixtureId = typeof snapshot.raw?.confirmedFixtureId === "string" ? snapshot.raw.confirmedFixtureId : null;
     const associatedFixture = linkedFixture ?? (rememberedFixtureId ? fixtureById.get(rememberedFixtureId) : null);
+    const confirmedFixture = confirmedFixtureId ? fixtureById.get(confirmedFixtureId) : null;
     const matchedHomeTeam = canonicalNameFromAlias(aliasIndex, snapshot.home_team);
     const matchedAwayTeam = canonicalNameFromAlias(aliasIndex, snapshot.away_team);
     const candidates = (associatedFixture ? [associatedFixture] : fixtures)
@@ -276,6 +277,9 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
         awayTeam: fixture.away_team,
         leagueName: fixtureLeague(fixture)?.name ?? null
       }));
+    const confirmedCandidates = confirmedFixture
+      ? [{ ...confirmedFixture, startsAt: confirmedFixture.starts_at, homeTeam: confirmedFixture.home_team, awayTeam: confirmedFixture.away_team, leagueName: fixtureLeague(confirmedFixture)?.name ?? null }]
+      : null;
     const result = associatedFixture && rememberedOrientation
       ? {
           fixture: associatedFixture,
@@ -293,7 +297,31 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
             leagueName: snapshot.league_name
           },
           { context: "league-scoped" }
-        );
+        ) ?? (snapshot.league_api_football_id
+          ? findBestCanonicalEventMatch(
+              candidates,
+              {
+                id: snapshot.external_event_id,
+                startsAt: snapshot.starts_at ?? "",
+                homeTeam: matchedHomeTeam,
+                awayTeam: matchedAwayTeam,
+                leagueName: snapshot.league_name
+              },
+              { context: "league-scoped", maxTimeDiffMs: 48 * 60 * 60 * 1000, teamOnlyMinScore: 0.8 }
+            )
+          : null) ?? (confirmedCandidates
+          ? findBestCanonicalEventMatch(
+              confirmedCandidates,
+              {
+                id: snapshot.external_event_id,
+                startsAt: snapshot.starts_at ?? "",
+                homeTeam: matchedHomeTeam,
+                awayTeam: matchedAwayTeam,
+                leagueName: snapshot.league_name
+              },
+              { context: "league-scoped", maxTimeDiffMs: 48 * 60 * 60 * 1000, teamOnlyMinScore: 0.65 }
+            )
+          : null);
     const confirmedResult = result
       ? { ...result, reused: "reused" in result ? result.reused : Boolean(associatedFixture || (snapshot.raw?.stage === "matched" && snapshotOrientation)) }
       : null;
@@ -371,7 +399,7 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
         "bet365",
         safeProcessed.map((item) => item.link),
         safeProcessed.flatMap((item) => item.odds),
-        { replaceExistingOdds: false, replaceExistingLinks: false }
+        { replaceExistingOdds: false, replaceExistingLinks: true }
       )
     : 0;
 

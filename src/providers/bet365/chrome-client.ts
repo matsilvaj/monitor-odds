@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { Bet365NetworkClient, type Bet365ClickTarget, type Bet365NetworkCapture } from "./network-client.js";
+import { Bet365NetworkClient, type Bet365NetworkCapture } from "./network-client.js";
 import type { Logger } from "./types.js";
 
 export type Bet365ChromeConfig = {
@@ -15,7 +15,7 @@ export type Bet365ChromeConfig = {
 };
 
 export type Bet365ChromeTabSession = {
-  collectEventOdds(url: string, target?: Bet365ClickTarget | null, clickEvent?: boolean, forceNavigate?: boolean): Promise<Bet365NetworkCapture>;
+  collectEventOdds(url: string, eventIndex?: number, clickEvent?: boolean, forceNavigate?: boolean, homeTeam?: string, awayTeam?: string): Promise<Bet365NetworkCapture>;
 };
 
 function sleep(ms: number) {
@@ -99,26 +99,21 @@ export class ChromeClient {
     await this.networkClient.connectToExistingChrome(this.config.debugPort);
   }
 
-  async collectEventOdds(url: string, target?: Bet365ClickTarget | null, clickEvent = Boolean(target), forceNavigate = false): Promise<Bet365NetworkCapture> {
+  async collectEventOdds(url: string, eventIndex = -1, clickEvent = false, forceNavigate = false, homeTeam = "", awayTeam = ""): Promise<Bet365NetworkCapture> {
     await this.ensureOpen(this.config.baseUrl);
-    return this.networkClient.collectEventOdds(url, this.config.eventWaitMs, target, clickEvent, forceNavigate);
+    return this.networkClient.collectEventOdds(url, this.config.eventWaitMs, eventIndex, clickEvent, forceNavigate, homeTeam, awayTeam);
   }
 
-  async collectEventOddsInNewTab(
-    url: string,
-    target?: Bet365ClickTarget | null,
-    clickEvent = Boolean(target),
-    forceNavigate = false
-  ): Promise<Bet365NetworkCapture> {
+  async collectEventOddsInNewTab(url: string, eventIndex = -1, clickEvent = false, forceNavigate = false, homeTeam = "", awayTeam = ""): Promise<Bet365NetworkCapture> {
     await this.ensureOpen(this.config.baseUrl);
-    return this.networkClient.collectEventOddsInNewTab(url, this.config.eventWaitMs, target, clickEvent, forceNavigate);
+    return this.networkClient.collectEventOddsInNewTab(url, this.config.eventWaitMs, eventIndex, clickEvent, forceNavigate, homeTeam, awayTeam);
   }
 
   async withNewTab<T>(worker: (tab: Bet365ChromeTabSession) => Promise<T>): Promise<T> {
     return this.networkClient.withNewTab((tab) =>
       worker({
-        collectEventOdds: (url, target, clickEvent = Boolean(target), forceNavigate = false) =>
-          tab.collectEventOdds(url, this.config.eventWaitMs, target, clickEvent, forceNavigate)
+        collectEventOdds: (url, eventIndex = -1, clickEvent = false, forceNavigate = false, homeTeam = "", awayTeam = "") =>
+          tab.collectEventOdds(url, this.config.eventWaitMs, eventIndex, clickEvent, forceNavigate, homeTeam ?? "", awayTeam ?? "")
       })
     );
   }

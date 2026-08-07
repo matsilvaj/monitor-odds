@@ -44,6 +44,34 @@ export async function getSavedBookmakerEventLinks(bookmakerSlug: string, fixture
   return linksByFixtureId;
 }
 
+export async function saveDiscoveredEventLink(
+  bookmakerSlug: string,
+  fixtureId: string,
+  sourceUrl: string,
+  bookmakerHomeTeam: string,
+  bookmakerAwayTeam: string,
+  startsAt: string
+): Promise<void> {
+  const externalEventId = sourceUrl.match(/\/E(\d+)\//i)?.[1] ?? "0";
+  const { error } = await supabase
+    .from("links_eventos")
+    .upsert(
+      {
+        bookmaker_slug: bookmakerSlug,
+        fixture_id: fixtureId,
+        external_event_id: externalEventId,
+        source_url: sourceUrl,
+        bookmaker_home_team: bookmakerHomeTeam,
+        bookmaker_away_team: bookmakerAwayTeam,
+        starts_at: startsAt,
+        raw: { collectionUrl: sourceUrl },
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: "bookmaker_slug,fixture_id" }
+    );
+  if (error) throw error;
+}
+
 export function objectRaw(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }

@@ -1,6 +1,4 @@
 import { chromium, type Browser, type BrowserContext, type Page, type WebSocket } from "playwright-core";
-import { nationalTeamAliases, teamAliasTokens } from "../../domain/matching/team-aliases.js";
-import { teamNameSearchPatterns } from "../../domain/matching/text-similarity.js";
 import type { Bet365DomMarket, Logger } from "./types.js";
 
 export type Bet365NetworkCapture = {
@@ -8,28 +6,21 @@ export type Bet365NetworkCapture = {
   payloads: string[];
   domMarkets: Bet365DomMarket[];
   domMarketsExpanded: number;
-  clickedTeam: string | null;
   pageText: string;
   pageState: Bet365PageStateName;
 };
 
-export type Bet365ClickTarget = {
-  homeTeam: string | null;
-  awayTeam: string | null;
-};
-
 export type Bet365NetworkTabSession = {
-  collectEventOdds(url: string, waitMs: number, target?: Bet365ClickTarget | null, clickEvent?: boolean, forceNavigate?: boolean): Promise<Bet365NetworkCapture>;
+  collectEventOdds(url: string, waitMs: number, eventIndex?: number, clickEvent?: boolean, forceNavigate?: boolean, homeTeam?: string, awayTeam?: string): Promise<Bet365NetworkCapture>;
 };
 
-type Bet365PageStateName = "HOME" | "LEAGUE" | "EVENT" | "WRONG_EVENT" | "EVENT_READY" | "EVENT_LOADING" | "UNKNOWN";
+type Bet365PageStateName = "HOME" | "LEAGUE" | "EVENT" | "EVENT_READY" | "EVENT_LOADING" | "UNKNOWN";
 
 type Bet365PageState = {
   name: Bet365PageStateName;
   sourceUrl: string;
   pageText: string;
   domMarkets: Bet365DomMarket[];
-  hasTargetFixture: boolean;
   hasFixtureRows: boolean;
   isEventUrl: boolean;
 };
@@ -63,30 +54,6 @@ function isBet365EventUrl(url: string | null | undefined) {
   return /\/E\d+\/F/i.test(String(url ?? ""));
 }
 
-function targetTeamNames(target: Bet365ClickTarget | null | undefined) {
-  return [target?.homeTeam, target?.awayTeam].filter((team): team is string => Boolean(team?.trim()));
-}
-
-function withAmpersandAliases(value: string) {
-  return [value, value.replace(/\band\b/gi, "&"), value.replace(/\s*&\s*/g, " and ")].filter(Boolean);
-}
-
-function targetTeamAliases(target: Bet365ClickTarget | null | undefined) {
-  return targetTeamNames(target).map((team) => [...new Set(nationalTeamAliases(team).flatMap(withAmpersandAliases))]);
-}
-
-const BET365_TEAM_SUFFIXES = new Set(["athletic", "utd", "rovers", "rangers", "albion", "fa"]);
-
-function teamTokenGroups(team: string | null | undefined) {
-  if (!team?.trim()) return [];
-  const groups = nationalTeamAliases(team)
-    .flatMap(withAmpersandAliases)
-    .map((alias) => teamAliasTokens(alias).filter((token) => token.length > 1 && !BET365_TEAM_SUFFIXES.has(token)))
-    .filter((tokens) => tokens.length > 0);
-
-  return [...new Map(groups.map((tokens) => [tokens.join(":"), tokens])).values()];
-}
-
 function normalizeText(value: string | null | undefined) {
   return String(value ?? "")
     .normalize("NFD")
@@ -94,19 +61,6 @@ function normalizeText(value: string | null | undefined) {
     .toLowerCase()
     .replace(/[^a-z0-9.,]+/g, " ")
     .trim();
-}
-
-function textMatchesTokenGroups(rawText: string, groups: string[][]) {
-  const normalized = normalizeText(rawText);
-  if (!normalized || !groups.length) return false;
-  const tokenSet = new Set(normalized.split(/\s+/).filter(Boolean));
-  return groups.some((group) =>
-    group.every((token) => (token.length <= 3 ? tokenSet.has(token) : normalized.includes(token)))
-  );
-}
-
-function textHasFixturePair(rawText: string, target: Bet365ClickTarget | null | undefined) {
-  return textMatchesTokenGroups(rawText, teamTokenGroups(target?.homeTeam)) && textMatchesTokenGroups(rawText, teamTokenGroups(target?.awayTeam));
 }
 
 function pageLooksLikeHome(rawText: string) {
@@ -119,7 +73,7 @@ function pageLooksLikeLeague(rawText: string) {
   return /\b(?:matches|full time result|resultado final|pagamento antecipado|early payout|acum aumentado|aposta aumentada|bet builder)\b/i.test(normalized);
 }
 
-function pageStateIsTargetEvent(state: Bet365PageState | null | undefined): state is Bet365PageState & { name: "EVENT_READY" | "EVENT_LOADING" } {
+function pageStateIsEventReady(state: Bet365PageState | null | undefined): state is Bet365PageState & { name: "EVENT_READY" | "EVENT_LOADING" } {
   return state?.name === "EVENT_READY" || state?.name === "EVENT_LOADING";
 }
 
@@ -203,22 +157,6 @@ function extractSelectionRows(rawText: string) {
   return rows;
 }
 
-function labelMatchesTeam(label: string, team: string | null | undefined) {
-  if (!label.trim() || !team?.trim()) return false;
-  if (textMatchesTokenGroups(label, teamTokenGroups(team))) return true;
-  return teamNameSearchPatterns(team).some((pattern) => new RegExp(pattern.source, "i").test(label));
-}
-
-function selectionRowsMatchTarget(target: Bet365ClickTarget | null | undefined, rows: Array<{ label: string; price: number }>) {
-  if (!target?.homeTeam || !target.awayTeam || rows.length !== 3) return false;
-  const drawLabel = normalizeText(rows[1]?.label ?? "");
-  if (drawLabel && drawLabel !== "draw" && drawLabel !== "empate" && drawLabel !== "x") return false;
-
-  const normalPair = labelMatchesTeam(rows[0]?.label ?? "", target.homeTeam) && labelMatchesTeam(rows[2]?.label ?? "", target.awayTeam);
-  const invertedPair = labelMatchesTeam(rows[0]?.label ?? "", target.awayTeam) && labelMatchesTeam(rows[2]?.label ?? "", target.homeTeam);
-  return normalPair || invertedPair;
-}
-
 function blockLooksContaminated(rawText: string) {
   return rawText
     .split(/\n+/)
@@ -257,74 +195,32 @@ function marketQualityScore(market: Bet365DomMarket) {
   return score;
 }
 
-function parseVisibleMoneylineMarkets(rawTexts: string[], target: Bet365ClickTarget | null | undefined): Bet365DomMarket[] {
+// Extrai mercados 1X2 visíveis por posição (HOME=0, DRAW=1, AWAY=2).
+// Sem matching por nome — pega as 3 primeiras linhas de preço de cada bloco.
+function parseVisibleMoneylineMarkets(rawTexts: string[]): Bet365DomMarket[] {
   const markets: Bet365DomMarket[] = [];
-  const teams = targetTeamNames(target);
-  const aliasesByTeam = targetTeamAliases(target);
   const marketBlocks = rawTexts.flatMap(moneylineBlocksFromText);
 
-  const priceAfterLabel = (rawText: string, label: string) => {
-    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const prefix = normalizeText(label) === "x" ? "(?:^|[^A-Za-z0-9\\u00C0-\\u024F])" : "";
-    const suffix = normalizeText(label) === "x" ? "(?=$|[^A-Za-z0-9\\u00C0-\\u024F])" : "";
-    const literalMatch = rawText.match(new RegExp(`${prefix}${escaped}${suffix}[\\s\\S]{0,60}?([1-9]\\d{0,2}[.,]\\d{2,3})\\b`, "i"));
-    if (literalMatch) return Number(literalMatch[1].replace(",", "."));
-
-    const match = teamNameSearchPatterns(label)
-      .map((pattern) => rawText.match(new RegExp(`${pattern.source}[\\s\\S]{0,60}?([1-9]\\d{0,2}[.,]\\d{2,3})\\b`, "i")))
-      .find((result): result is RegExpMatchArray => Boolean(result));
-    return match ? Number(match[1].replace(",", ".")) : null;
-  };
-
   for (const rawText of marketBlocks) {
-    const lines = rawText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
     const normalized = normalizeText(rawText);
     if (!isTargetMoneylineHeader(normalized)) continue;
-
-    let selections = teams
-      .map((team, index) => {
-        const price = aliasesByTeam[index]?.map((alias) => priceAfterLabel(rawText, alias)).find((value): value is number => value != null) ?? null;
-        return price ? { label: team, price } : null;
-      })
-      .filter((selection): selection is { label: string; price: number } => Boolean(selection));
-
-    const drawLabel = normalized.includes("empate") ? "Empate" : "Draw";
-    const drawPrice = priceAfterLabel(rawText, drawLabel) ?? priceAfterLabel(rawText, "X");
-    if (drawPrice) {
-      selections.splice(1, 0, { label: drawLabel, price: drawPrice });
-    }
+    if (blockLooksContaminated(rawText) || blockLooksLikeEnhancedOfferGroup(rawText)) continue;
 
     const priceRows = extractSelectionRows(rawText);
-    if (
-      selections.length < 3 &&
-      teams.length >= 2 &&
-      priceRows.length === 3 &&
-      selectionRowsMatchTarget(target, priceRows) &&
-      !blockLooksContaminated(rawText) &&
-      !blockLooksLikeEnhancedOfferGroup(rawText)
-    ) {
-      const prices = priceRows.map((row) => row.price);
-      if (prices.every((price) => Number.isFinite(price))) {
-        selections = [
-          { label: teams[0], price: prices[0] },
-          { label: drawLabel, price: prices[1] },
-          { label: teams[1], price: prices[2] }
-        ];
-      }
-    }
+    if (priceRows.length < 3) continue;
 
-    if (selections.length < 3) continue;
+    const lines = rawText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
     markets.push({
       marketName: lines.find((line) => isTargetMoneylineHeader(normalizeText(line))) ?? "Full Time Result",
       paCategory: classifyVisibleMoneylineCategory(rawText),
       rawText,
-      selections: selections.slice(0, 3)
+      selections: priceRows.slice(0, 3).map((row) => ({ label: row.label, price: row.price }))
     });
   }
 
   const unique = new Map<string, Bet365DomMarket>();
   for (const market of markets) {
-    const key = `${market.paCategory}:${market.selections.map((selection) => selection.price).join("/")}`;
+    const key = `${market.paCategory}:${market.selections.map((s) => s.price).join("/")}`;
     const existing = unique.get(key);
     if (!existing || marketQualityScore(market) > marketQualityScore(existing)) unique.set(key, market);
   }
@@ -362,37 +258,21 @@ class Bet365PageController {
     return this.page.locator("body").innerText({ timeout }).catch(() => "");
   }
 
-  private classifyPageState(
-    sourceUrl: string,
-    pageText: string,
-    target: Bet365ClickTarget | null | undefined,
-    hasFixtureRows = false
-  ): Bet365PageState {
+  private classifyPageState(sourceUrl: string, pageText: string, hasFixtureRows = false): Bet365PageState {
     const isEventUrl = isBet365EventUrl(sourceUrl);
-    const hasTargetFixture = target?.homeTeam && target.awayTeam ? textHasFixturePair(pageText, target) : false;
-    const domMarkets = target ? parseVisibleMoneylineMarkets([pageText], target) : [];
+    const domMarkets = parseVisibleMoneylineMarkets([pageText]);
     let name: Bet365PageStateName = "UNKNOWN";
 
-    if (isEventUrl && hasTargetFixture && domMarkets.length) name = "EVENT_READY";
-    else if (isEventUrl && hasTargetFixture) name = "EVENT_LOADING";
-    else if (isEventUrl && target && pageText.trim().length > 200) name = "WRONG_EVENT";
+    if (isEventUrl && domMarkets.length) name = "EVENT_READY";
+    else if (isEventUrl && pageText.trim().length > 200) name = "EVENT_LOADING";
     else if (isEventUrl) name = "EVENT";
-    else if (hasTargetFixture) name = "LEAGUE";
-    else if (hasFixtureRows && pageLooksLikeLeague(pageText)) name = "LEAGUE";
+    else if (pageLooksLikeLeague(pageText)) name = "LEAGUE"; // hasFixtureRows não obrigatório — layout varia por liga
     else if (pageLooksLikeHome(pageText)) name = "HOME";
 
-    return {
-      name,
-      sourceUrl,
-      pageText,
-      domMarkets,
-      hasTargetFixture: Boolean(hasTargetFixture),
-      hasFixtureRows,
-      isEventUrl
-    };
+    return { name, sourceUrl, pageText, domMarkets, hasFixtureRows, isEventUrl };
   }
 
-  private async inspectCurrentPage(target: Bet365ClickTarget | null | undefined, timeout = 2_000) {
+  private async inspectCurrentPage(timeout = 2_000) {
     if (!this.page) throw new Error("Browser da Bet365 nao conectado via CDP.");
     const sourceUrl = this.page.url();
     const pageText = await this.page.locator("body").innerText({ timeout }).catch(() => "");
@@ -401,38 +281,21 @@ class Bet365PageController {
       .count()
       .then((count) => count > 0)
       .catch(() => false);
-    return this.classifyPageState(sourceUrl, pageText, target, hasFixtureRows);
+    return this.classifyPageState(sourceUrl, pageText, hasFixtureRows);
   }
 
-  private async waitForPageState(
-    target: Bet365ClickTarget | null | undefined,
-    accepts: (state: Bet365PageState) => boolean,
-    timeoutMs: number
-  ) {
+  private async waitForPageState(accepts: (state: Bet365PageState) => boolean, timeoutMs: number) {
     if (!this.page) throw new Error("Browser da Bet365 nao conectado via CDP.");
     const deadline = Date.now() + timeoutMs;
-    let latest = await this.inspectCurrentPage(target, 1_500);
+    let latest = await this.inspectCurrentPage(1_500);
 
     while (Date.now() < deadline) {
       if (accepts(latest)) return latest;
       await this.page.waitForTimeout(500);
-      latest = await this.inspectCurrentPage(target, 1_500);
+      latest = await this.inspectCurrentPage(1_500);
     }
 
     return latest;
-  }
-
-  private async clickOpenedEvent(target: Bet365ClickTarget | null | undefined) {
-    if (!this.page) return false;
-
-    await this.page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => undefined);
-    const state = await this.waitForPageState(
-      target,
-      (candidate) => pageStateIsTargetEvent(candidate) || candidate.isEventUrl,
-      5_000
-    );
-
-    return pageStateIsTargetEvent(state) || state.isEventUrl;
   }
 
   private async restoreAfterRejectedClick(sourceUrl: string) {
@@ -593,8 +456,6 @@ class Bet365PageController {
             const rect = cursor.getBoundingClientRect();
             const text = (cursor.innerText || cursor.textContent || "").trim();
 
-            // A faixa do cabecalho nunca contem odds. Paramos antes de subir
-            // para o card inteiro, cuja area inclui as selecoes clicaveis.
             if (priceRe.test(text) || rect.height > 120 || text.length > 420) break;
             if (rect.width >= 180 && rect.height >= 20) headerRow = cursor;
             cursor = cursor.parentElement;
@@ -636,8 +497,6 @@ class Bet365PageController {
             } satisfies Bet365ClickPoint;
           }
 
-          // Fallback seguro: extremo direito da propria faixa de cabecalho.
-          // Nunca usa o viewport nem procura qualquer <button> do card.
           return {
             x: clamp(headerRect.right - 24, headerRect.left + 8, window.innerWidth - 2),
             y: clamp(headerRect.top + Math.min(Math.max(headerRect.height / 2, 12), 32), 2, window.innerHeight - 2),
@@ -649,6 +508,7 @@ class Bet365PageController {
       }, header)
       .catch(() => null);
   }
+
   private async clickMoneylineMarketHeaderPoint(point: Bet365ClickPoint) {
     if (!this.page) return false;
     await this.page.mouse.move(point.x, point.y).catch(() => undefined);
@@ -695,19 +555,18 @@ class Bet365PageController {
     }
     return expanded;
   }
-  private async expandCollapsedMoneylineMarkets(target: Bet365ClickTarget | null | undefined) {
+
+  private async expandCollapsedMoneylineMarkets() {
     if (!this.page) return 0;
     const attempted = new Set<string>();
     let expanded = 0;
 
-    // Existem no maximo dois mercados 1X2 relevantes: com PA e sem PA.
-    // Cada card fechado recebe no maximo um clique.
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       const cards = await this.readMoneylineMarketCards();
       const candidate = cards.find((card) => {
         const key = `${Math.round(card.x)}:${Math.round(card.y)}:${marketHeaderKey(card.header)}`;
         if (attempted.has(key)) return false;
-        return card.priceCount === 0 && (!target || !textHasFixturePair(card.text, target));
+        return card.priceCount === 0;
       });
 
       if (!candidate) break;
@@ -721,160 +580,67 @@ class Bet365PageController {
     }
     return expanded;
   }
-  private async clickFixtureContainerByTeam(target: Bet365ClickTarget | null | undefined, sourceUrl: string) {
-    if (!this.page || !target?.homeTeam || !target.awayTeam) return null;
 
-    const homeGroups = teamTokenGroups(target.homeTeam);
-    const awayGroups = teamTokenGroups(target.awayTeam);
-    if (!homeGroups.length || !awayGroups.length) return null;
+  // Clica no evento da página de liga — primário por nome dos times, fallback por índice.
+  private async clickFixtureContainerByIndex(eventIndex: number, sourceUrl: string, homeTeam = "", awayTeam = ""): Promise<boolean> {
+    if (!this.page) return false;
 
-    await this.page.keyboard.press("Home").catch(() => undefined);
-    await this.page
-      .evaluate(() => {
-        for (const node of [document.scrollingElement, ...document.querySelectorAll("*")]) {
-          const element = node as HTMLElement | null;
-          if (element && element.scrollHeight > element.clientHeight + 40) element.scrollTop = 0;
-        }
-      })
-      .catch(() => undefined);
-    await this.page.waitForTimeout(500);
+    await this.logger?.("info", "tentando abrir evento da bet365", { eventIndex, homeTeam, awayTeam, sourceUrl });
 
-    for (let pageDown = 0; pageDown < 18; pageDown += 1) {
-      const candidate = await this.page
-        .evaluate(
-          ({ homeGroups, awayGroups }) => {
-            const normalize = (value: unknown) =>
-              String(value ?? "")
-                .normalize("NFD")
-                .replace(/\p{Diacritic}/gu, "")
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
-            const matchesGroup = (rawText: string, groups: string[][]) => {
-              const normalized = normalize(rawText);
-              const tokens = new Set(normalized.split(/\s+/).filter(Boolean));
-              return groups.some((group) => group.every((token) => (token.length <= 3 ? tokens.has(token) : normalized.includes(token))));
-            };
-            const selectors = [
-              ".rcl-ParticipantFixtureDetails-clickable",
-              "[class*='ParticipantFixtureDetails-clickable']",
-              "[class*='ParticipantFixtureDetails']"
-            ];
-            const seen = new Set<Element>();
-            const nodes = selectors.flatMap((selector) =>
-              [...document.querySelectorAll(selector)].filter((node) => {
-                if (seen.has(node)) return false;
-                seen.add(node);
-                return true;
-              })
-            );
+    const rowSelector = '.rrc-e, [class*="ParticipantFixtureDetails"]';
 
-            for (const node of nodes) {
-              const element = node as HTMLElement;
-              const text = element.innerText || element.textContent || "";
-              if (!matchesGroup(text, homeGroups) || !matchesGroup(text, awayGroups)) continue;
-              const rect = element.getBoundingClientRect();
-              if (rect.width < 20 || rect.height < 15) continue;
-              if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+    try {
+      const locator = homeTeam
+        ? this.page.locator(rowSelector).filter({ hasText: homeTeam }).first()
+        : this.page.locator(rowSelector).nth(eventIndex);
 
-              return {
-                x: rect.left + Math.min(Math.max(rect.width * 0.35, 24), rect.width - 6),
-                y: rect.top + rect.height / 2,
-                text: text.trim().slice(0, 180)
-              };
-            }
-
-            return null;
-          },
-          { homeGroups, awayGroups }
-        )
-        .catch(() => null);
-
-      if (candidate) {
-        await this.page.mouse.click(candidate.x, candidate.y);
-        if (await this.clickOpenedEvent(target)) {
-          await this.logger?.("info", "evento da bet365 aberto por container DOM", {
-            homeTeam: target.homeTeam,
-            awayTeam: target.awayTeam,
-            sourceUrl: this.page.url(),
-            text: candidate.text
-          });
-          return target.homeTeam;
-        }
-        await this.restoreAfterRejectedClick(sourceUrl);
-      }
-
-      await this.scrollSearchViewport(850);
-      await this.page.waitForTimeout(750);
+      await locator.click({ position: { x: 150, y: 35 }, timeout: 5_000 });
+    } catch (error) {
+      await this.logger?.("warn", "linha de fixture da bet365 nao encontrada", {
+        eventIndex, homeTeam, awayTeam, sourceUrl,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return false;
     }
 
-    return null;
-  }
-
-  private async clickEventByTeam(target: Bet365ClickTarget | null | undefined, sourceUrl: string) {
-    if (!this.page) throw new Error("Browser da Bet365 nao conectado via CDP.");
-
-    const containerClickedTeam = await this.clickFixtureContainerByTeam(target, sourceUrl);
-    if (containerClickedTeam) return containerClickedTeam;
-
-    for (const team of targetTeamNames(target)) {
-      for (const alias of [...new Set(nationalTeamAliases(team).flatMap(withAmpersandAliases))]) {
-        const locator = this.page.getByText(alias, { exact: false });
-        const count = await locator.count().catch(() => 0);
-        for (let index = 0; index < Math.min(count, 10); index += 1) {
-          try {
-            await locator.nth(index).click({ timeout: 2_500 });
-            if (await this.clickOpenedEvent(target)) {
-              await this.logger?.("info", "evento da bet365 aberto por clique DOM", { team, alias, sourceUrl: this.page.url() });
-              return team;
-            }
-            await this.restoreAfterRejectedClick(sourceUrl);
-          } catch {
-            // Tenta o proximo match de texto visivel.
-          }
-        }
-      }
-
-      for (const pattern of teamNameSearchPatterns(team)) {
-        const locator = this.page.getByText(pattern);
-        const count = await locator.count().catch(() => 0);
-        for (let index = 0; index < Math.min(count, 10); index += 1) {
-          try {
-            await locator.nth(index).click({ timeout: 2_500 });
-            if (await this.clickOpenedEvent(target)) {
-              await this.logger?.("info", "evento da bet365 aberto por clique DOM flexivel", { team, pattern: pattern.source, sourceUrl: this.page.url() });
-              return team;
-            }
-            await this.restoreAfterRejectedClick(sourceUrl);
-          } catch {
-            // Tenta o proximo match de texto visivel.
-          }
-        }
-      }
+    // Aguarda URL mudar para URL de evento (SPA com hash routing)
+    const clickStart = Date.now();
+    while (Date.now() - clickStart < 7_000) {
+      await this.page.waitForTimeout(400);
+      if (isBet365EventUrl(this.page.url())) break;
     }
 
-    await this.logger?.("warn", "nao encontrei jogo da bet365 para clique DOM", { target });
-    return null;
+    if (isBet365EventUrl(this.page.url())) {
+      await this.logger?.("info", "evento da bet365 aberto com sucesso", {
+        eventIndex, homeTeam, awayTeam, sourceUrl: this.page.url()
+      });
+      return true;
+    }
+
+    await this.logger?.("warn", "clique de fixture da bet365 nao abriu evento", {
+      eventIndex, homeTeam, awayTeam, currentUrl: this.page.url()
+    });
+    await this.restoreAfterRejectedClick(sourceUrl);
+    return false;
   }
 
-  private async readVisibleMoneylineMarkets(target: Bet365ClickTarget | null | undefined) {
+  private async readVisibleMoneylineMarkets() {
     if (!this.page) throw new Error("Browser da Bet365 nao conectado via CDP.");
     let rawText = "";
     let expanded = 0;
     for (let attempt = 1; attempt <= 4; attempt += 1) {
-      if (attempt === 1) expanded += await this.expandCollapsedMoneylineMarkets(target);
+      if (attempt === 1) expanded += await this.expandCollapsedMoneylineMarkets();
 
       const cards = await this.readMoneylineMarketCards();
       const cardTexts = cards.map((card) => card.text).filter(Boolean);
       rawText = cardTexts.length
         ? cardTexts.join("\n")
         : await this.page.locator("body").innerText({ timeout: 4_000 }).catch(() => "");
-      let markets = parseVisibleMoneylineMarkets(cardTexts.length ? cardTexts : [rawText], target);
+      let markets = parseVisibleMoneylineMarkets(cardTexts.length ? cardTexts : [rawText]);
 
       if (!markets.length && cardTexts.length) {
         const bodyText = await this.page.locator("body").innerText({ timeout: 4_000 }).catch(() => "");
-        const bodyMarkets = parseVisibleMoneylineMarkets([bodyText], target);
+        const bodyMarkets = parseVisibleMoneylineMarkets([bodyText]);
         if (bodyMarkets.length) {
           markets = bodyMarkets;
           rawText = bodyText;
@@ -882,9 +648,9 @@ class Bet365PageController {
       }
 
       if (markets.length) {
-        const closedCards = cards.filter((card) => card.priceCount === 0 && (!target || !textHasFixturePair(card.text, target)));
+        const closedCards = cards.filter((card) => card.priceCount === 0);
         if (closedCards.length && attempt < 4) {
-          const newlyExpanded = await this.expandCollapsedMoneylineMarkets(target);
+          const newlyExpanded = await this.expandCollapsedMoneylineMarkets();
           expanded += newlyExpanded;
           if (newlyExpanded > 0) {
             await this.page.waitForTimeout(350);
@@ -913,9 +679,11 @@ class Bet365PageController {
   async collectEventOdds(
     url: string,
     waitMs: number,
-    target?: Bet365ClickTarget | null,
-    clickEvent = Boolean(target),
-    forceNavigate = false
+    eventIndex = -1,
+    clickEvent = false,
+    forceNavigate = false,
+    homeTeam = "",
+    awayTeam = ""
   ): Promise<Bet365NetworkCapture> {
     if (!this.page) throw new Error("Browser da Bet365 nao conectado via CDP.");
 
@@ -923,7 +691,6 @@ class Bet365PageController {
     let domMarkets: Bet365DomMarket[] = [];
     let domMarketsExpanded = 0;
     let pageText = "";
-    let clickedTeam: string | null = null;
     let pageState: Bet365PageStateName = "UNKNOWN";
     const onWebSocket = (ws: WebSocket) => {
       ws.on("framereceived", (frame) => {
@@ -934,10 +701,11 @@ class Bet365PageController {
 
     this.page.on("websocket", onWebSocket);
     try {
-      let state = target ? await this.inspectCurrentPage(target, 1_500).catch(() => null) : null;
+      let state = await this.inspectCurrentPage(1_500).catch(() => null);
       if (state) pageState = state.name;
 
-      if (!forceNavigate && target && pageStateIsTargetEvent(state)) {
+      // Otimização: se já estamos no evento certo (fluxo direto por URL), pula a navegação
+      if (!forceNavigate && !clickEvent && isBet365EventUrl(url) && state?.sourceUrl === url && pageStateIsEventReady(state)) {
         await this.logger?.("info", "pagina atual da bet365 ja esta no evento alvo", {
           state: state.name,
           sourceUrl: state.sourceUrl,
@@ -945,21 +713,18 @@ class Bet365PageController {
         });
       } else {
         await this.navigate(url, waitMs);
-        state = target
-          ? await this.waitForPageState(
-              target,
-              (candidate) => pageStateIsTargetEvent(candidate) || candidate.name === "LEAGUE",
-              Math.max(4_000, Math.min(waitMs, 10_000))
-            )
-          : await this.inspectCurrentPage(target, 1_500).catch(() => null);
+        state = await this.waitForPageState(
+          (candidate) => pageStateIsEventReady(candidate) || candidate.name === "LEAGUE",
+          Math.max(4_000, Math.min(waitMs, 10_000))
+        );
         if (state) pageState = state.name;
       }
 
+      // Recuperação: página caiu na home em vez do destino
       if (
-        target &&
-        !pageStateIsTargetEvent(state) &&
+        !pageStateIsEventReady(state) &&
         state?.name !== "LEAGUE" &&
-        (state?.name === "HOME" || state?.name === "UNKNOWN" || (state?.name === "WRONG_EVENT" && pageLooksLikeHome(state.pageText)))
+        (state?.name === "HOME" || state?.name === "UNKNOWN" || pageLooksLikeHome(state?.pageText ?? ""))
       ) {
         await this.logger?.("warn", "conteudo da bet365 nao carregou para a URL solicitada; reiniciando a rota da pagina", {
           requestedUrl: url,
@@ -971,13 +736,12 @@ class Bet365PageController {
         await this.page.waitForTimeout(750);
         await this.navigate(url, waitMs);
         state = await this.waitForPageState(
-          target,
-          (candidate) => pageStateIsTargetEvent(candidate) || (clickEvent && candidate.name === "LEAGUE"),
+          (candidate) => pageStateIsEventReady(candidate) || (clickEvent && candidate.name === "LEAGUE"),
           Math.max(4_000, Math.min(waitMs, 10_000))
         );
         pageState = state.name;
 
-        if (!pageStateIsTargetEvent(state) && (!clickEvent || state.name !== "LEAGUE")) {
+        if (!pageStateIsEventReady(state) && (!clickEvent || state.name !== "LEAGUE")) {
           await this.logger?.("warn", "rota recuperada da bet365 ainda sem conteudo; ativando a URL solicitada novamente", {
             requestedUrl: url,
             sourceUrl: state.sourceUrl,
@@ -985,81 +749,57 @@ class Bet365PageController {
           });
           await this.navigate(url, waitMs);
           state = await this.waitForPageState(
-            target,
-            (candidate) => pageStateIsTargetEvent(candidate) || (clickEvent && candidate.name === "LEAGUE"),
+            (candidate) => pageStateIsEventReady(candidate) || (clickEvent && candidate.name === "LEAGUE"),
             Math.max(4_000, Math.min(waitMs, 10_000))
           );
           pageState = state.name;
         }
       }
 
-      if (target && clickEvent) {
-        if (!pageStateIsTargetEvent(state)) {
-          if (state?.name !== "LEAGUE") {
-            state = await this.waitForPageState(
-              target,
-              (candidate) => pageStateIsTargetEvent(candidate) || candidate.name === "LEAGUE",
-              Math.max(4_000, Math.min(waitMs, 10_000))
-            );
-            pageState = state.name;
-          }
+      // Fluxo de liga: clica no N-ésimo evento por índice de posição
+      if (clickEvent && !pageStateIsEventReady(state)) {
+        if (state?.name !== "LEAGUE") {
+          state = await this.waitForPageState(
+            (candidate) => pageStateIsEventReady(candidate) || candidate.name === "LEAGUE",
+            Math.max(4_000, Math.min(waitMs, 10_000))
+          );
+          pageState = state.name;
+        }
 
-          if (pageStateIsTargetEvent(state)) {
-            await this.logger?.("info", "evento alvo da bet365 detectado sem novo clique", {
-              state: state.name,
-              sourceUrl: state.sourceUrl,
-              markets: state.domMarkets.length
-            });
-          } else if (state?.name === "LEAGUE") {
-            clickedTeam = await this.clickEventByTeam(target, url);
-            const inspectedState = await this.inspectCurrentPage(target, 1_500).catch(() => null);
-            if (inspectedState) state = inspectedState;
-            pageState = state.name;
+        if (!pageStateIsEventReady(state) && state?.name === "LEAGUE") {
+          const clicked = await this.clickFixtureContainerByIndex(eventIndex, url, homeTeam, awayTeam);
+          if (clicked) {
+            state = await this.inspectCurrentPage(1_500).catch(() => null);
+            if (state) pageState = state.name;
+          } else {
+            // Clique falhou — retorna capture com estado atual
+            pageText = state?.pageText || (await this.pageBodyText(2_000));
+            return { sourceUrl: this.page.url(), payloads, domMarkets, domMarketsExpanded, pageText, pageState };
           }
         }
       }
 
-      if (target && clickEvent && !clickedTeam && !pageStateIsTargetEvent(state)) {
-        pageText = state?.pageText || (await this.pageBodyText(2_000));
-        return {
-          sourceUrl: this.page.url(),
-          payloads,
-          domMarkets,
-          domMarketsExpanded,
-          clickedTeam,
-          pageText,
-          pageState
-        };
-      }
-
-      if (target && pageStateIsTargetEvent(state)) {
-        state = await this.waitForPageState(target, (candidate) => candidate.name === "EVENT_READY", Math.min(waitMs, 6_000));
+      // Aguarda EVENT_READY completo
+      if (pageStateIsEventReady(state)) {
+        state = await this.waitForPageState((candidate) => candidate.name === "EVENT_READY", Math.min(waitMs, 6_000));
         pageState = state.name;
       }
 
       await this.page.waitForTimeout(pageState === "EVENT_READY" ? Math.min(waitMs, 2_500) : waitMs);
       try {
-        const domRead = await this.readVisibleMoneylineMarkets(target);
+        const domRead = await this.readVisibleMoneylineMarkets();
         domMarkets = domRead.markets;
         domMarketsExpanded = domRead.expanded;
         pageText = domRead.rawText;
-        pageState = this.classifyPageState(this.page.url(), pageText, target).name;
+        pageState = this.classifyPageState(this.page.url(), pageText).name;
       } catch (error) {
         await this.logger?.("warn", "leitura DOM da bet365 falhou", {
           error: error instanceof Error ? error.message : String(error)
         });
         pageText = await this.page.locator("body").innerText({ timeout: 2_000 }).catch(() => "");
-        pageState = this.classifyPageState(this.page.url(), pageText, target).name;
+        pageState = this.classifyPageState(this.page.url(), pageText).name;
       }
-      return {
-        sourceUrl: this.page.url(),
-        payloads,
-        domMarkets,
-        domMarketsExpanded,
-        clickedTeam,
-        pageText,
-        pageState
-      };
+      return { sourceUrl: this.page.url(), payloads, domMarkets, domMarketsExpanded, pageText, pageState };
     } finally {
       this.page.off("websocket", onWebSocket);
     }
@@ -1114,26 +854,14 @@ export class Bet365NetworkClient {
     return this.mainController?.currentUrl() ?? "";
   }
 
-  async collectEventOdds(
-    url: string,
-    waitMs: number,
-    target?: Bet365ClickTarget | null,
-    clickEvent = Boolean(target),
-    forceNavigate = false
-  ): Promise<Bet365NetworkCapture> {
-    return this.requireMainController().collectEventOdds(url, waitMs, target, clickEvent, forceNavigate);
+  async collectEventOdds(url: string, waitMs: number, eventIndex = -1, clickEvent = false, forceNavigate = false, homeTeam = "", awayTeam = ""): Promise<Bet365NetworkCapture> {
+    return this.requireMainController().collectEventOdds(url, waitMs, eventIndex, clickEvent, forceNavigate, homeTeam, awayTeam);
   }
 
-  async collectEventOddsInNewTab(
-    url: string,
-    waitMs: number,
-    target?: Bet365ClickTarget | null,
-    clickEvent = Boolean(target),
-    forceNavigate = false
-  ): Promise<Bet365NetworkCapture> {
+  async collectEventOddsInNewTab(url: string, waitMs: number, eventIndex = -1, clickEvent = false, forceNavigate = false, homeTeam = "", awayTeam = ""): Promise<Bet365NetworkCapture> {
     const controller = await this.newTabController();
     try {
-      return await controller.collectEventOdds(url, waitMs, target, clickEvent, forceNavigate);
+      return await controller.collectEventOdds(url, waitMs, eventIndex, clickEvent, forceNavigate, homeTeam, awayTeam);
     } finally {
       await controller.close();
     }
@@ -1142,8 +870,8 @@ export class Bet365NetworkClient {
   async withNewTab<T>(worker: (tab: Bet365NetworkTabSession) => Promise<T>): Promise<T> {
     const controller = await this.newTabController();
     const tab: Bet365NetworkTabSession = {
-      collectEventOdds: (url, waitMs, target, clickEvent = Boolean(target), forceNavigate = false) =>
-        controller.collectEventOdds(url, waitMs, target, clickEvent, forceNavigate)
+      collectEventOdds: (url, waitMs, eventIndex = -1, clickEvent = false, forceNavigate = false, homeTeam = "", awayTeam = "") =>
+        controller.collectEventOdds(url, waitMs, eventIndex ?? -1, clickEvent ?? false, forceNavigate ?? false, homeTeam ?? "", awayTeam ?? "")
     };
 
     try {

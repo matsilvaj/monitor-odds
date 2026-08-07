@@ -1,5 +1,4 @@
 import type { PaCategory, Selection } from "../../domain/normalize.js";
-import { teamNameSearchPatterns } from "../../domain/matching/text-similarity.js";
 import type { Bet365DomMarket, Bet365Event, Bet365FixtureTarget, Bet365Market } from "./types.js";
 
 export type Bet365Node = {
@@ -83,15 +82,6 @@ export function fractionalToDecimal(value: string): number {
   return numerator / denominator + 1;
 }
 
-function isTargetEventName(eventName: string, fixture: Bet365FixtureTarget) {
-  if (fixture.homeTeam && fixture.awayTeam) {
-    return teamNameSearchPatterns(fixture.homeTeam).some((pattern) => pattern.test(eventName)) && teamNameSearchPatterns(fixture.awayTeam).some((pattern) => pattern.test(eventName));
-  }
-  if (fixture.homeTeam) return teamNameSearchPatterns(fixture.homeTeam).some((pattern) => pattern.test(eventName));
-  if (fixture.awayTeam) return teamNameSearchPatterns(fixture.awayTeam).some((pattern) => pattern.test(eventName));
-  return true;
-}
-
 function isMoneylineMarket(marketName: string) {
   const market = normalizeText(marketName);
   return (
@@ -119,10 +109,10 @@ function isDrawLabel(label: string) {
   return text === "draw" || text === "empate" || text === "x";
 }
 
-function selectionForLabel(label: string, fixture: Bet365FixtureTarget, fallbackIndex: number): Selection {
+// Determina HOME/DRAW/AWAY pela posição (índice 0=HOME, 1=DRAW, 2=AWAY).
+// Labels de empate ("Draw", "Empate", "X") recebem DRAW independente do índice.
+function selectionForLabel(label: string, fallbackIndex: number): Selection {
   if (isDrawLabel(label)) return "DRAW";
-  if (fixture.homeTeam && teamNameSearchPatterns(fixture.homeTeam).some((pattern) => pattern.test(label))) return "HOME";
-  if (fixture.awayTeam && teamNameSearchPatterns(fixture.awayTeam).some((pattern) => pattern.test(label))) return "AWAY";
   return fallbackIndex === 0 ? "HOME" : fallbackIndex === 1 ? "DRAW" : "AWAY";
 }
 
@@ -130,7 +120,7 @@ function oddsValue(node: Bet365Node) {
   return node.OD ?? node.O ?? node.PR ?? node.SP ?? "";
 }
 
-export function extractOddsFromPayload(payload: string, fixture: Bet365FixtureTarget, payloadIndex = 0): ExtractedOdd[] {
+export function extractOddsFromPayload(payload: string, payloadIndex = 0): ExtractedOdd[] {
   const nodes = decodeBet365Payload(payload);
   const selections: ExtractedOdd[] = [];
   let currentEventName = "";
@@ -168,7 +158,7 @@ export function extractOddsFromPayload(payload: string, fixture: Bet365FixtureTa
   return selections;
 }
 
-function rowsToMarket(rows: ExtractedOdd[], fixture: Bet365FixtureTarget, marketIndex: number): Bet365Market | null {
+function rowsToMarket(rows: ExtractedOdd[], marketIndex: number): Bet365Market | null {
   const unique = [...new Map(rows.map((row) => [`${normalizeText(row.selection)}:${row.price}`, row])).values()];
   if (unique.length < 3) return null;
 
@@ -188,7 +178,7 @@ function rowsToMarket(rows: ExtractedOdd[], fixture: Bet365FixtureTarget, market
     rawText: ordered.map((row) => `${row.selection}=${row.rawPrice}`).join("|"),
     index: marketIndex,
     selections: ordered.map((row, index) => ({
-      selection: selectionForLabel(row.selection, fixture, index),
+      selection: selectionForLabel(row.selection, index),
       label: row.selection,
       price: row.price,
       index
@@ -196,21 +186,20 @@ function rowsToMarket(rows: ExtractedOdd[], fixture: Bet365FixtureTarget, market
   };
 }
 
-export function parseBet365MoneylinePayloads(payloads: string[], fixture: Bet365FixtureTarget): Bet365Market[] {
+// Agrupa odds de todos os payloads por evento+mercado e converte para Bet365Market.
+// Sem filtro por nome — coleta tudo que estiver no payload (fluxo sem matching).
+export function parseBet365MoneylinePayloads(payloads: string[]): Bet365Market[] {
   const grouped = new Map<string, ExtractedOdd[]>();
 
   payloads.forEach((payload, payloadIndex) => {
-    const extracted = extractOddsFromPayload(payload, fixture, payloadIndex);
-    const hasFixtureEvent = extracted.some((odd) => odd.event && isTargetEventName(odd.event, fixture));
-    for (const odd of extracted) {
-      if (hasFixtureEvent && odd.event && !isTargetEventName(odd.event, fixture)) continue;
+    for (const odd of extractOddsFromPayload(payload, payloadIndex)) {
       const key = `${normalizeText(odd.event)}:${normalizeText(odd.market)}`;
       grouped.set(key, [...(grouped.get(key) ?? []), odd]);
     }
   });
 
   const markets = [...grouped.values()]
-    .map((rows, index) => rowsToMarket(rows, fixture, index))
+    .map((rows, index) => rowsToMarket(rows, index))
     .filter((market): market is Bet365Market => Boolean(market));
 
   const selected: Bet365Market[] = [];
@@ -247,7 +236,7 @@ export function summarizeBet365Payloads(payloads: string[]) {
 
 export function buildBet365Event(fixture: Bet365FixtureTarget, sourceUrl: string, payloads: string[] | string): Bet365Event {
   const normalizedPayloads = Array.isArray(payloads) ? payloads : [payloads];
-  const markets = parseBet365MoneylinePayloads(normalizedPayloads, fixture);
+  const markets = parseBet365MoneylinePayloads(normalizedPayloads);
   const rawText = normalizedPayloads.join("\n");
 
   return {
@@ -272,7 +261,7 @@ export function buildBet365EventFromDomMarkets(fixture: Bet365FixtureTarget, sou
         rawText: market.rawText.slice(0, 1500),
         index: marketIndex,
         selections: market.selections.slice(0, 3).map((selection, index) => ({
-          selection: selectionForLabel(selection.label, fixture, index),
+          selection: selectionForLabel(selection.label, index),
           label: selection.label,
           price: selection.price,
           index
