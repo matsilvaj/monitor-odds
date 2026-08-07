@@ -330,8 +330,8 @@ async function getCanonicalFixtures(dateKeys: string[], leagueSlug: string, limi
     .from("jogos")
     .select("id,api_football_fixture_id,name,league:campeonatos!inner(name,slug,country,api_football_league_id,enabled),home_team_id,away_team_id,home_team,away_team,starts_at,date_key")
     .in("date_key", dateKeys)
-    .eq("leagues.enabled", true)
-    .eq("leagues.slug", leagueSlug)
+    .eq("campeonatos.enabled", true)
+    .eq("campeonatos.slug", leagueSlug)
     .order("starts_at", { ascending: true })
     .limit(Math.max(limit * 3, limit + 10));
 
@@ -360,7 +360,7 @@ async function discoverBet365TargetLeagueSlugs(bookmaker: Bet365BookmakerConfig,
     .from("jogos")
     .select("id,api_football_fixture_id,name,league:campeonatos!inner(name,slug,country,api_football_league_id,enabled),home_team_id,away_team_id,home_team,away_team,starts_at,date_key")
     .in("date_key", dateKeys)
-    .eq("leagues.enabled", true)
+    .eq("campeonatos.enabled", true)
     .order("starts_at", { ascending: true })
     .limit(500);
 
@@ -1224,7 +1224,7 @@ export class Bet365Collector {
       leagueSummary.skipped = processedFixtureIds.size === 0;
       leagueSummary.skipReason = "missing-competition-url";
       leagueSummary.errors += fixtures.length - processedFixtureIds.size;
-      leagueSummary.lastError = `Cadastre a URL da liga ${firstLeague.name} (${firstLeague.api_football_league_id}) em bookmaker_league_links para bet365 ou configure BET365_COMPETITION_URL.`;
+      leagueSummary.lastError = `Cadastre a URL da liga ${firstLeague.name} (${firstLeague.api_football_league_id}) em links_campeonatos para bet365 ou configure BET365_COMPETITION_URL.`;
       await requestLeagueUrlUpdate(this.config, firstLeague, null, [], this.logger);
       return leagueSummary;
     }

@@ -121,6 +121,27 @@ function linkKey(row: Pick<BookmakerLinkRow, "bookmaker_slug"> & { external_even
   return `${row.bookmaker_slug}:${keyValue(row.external_event_id)}`;
 }
 
+function conflictingFixtureIdsByBookmaker(links: BookmakerLinkRow[]) {
+  const eventsByFixture = new Map<string, Map<string, BookmakerLinkRow>>();
+
+  for (const link of links) {
+    const fixtureKey = `${link.bookmaker_slug}:${link.fixture_id}`;
+    const eventKey = keyValue(link.external_event_id);
+    const events = eventsByFixture.get(fixtureKey) ?? new Map<string, BookmakerLinkRow>();
+    events.set(eventKey, link);
+    eventsByFixture.set(fixtureKey, events);
+  }
+
+  const conflictingFixtureIds = new Set<string>();
+  for (const events of eventsByFixture.values()) {
+    if (events.size <= 1) continue;
+    const first = events.values().next().value;
+    if (first) conflictingFixtureIds.add(first.fixture_id);
+  }
+
+  return conflictingFixtureIds;
+}
+
 function sameOdd(existing: ExistingOddRow, next: OddRow) {
   return (
     existing.market_name === next.market_name &&
@@ -349,10 +370,21 @@ export class OddsRepository {
   ) {
     const saveStartedAt = new Date().toISOString();
     const marketCodes = options.marketCodes?.length ? options.marketCodes : ["1X2"];
-    const linksToSave = [
+    const uniqueLinksToSave = [
       ...new Map(links.map((link) => [linkKey(link), { ...link, updated_at: saveStartedAt }])).values()
     ];
-    const oddsToSave = odds.map((odd) => ({ ...odd, updated_at: saveStartedAt, last_seen_at: saveStartedAt }));
+    const conflictingFixtureIds = conflictingFixtureIdsByBookmaker(uniqueLinksToSave);
+    if (conflictingFixtureIds.size) {
+      console.warn(
+        `[odds] ${bookmakerSlug} ignorou ${conflictingFixtureIds.size} jogo(s) com eventos conflitantes no mesmo fixture: ${[...conflictingFixtureIds].join(", ")}`
+      );
+    }
+    const linksToSave = conflictingFixtureIds.size
+      ? uniqueLinksToSave.filter((link) => !conflictingFixtureIds.has(link.fixture_id))
+      : uniqueLinksToSave;
+    const oddsToSave = odds
+      .filter((odd) => !conflictingFixtureIds.has(odd.fixture_id))
+      .map((odd) => ({ ...odd, updated_at: saveStartedAt, last_seen_at: saveStartedAt }));
     const existingLinksByEventId = linksToSave.length ? await fetchExistingLinksByEventIds(bookmakerSlug, linksToSave.map((link) => link.external_event_id)) : [];
     const linksToSaveByKey = new Map(linksToSave.map((link) => [linkKey(link), link]));
     const movedFixtureIds = existingLinksByEventId

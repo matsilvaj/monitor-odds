@@ -210,7 +210,7 @@ async function getCanonicalFixtures(dateKeys: string[]) {
     .from("jogos")
     .select("id,api_football_fixture_id,name,league:campeonatos!inner(name,slug,country,api_football_league_id,enabled),home_team,away_team,starts_at,date_key")
     .in("date_key", dateKeys)
-    .eq("leagues.enabled", true)
+    .eq("campeonatos.enabled", true)
     .order("starts_at", { ascending: true });
 
   if (error) throw error;

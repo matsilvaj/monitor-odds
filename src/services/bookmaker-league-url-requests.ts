@@ -22,7 +22,7 @@ type RequestLeagueUrlInput = {
 function isMissingRequestsTable(error: unknown) {
   const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
   const message = errorMessage(error);
-  return code === "42P01" || /bookmaker_league_url_requests|relation .* does not exist/i.test(message);
+  return code === "42P01" || /pendencias_links_campeonatos|relation .* does not exist/i.test(message);
 }
 
 export async function requestBookmakerLeagueUrl(input: RequestLeagueUrlInput, logger?: LeagueUrlRequestLogger) {

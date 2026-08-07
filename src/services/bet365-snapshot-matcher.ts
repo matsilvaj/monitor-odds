@@ -201,7 +201,7 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
       .from("jogos")
       .select("id,home_team_id,away_team_id,home_team,away_team,starts_at,date_key,league:campeonatos!inner(name,api_football_league_id,enabled)")
       .in("date_key", dates)
-      .eq("leagues.enabled", true),
+      .eq("campeonatos.enabled", true),
     supabase
       .from("links_eventos")
       .select("id,fixture_id,external_event_id,match_confidence_score,source_url,raw")
@@ -221,6 +221,12 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
   const existingLinks = (linkData ?? []) as ExistingLinkRow[];
   const linksByEventId = new Map(existingLinks.map((link) => [String(link.external_event_id), link]));
   const linksBySourceUrl = new Map(existingLinks.filter((link) => link.source_url).map((link) => [link.source_url as string, link]));
+  const linksByFixtureId = new Map<string, ExistingLinkRow[]>();
+  for (const link of existingLinks) {
+    const group = linksByFixtureId.get(link.fixture_id) ?? [];
+    group.push(link);
+    linksByFixtureId.set(link.fixture_id, group);
+  }
   const rememberedLinkForSnapshot = (row: { external_event_id: string | number; source_url: string | null }) =>
     linksByEventId.get(String(row.external_event_id)) ?? (row.source_url ? linksBySourceUrl.get(row.source_url) : undefined);
   const oddFixtureIds = new Set((oddData ?? []).map((row) => row.fixture_id));
@@ -302,6 +308,22 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
       continue;
     }
 
+    const fixtureLinks = linksByFixtureId.get(confirmedResult.fixture.id) ?? [];
+    const conflictingExistingLinks = fixtureLinks.filter(
+      (link) => String(link.external_event_id) !== String(snapshot.external_event_id)
+    );
+    if (conflictingExistingLinks.length) {
+      unmatched += 1;
+      await options.logger?.("warn", "evento bet365 rejeitado: fixture ja possui outro link confirmado", {
+        eventName: snapshot.event_name,
+        externalEventId: snapshot.external_event_id,
+        fixtureId: confirmedResult.fixture.id,
+        existingEventIds: conflictingExistingLinks.map((link) => link.external_event_id),
+        startsAt: snapshot.starts_at
+      });
+      continue;
+    }
+
     processed.push({
       snapshot,
       fixture: confirmedResult.fixture,
@@ -319,11 +341,36 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
     });
   }
 
-  const oddsUpserted = processed.length
+  const processedByFixture = new Map<string, typeof processed>();
+  for (const item of processed) {
+    const group = processedByFixture.get(item.fixture.id) ?? [];
+    group.push(item);
+    processedByFixture.set(item.fixture.id, group);
+  }
+  const conflictingFixtureIds = new Set<string>();
+  for (const [fixtureId, group] of processedByFixture) {
+    const eventIds = new Set(group.map((item) => String(item.snapshot.external_event_id)));
+    if (eventIds.size <= 1) continue;
+    conflictingFixtureIds.add(fixtureId);
+    await options.logger?.("warn", "matching ignorado por conflito de eventos no mesmo fixture", {
+      bookmakerSlug: "bet365",
+      fixtureId,
+      events: group.map((item) => ({
+        eventName: item.snapshot.event_name,
+        externalEventId: item.snapshot.external_event_id,
+        sourceUrl: item.snapshot.source_url
+      }))
+    });
+  }
+  const safeProcessed = conflictingFixtureIds.size
+    ? processed.filter((item) => !conflictingFixtureIds.has(item.fixture.id))
+    : processed;
+
+  const oddsUpserted = safeProcessed.length
     ? await OddsRepository.saveAll(
         "bet365",
-        processed.map((item) => item.link),
-        processed.flatMap((item) => item.odds),
+        safeProcessed.map((item) => item.link),
+        safeProcessed.flatMap((item) => item.odds),
         { replaceExistingOdds: false, replaceExistingLinks: false }
       )
     : 0;
@@ -335,8 +382,8 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
   if (currentLinkError) throw currentLinkError;
   const duplicateLinksRemoved = await removeDuplicateBet365Links((currentLinkData ?? []) as ExistingLinkRow[]);
 
-  for (let offset = 0; offset < processed.length; offset += 20) {
-    await Promise.all(processed.slice(offset, offset + 20).map(async (item) => {
+  for (let offset = 0; offset < safeProcessed.length; offset += 20) {
+    await Promise.all(safeProcessed.slice(offset, offset + 20).map(async (item) => {
       const { error } = await supabase
         .from("capturas_eventos")
         .update({
@@ -356,7 +403,7 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
     }));
   }
 
-  const newMatches = processed.filter((item) => !item.reused);
+  const newMatches = safeProcessed.filter((item) => !item.reused);
   for (const item of newMatches) {
     await learnConfirmedEventAliases({
       bookmakerSlug: "bet365",
@@ -383,16 +430,17 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
     });
   }
 
-  const reused = processed.length - newMatches.length;
+  const reused = safeProcessed.length - newMatches.length;
   const summary = {
     dates,
     snapshots: snapshots.length,
-    matched: processed.length,
+    matched: safeProcessed.length,
     reused,
     newMatches: newMatches.length,
     unmatched,
     invalid,
-    oddsProcessed: processed.reduce((total, item) => total + item.odds.length, 0),
+    oddsProcessed: safeProcessed.reduce((total, item) => total + item.odds.length, 0),
+    conflicts: processed.length - safeProcessed.length,
     duplicateLinksRemoved,
     oddsUpserted
   };

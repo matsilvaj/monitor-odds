@@ -55,9 +55,9 @@ async function log(level: "info" | "warn" | "error", message: string, context: R
 async function hasTargetFixturesForDate(key: string) {
   const { count, error } = await supabase
     .from("jogos")
-    .select("id,leagues!inner(api_football_league_id)", { count: "exact", head: true })
+    .select("id,campeonatos!inner(api_football_league_id)", { count: "exact", head: true })
     .eq("date_key", key)
-    .in("leagues.api_football_league_id", [...TARGET_LEAGUE_IDS]);
+    .in("campeonatos.api_football_league_id", [...TARGET_LEAGUE_IDS]);
 
   if (error) throw error;
   return (count ?? 0) > 0;
