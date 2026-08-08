@@ -320,7 +320,8 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://esportiva.bet.br",
     referer: "https://esportiva.bet.br/",
-    engine: "fetch"
+    engine: "got-scraping",
+    acceptHeader: "*/*"
   },
   {
     slug: "estrelabet",
@@ -367,7 +368,7 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     origin: "https://jogodeouro.bet.br",
     referer: "https://jogodeouro.bet.br/",
     engine: "got-scraping",
-    discoveryMode: "championship",
+    eventListMode: "coupon-events",
     listDeviceType: "1",
     acceptHeader: "*/*"
   },
