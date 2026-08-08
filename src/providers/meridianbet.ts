@@ -428,9 +428,9 @@ export class MeridianbetBrowserClient {
     const rawText = node.innerText || node.textContent || "";
     const dateLabel = node.querySelector(".c-event__period-min")?.textContent?.trim() || null;
     const timeLabel = node.querySelector(".c-event__period-time")?.textContent?.trim() || null;
-    if ((rawText.match(/\b\d{1,3}[.,]\d{2,3}\b/g) || []).length < 3) return [];
     const anchor = [...node.querySelectorAll("a[href]")].find((item) => eventUrl(item.getAttribute("href")));
-    return [{ sourceUrl: eventUrl(anchor?.getAttribute("href") || null) || "", rawText, homeTeam, awayTeam, dateLabel, timeLabel }];
+    if (!anchor) return [];
+    return [{ sourceUrl: eventUrl(anchor.getAttribute("href") || null) || "", rawText, homeTeam, awayTeam, dateLabel, timeLabel }];
   });
 })()
 `;
