@@ -20,20 +20,17 @@ export type SyncApiFootballFixturesOptions = {
 };
 
 function dateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(date);
 }
 
-function targetDates(dates?: Date[]) {
+function targetDates(dates?: Date[]): string[] {
   if (dates?.length) {
-    const uniqueDates = new Map(dates.map((date) => [dateKey(date), new Date(date.getFullYear(), date.getMonth(), date.getDate())]));
-    return [...uniqueDates.values()];
+    return [...new Set(dates.map(dateKey))];
   }
-
   const now = new Date();
-  return [0, 1].map((offset) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset));
+  const todayKey = dateKey(now);
+  const tomorrowKey = dateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  return [...new Set([todayKey, tomorrowKey])];
 }
 
 function isForceSync(force?: boolean) {
@@ -41,9 +38,6 @@ function isForceSync(force?: boolean) {
 }
 
 function shouldDeleteFixture(row: ApiFootballFixtureRow) {
-  const startsAt = new Date(row.fixture.date);
-  if (startsAt <= new Date()) return true;
-
   const short = row.fixture.status?.short ?? "";
   return ["1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "FT", "AET", "PEN", "CANC", "ABD", "AWD", "WO"].includes(short);
 }
@@ -344,8 +338,7 @@ export async function syncApiFootballFixtures(options: SyncApiFootballFixturesOp
     }
   }
 
-  for (const date of targetDates(options.dates)) {
-    const key = dateKey(date);
+  for (const key of targetDates(options.dates)) {
 
     try {
       const { data: syncRun, error: syncRunError } = await supabase

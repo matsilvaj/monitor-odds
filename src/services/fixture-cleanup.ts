@@ -24,8 +24,10 @@ async function deleteRowsById(table: "jogos" | "capturas_eventos", ids: string[]
   }
 }
 
+const STARTED_FIXTURE_GRACE_PERIOD_MS = 3 * 60 * 60 * 1000;
+
 export async function cleanupStartedFixtures(now = new Date()): Promise<StartedFixtureCleanupSummary> {
-  const cutoff = now.toISOString();
+  const cutoff = new Date(now.getTime() - STARTED_FIXTURE_GRACE_PERIOD_MS).toISOString();
   const { data, error } = await supabase.from("jogos").select("id").lte("starts_at", cutoff);
 
   if (error) throw error;

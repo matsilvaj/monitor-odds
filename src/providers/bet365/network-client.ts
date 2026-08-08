@@ -572,7 +572,19 @@ class Bet365PageController {
       if (!candidate) break;
       const key = `${Math.round(candidate.x)}:${Math.round(candidate.y)}:${marketHeaderKey(candidate.header)}`;
       attempted.add(key);
-      if (await this.expandMoneylineMarketHeader(candidate.header)) expanded += 1;
+
+      const point = await this.moneylineMarketHeaderClickPoint(candidate.header);
+      const clickPoint: Bet365ClickPoint = point ?? { x: candidate.x, y: candidate.y, reason: "card-coords-fallback" };
+      await this.clickMoneylineMarketHeaderPoint(clickPoint);
+      const confirmed = await this.waitForMoneylineHeaderPrices(candidate.header, 3, 2_500);
+      if (confirmed) {
+        expanded += 1;
+      } else {
+        await this.logger?.("warn", "mercado 1X2 da bet365 nao expandiu apos clique seguro", {
+          header: candidate.header,
+          reason: clickPoint.reason
+        });
+      }
     }
 
     if (expanded > 0) {
@@ -652,13 +664,8 @@ class Bet365PageController {
         if (closedCards.length && attempt < 4) {
           const newlyExpanded = await this.expandCollapsedMoneylineMarkets();
           expanded += newlyExpanded;
-          if (newlyExpanded > 0) {
-            await this.page.waitForTimeout(350);
-            continue;
-          }
-          await this.logger?.("warn", "mercado 1X2 fechado permaneceu sem alvo seguro", {
-            headers: closedCards.map((card) => card.header)
-          });
+          await this.page.waitForTimeout(400);
+          continue;
         }
 
         await this.logger?.("info", "mercados da bet365 lidos do DOM", {

@@ -138,19 +138,16 @@ const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
 };
 
 function dateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(date);
 }
 
 function targetDateKeys(date: BookmakerCollectOptions["date"]) {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  if (!date) return [dateKey(today), dateKey(tomorrow)];
-  if (date === "today") return [dateKey(today)];
-  if (date === "tomorrow") return [dateKey(tomorrow)];
+  const todayKey = dateKey(now);
+  const tomorrowKey = dateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  if (!date) return [todayKey, tomorrowKey];
+  if (date === "today") return [todayKey];
+  if (date === "tomorrow") return [tomorrowKey];
   if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return [date];
   throw new Error(`Data invalida para coleta: ${date}. Use today, tomorrow ou YYYY-MM-DD.`);
 }
@@ -1267,6 +1264,32 @@ export class Bet365Collector {
     }
 
     const event = collectResult.event;
+
+    const MIN_WRONG_EVENT_SIDE_SCORE = 0.4;
+    if (fixture.home_team && fixture.away_team && event.bookmakerHomeTeam && event.bookmakerAwayTeam) {
+      const homeOk = Math.max(
+        teamNameSimilarity(fixture.home_team, event.bookmakerHomeTeam),
+        teamNameSimilarity(fixture.home_team, event.bookmakerAwayTeam)
+      ) >= MIN_WRONG_EVENT_SIDE_SCORE;
+      const awayOk = Math.max(
+        teamNameSimilarity(fixture.away_team, event.bookmakerAwayTeam),
+        teamNameSimilarity(fixture.away_team, event.bookmakerHomeTeam)
+      ) >= MIN_WRONG_EVENT_SIDE_SCORE;
+      if (!homeOk || !awayOk) {
+        result.reason = "match-error";
+        result.lastError = `Bet365 abriu evento diferente do esperado: esperado ${fixture.home_team} x ${fixture.away_team}, recebido ${event.bookmakerHomeTeam} x ${event.bookmakerAwayTeam}.`;
+        await this.logger("warn", "clique de linha da bet365 rejeitado", {
+          expectedHome: fixture.home_team,
+          expectedAway: fixture.away_team,
+          capturedHome: event.bookmakerHomeTeam,
+          capturedAway: event.bookmakerAwayTeam,
+          eventName: event.eventName,
+          eventIndex
+        });
+        return result;
+      }
+    }
+
     result.eventsCollected += 1;
     if (!event.markets.length) result.eventsWithoutOdds += 1;
 

@@ -3,6 +3,7 @@ import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation } from "../domain/matching/event-matcher.js";
+import { teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import { normalizeName } from "../domain/text.js";
 import type { MeridianCollectedMarket, MeridianCollectedSelection } from "../providers/meridianbet.js";
 import type { Selection } from "../domain/normalize.js";
@@ -29,15 +30,16 @@ type ExistingLink = {
 };
 
 function key(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(date);
 }
 function targetDates(date: BookmakerCollectOptions["date"]) {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  if (!date) return [key(today), key(tomorrow)];
-  if (date === "today") return [key(today)];
-  if (date === "tomorrow") return [key(tomorrow)];
+  const yesterdayKey = key(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  const todayKey = key(now);
+  const tomorrowKey = key(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  if (!date) return [yesterdayKey, todayKey, tomorrowKey];
+  if (date === "today") return [yesterdayKey, todayKey];
+  if (date === "tomorrow") return [todayKey, tomorrowKey];
   return [date];
 }
 
@@ -217,6 +219,15 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
         awayTeam: fixture.away_team,
         leagueName: league(fixture)?.name ?? null
       }));
+    if (!candidates.length && snapshot.league_api_football_id) {
+      await options.logger?.("warn", "meridianbet sem candidatos para matching (fixture fora do range de datas)", {
+        eventName: snapshot.event_name,
+        leagueName: snapshot.league_name,
+        leagueApiFootballId: snapshot.league_api_football_id,
+        snapshotStartsAt: snapshot.starts_at,
+        dates
+      });
+    }
     const result = associatedFixture && rememberedOrientation
       ? {
           fixture: associatedFixture,
@@ -261,6 +272,28 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
         : null;
       if (llmResult) {
         const llmFixture = fixtureById.get(llmResult.fixtureId);
+        if (llmFixture) {
+          const MIN_LLM_SIDE_SCORE = 0.3;
+          const [fixtureHome, fixtureAway] = llmResult.orientation === "INVERTED"
+            ? [llmFixture.away_team, llmFixture.home_team]
+            : [llmFixture.home_team, llmFixture.away_team];
+          const homeScore = teamNameSimilarity(snapshot.home_team ?? "", fixtureHome);
+          const awayScore = teamNameSimilarity(snapshot.away_team ?? "", fixtureAway);
+          if (homeScore < MIN_LLM_SIDE_SCORE || awayScore < MIN_LLM_SIDE_SCORE) {
+            unmatched += 1;
+            await options.logger?.("warn", "resultado do llm rejeitado por baixa similaridade de times", {
+              eventName: snapshot.event_name,
+              bookmakerHome: snapshot.home_team,
+              bookmakerAway: snapshot.away_team,
+              fixtureHome: llmFixture.home_team,
+              fixtureAway: llmFixture.away_team,
+              homeScore: Number(homeScore.toFixed(3)),
+              awayScore: Number(awayScore.toFixed(3)),
+              minRequired: MIN_LLM_SIDE_SCORE
+            });
+            continue;
+          }
+        }
         const llmFixtureLinks = llmFixture ? (linksByFixtureId.get(llmFixture.id) ?? []) : [];
         const hasConflict = llmFixtureLinks.some((link) => String(link.external_event_id) !== String(snapshot.external_event_id));
         if (llmFixture && !hasConflict) {

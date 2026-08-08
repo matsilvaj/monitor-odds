@@ -178,11 +178,13 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
 
   const singleTeamMinScore = options.singleTeamMinScore ?? MIN_SINGLE_TEAM_SCORE;
   const singleTeamMinTimeScore = options.singleTeamMinTimeScore ?? MIN_SINGLE_TEAM_TIME_SCORE;
+  const MIN_SINGLE_TEAM_WEAK_SIDE = 0.2;
   const canUseSingleTeam =
     options.context === "league-scoped" &&
     strongLeagueSignal &&
     timeScore >= singleTeamMinTimeScore &&
-    evidence.bestSingleTeamScore >= singleTeamMinScore;
+    evidence.bestSingleTeamScore >= singleTeamMinScore &&
+    selectedScore.minSideScore >= MIN_SINGLE_TEAM_WEAK_SIDE;
 
   if (canUseSingleTeam) {
     const singleScore = evidence.bestSingleTeamScore * 0.72 + timeScore * 0.28;

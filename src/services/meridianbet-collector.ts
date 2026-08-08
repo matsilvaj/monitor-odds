@@ -77,19 +77,16 @@ function serializeError(error: unknown) {
 }
 
 function dateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(date);
 }
 
 function targetDateKeys(date: BookmakerCollectOptions["date"]) {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  if (!date) return [dateKey(today), dateKey(tomorrow)];
-  if (date === "today") return [dateKey(today)];
-  if (date === "tomorrow") return [dateKey(tomorrow)];
+  const todayKey = dateKey(now);
+  const tomorrowKey = dateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  if (!date) return [todayKey, tomorrowKey];
+  if (date === "today") return [todayKey];
+  if (date === "tomorrow") return [tomorrowKey];
   if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return [date];
   throw new Error(`Data inválida para coleta: ${date}. Use today, tomorrow ou YYYY-MM-DD.`);
 }
@@ -98,8 +95,8 @@ function meridianEventTiming(event: MeridianLeagueEvent, allowedDateKeys: string
   const now = new Date();
   const label = String(event.dateLabel ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
   let eventDateKey: string | null = null;
-  if (label === "hoje") eventDateKey = dateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
-  else if (label === "amanha") eventDateKey = dateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+  if (label === "hoje") eventDateKey = dateKey(now);
+  else if (label === "amanha") eventDateKey = dateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000));
   else {
     const match = label.match(/^(\d{1,2})[./-](\d{1,2})$/);
     if (match) {

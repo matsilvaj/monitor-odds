@@ -46,6 +46,8 @@ ${candidateList}
 
 Os times na casa de apostas podem ter nomes diferentes dos fixtures (nome oficial completo vs abreviado, grafia alternativa, idioma diferente). Use seu conhecimento sobre futebol para identificar a qual clube cada nome corresponde.
 
+ATENÇÃO: Clubes com nomes parcialmente parecidos são times DISTINTOS. Exemplos: "Independiente" ≠ "Independiente Rivadavia", "Real Madrid" ≠ "Real Sociedad", "Sporting CP" ≠ "Sporting Kansas City", "Atlético Madrid" ≠ "Atlético Mineiro". Não confirme um match apenas porque os times compartilham parte do nome — verifique se AMBOS os times (casa e visitante) correspondem. Se tiver qualquer dúvida, responda {"fixtureId":null}.
+
 Responda SOMENTE com JSON válido (sem markdown, sem explicações):
 - Se encontrou o fixture: {"fixtureId":"<o id do fixture>","orientation":"NORMAL"} ou {"fixtureId":"<id>","orientation":"INVERTED"} se os times estão com posições trocadas
 - Se não encontrou: {"fixtureId":null}`;
