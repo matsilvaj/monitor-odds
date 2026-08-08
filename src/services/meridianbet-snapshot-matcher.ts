@@ -4,7 +4,8 @@ import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-r
 import { supabase } from "../db/supabase.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation } from "../domain/matching/event-matcher.js";
 import { normalizeName } from "../domain/text.js";
-import type { MeridianCollectedMarket } from "../providers/meridianbet.js";
+import type { MeridianCollectedMarket, MeridianCollectedSelection } from "../providers/meridianbet.js";
+import type { Selection } from "../domain/normalize.js";
 import {
   canonicalNameFromAlias,
   learnConfirmedEventAliases,
@@ -50,13 +51,28 @@ function snapshotOddsSignature(value: unknown) {
 
 function validMarkets(value: unknown): MeridianCollectedMarket[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((item): item is MeridianCollectedMarket => {
-    if (!item || typeof item !== "object") return false;
-    const market = item as { paCategory?: unknown; selections?: unknown };
-    if (market.paCategory !== "COM_PA" && market.paCategory !== "SEM_PA" || !Array.isArray(market.selections)) return false;
-    const selections = market.selections as Array<{ selection?: unknown; price?: unknown }>;
-    const kinds = new Set(selections.map((selection) => selection.selection));
-    return kinds.has("HOME") && kinds.has("DRAW") && kinds.has("AWAY") && selections.every((selection) => Number(selection.price) > 1);
+  return value.flatMap((item): MeridianCollectedMarket[] => {
+    if (!item || typeof item !== "object") return [];
+    const market = item as { paCategory?: unknown; selections?: unknown; marketName?: unknown; confidence?: unknown; rawText?: unknown; index?: unknown };
+    if (!Array.isArray(market.selections)) return [];
+    const selections = market.selections as Array<{ selection?: unknown; price?: unknown; label?: unknown; index?: unknown }>;
+    const kinds = new Set(selections.map((s) => s.selection));
+    if (!kinds.has("HOME") || !kinds.has("DRAW") || !kinds.has("AWAY")) return [];
+    if (!selections.every((s) => Number(s.price) > 1)) return [];
+    const paCategory: "COM_PA" | "SEM_PA" = market.paCategory === "COM_PA" ? "COM_PA" : "SEM_PA";
+    return [{
+      marketName: typeof market.marketName === "string" ? market.marketName : "MoneyLine",
+      paCategory,
+      confidence: typeof market.confidence === "number" ? market.confidence : 1,
+      rawText: typeof market.rawText === "string" ? market.rawText : "",
+      index: typeof market.index === "number" ? market.index : 0,
+      selections: selections.map((s) => ({
+        selection: s.selection as MeridianCollectedSelection["selection"],
+        label: typeof s.label === "string" ? s.label : String(s.selection ?? ""),
+        price: Number(s.price),
+        index: typeof s.index === "number" ? s.index : 0
+      }))
+    }];
   });
 }
 

@@ -155,10 +155,13 @@ function formatConsoleLine(level: "info" | "warn" | "error", message: string, co
   if (message === "snapshot bruto da meridianbet salvo") return `[meridianbet] Evento salvo no cache: ${fixtureName(context)} | ${contextValue(context, "oddsFound")} odds | ${contextValue(context, "sourceUrl")}.`;
   if (message === "evento meridianbet confirmado no matching") return `[meridianbet] Matching confirmado: ${fixtureName(context)} | ${contextValue(context, "orientation")} | ${contextValue(context, "oddsSaved")} odds.`;
   if (message === "evento meridianbet pendente no matching") return `[meridianbet] Matching pendente: ${fixtureName(context)}.`;
-  if (message === "matching externo da meridianbet finalizado") return `[meridianbet] Pós-coleta: ${contextValue(context, "reused")} vínculos reutilizados | ${contextValue(context, "newMatches")} novos matchings | ${contextValue(context, "unmatched")} pendentes | ${contextValue(context, "oddsProcessed")} odds processadas | ${contextValue(context, "oddsUpserted")} alteradas.`;
-  if (message === "eventos brutos encontrados na liga da meridianbet") return `[meridianbet] Liga ${contextValue(context, "leagueName")}: ${contextValue(context, "eventsFound")} eventos D0/D1 encontrados | ${contextValue(context, "visibleEvents")} visiveis.`;
+  if (message === "snapshot da meridianbet sem dados suficientes para matching") return `[meridianbet] Snapshot inválido: ${fixtureName(context)} | sem mercados válidos.`;
+  if (message === "erro no fallback gemini da meridianbet") return `[meridianbet] Gemini falhou: ${fixtureName(context)} | ${contextValue(context, "error")}.`;
+  if (message === "evento meridianbet confirmado via gemini") return `[meridianbet] Gemini confirmou: ${fixtureName(context)} | ${contextValue(context, "canonicalHome")} x ${contextValue(context, "canonicalAway")} | ${contextValue(context, "orientation")}.`;
+  if (message === "matching externo da meridianbet finalizado") return `[meridianbet] Pós-coleta: ${contextValue(context, "reused")} vínculos reutilizados | ${contextValue(context, "newMatches")} novos matchings | ${contextValue(context, "unmatched")} pendentes | ${contextValue(context, "invalid")} inválidos | ${contextValue(context, "oddsProcessed")} odds processadas | ${contextValue(context, "oddsUpserted")} alteradas.`;
+  if (message === "eventos brutos encontrados na liga da meridianbet") return `[meridianbet] Liga ${contextValue(context, "leagueName")}: ${contextValue(context, "eventsFound")} D0/D1 encontrados | ${contextValue(context, "eventsTargeted")} alvo | ${contextValue(context, "visibleEvents")} visíveis.`;
   if (message === "evento bruto da meridianbet não pôde ser aberto") return `[meridianbet] Evento não abriu: ${fixtureName(context)} | liga ${contextValue(context, "leagueName")}.`;
-  if (message === "coleta bruta da liga da meridianbet finalizada") return `[meridianbet] Liga ${contextValue(context, "leagueName")} finalizada: ${contextValue(context, "eventsFound")} D0/D1 | ${contextValue(context, "snapshotsSaved")} salvos | ${contextValue(context, "errors")} erros.`;
+  if (message === "coleta bruta da liga da meridianbet finalizada") return `[meridianbet] Liga ${contextValue(context, "leagueName")} finalizada: ${contextValue(context, "eventsFound")} D0/D1 | ${contextValue(context, "eventsTargeted")} alvo | ${contextValue(context, "snapshotsSaved")} salvos | ${contextValue(context, "errors")} erros.`;
   if (message === "liga da meridianbet sem eventos D0/D1") return `[meridianbet] Liga sem jogos D0/D1: ${contextValue(context, "leagueName")} | ${contextValue(context, "visibleEvents")} eventos visiveis fora do periodo.`;
   if (message === "liga da meridianbet abriu, mas nenhum evento foi encontrado") return `[meridianbet] Liga sem jogos visíveis: ${contextValue(context, "leagueName")} | ${contextValue(context, "sourceUrl")}.`;
   if (message === "liga da meridianbet precisa atualizar link") return `[meridianbet] Erro: ${contextValue(context, "errorMessage")}`;
@@ -454,7 +457,6 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
 
       const cacheSuccessFixtureIds = new Set<string>();
       const cacheSuccessEventIds = new Set<number>();
-      const cacheSuccessTeamPairs = new Set<string>();
       const cachedWork = fixtures
         .map((fixture) => ({ fixture, cached: cachedUrlByFixtureId.get(fixture.id) }))
         .filter((item): item is { fixture: CanonicalFixture; cached: CachedEventLink } => Boolean(item.cached));
@@ -500,10 +502,6 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
                   if (oddsFound > 0) {
                     cacheSuccessFixtureIds.add(item.fixture.id);
                     cacheSuccessEventIds.add(item.cached.externalEventId);
-                    const normalPair = `${normalizeName(item.cached.homeTeam)}:${normalizeName(item.cached.awayTeam)}`;
-                    const invertedPair = `${normalizeName(item.cached.awayTeam)}:${normalizeName(item.cached.homeTeam)}`;
-                    cacheSuccessTeamPairs.add(normalPair);
-                    cacheSuccessTeamPairs.add(invertedPair);
                   }
                 } catch (error) {
                   await logger("warn", "falha ao coletar jogo da meridianbet por URL cacheada; tentando pela liga", {
@@ -538,6 +536,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
             });
             continue;
           }
+          const leagueEventLimit = leagueFixtures.length;
 
           const savedUrl = cachedLeagueLinkByApiId.get(league.api_football_league_id)?.source_url;
           const hardcoded = MERIDIAN_LEAGUES[league.api_football_league_id];
@@ -564,11 +563,14 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           summary.leaguesOpened += 1;
           await saveLeagueLink(bookmaker, league, discoveryPage.url(), hardcoded?.name ?? league.name, hardcoded?.url ? "hardcoded" : "saved");
           const visiblePageEvents = await client.listLeagueEvents(discoveryPage);
-          const pageEvents = visiblePageEvents.map((pageEvent) => ({ pageEvent, timing: meridianEventTiming(pageEvent, dateKeys) })).filter((item): item is { pageEvent: MeridianLeagueEvent; timing: { dateKey: string; startsAt: string | null } } => Boolean(item.timing));
+          const allPageEvents = visiblePageEvents
+            .map((pageEvent) => ({ pageEvent, timing: meridianEventTiming(pageEvent, dateKeys) }))
+            .filter((item): item is { pageEvent: MeridianLeagueEvent; timing: { dateKey: string; startsAt: string | null } } => Boolean(item.timing));
+          const pageEvents = allPageEvents.slice(0, leagueEventLimit);
           let leagueSnapshotsSaved = 0;
           let leagueErrors = 0;
-          await logger("info", "eventos brutos encontrados na liga da meridianbet", { leagueName: league.name, eventsFound: pageEvents.length, visibleEvents: visiblePageEvents.length, sourceUrl: discoveryPage.url() });
-          if (!pageEvents.length) {
+          await logger("info", "eventos brutos encontrados na liga da meridianbet", { leagueName: league.name, eventsFound: allPageEvents.length, eventsTargeted: pageEvents.length, visibleEvents: visiblePageEvents.length, sourceUrl: discoveryPage.url() });
+          if (!allPageEvents.length) {
             summary.leaguesOpenedWithoutTarget += 1;
             await logger("warn", visiblePageEvents.length ? "liga da meridianbet sem eventos D0/D1" : "liga da meridianbet abriu, mas nenhum evento foi encontrado", {
               leagueName: league.name,
@@ -578,8 +580,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
             });
           }
           for (const { pageEvent, timing } of pageEvents) {
-            const pageEventPair = `${normalizeName(pageEvent.homeTeam ?? "")}:${normalizeName(pageEvent.awayTeam ?? "")}`;
-            if (cacheSuccessEventIds.has(pageEvent.externalEventId) || cacheSuccessTeamPairs.has(pageEventPair)) {
+            if (cacheSuccessEventIds.has(pageEvent.externalEventId)) {
               await logger("info", "evento da liga meridianbet ja atualizado pelo cache", {
                 eventName: pageEvent.eventName,
                 externalEventId: pageEvent.externalEventId,
@@ -619,7 +620,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
               await client.selectAllPeriod(discoveryPage).catch(() => undefined);
             }
           }
-          await logger("info", "coleta bruta da liga da meridianbet finalizada", { leagueName: league.name, eventsFound: pageEvents.length, visibleEvents: visiblePageEvents.length, snapshotsSaved: leagueSnapshotsSaved, errors: leagueErrors });
+          await logger("info", "coleta bruta da liga da meridianbet finalizada", { leagueName: league.name, eventsFound: allPageEvents.length, eventsTargeted: pageEvents.length, visibleEvents: visiblePageEvents.length, snapshotsSaved: leagueSnapshotsSaved, errors: leagueErrors });
 
         }
       } finally {
