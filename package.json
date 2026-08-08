@@ -34,6 +34,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.105.3",
     "dotenv": "^17.4.2",
     "got-scraping": "^4.2.1",

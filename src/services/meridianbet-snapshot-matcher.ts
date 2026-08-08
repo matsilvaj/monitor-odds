@@ -11,6 +11,7 @@ import {
   linkOrientation,
   loadBookmakerAliasIndex
 } from "./bookmaker-match-memory.js";
+import { findFixtureWithGemini } from "./gemini-fixture-matcher.js";
 
 type Logger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
 type Snapshot = {
@@ -213,11 +214,54 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
           homeTeam: matchedHomeTeam,
           awayTeam: matchedAwayTeam,
           leagueName: snapshot.league_name
-        }, { context: "league-scoped" });
+        }, { context: "league-scoped", singleTeamMinScore: 0.72 })
+        ?? (snapshot.league_api_football_id
+          ? findBestCanonicalEventMatch(candidates, {
+              id: snapshot.external_event_id,
+              startsAt: snapshot.starts_at ?? "",
+              homeTeam: matchedHomeTeam,
+              awayTeam: matchedAwayTeam,
+              leagueName: snapshot.league_name
+            }, { context: "league-scoped", maxTimeDiffMs: 48 * 60 * 60 * 1000, teamOnlyMinScore: 0.8 })
+          : null);
     const confirmedResult = result
       ? { ...result, reused: "reused" in result ? result.reused : Boolean(associatedFixture || (snapshot.raw?.stage === "matched" && snapshotOrientation)) }
       : null;
     if (!confirmedResult) {
+      const geminiResult = snapshot.league_api_football_id
+        ? await findFixtureWithGemini({
+            bookmakerHomeTeam: snapshot.home_team ?? "",
+            bookmakerAwayTeam: snapshot.away_team ?? "",
+            leagueName: snapshot.league_name,
+            startsAt: snapshot.starts_at,
+            candidates: candidates.map((c) => ({ id: c.id, home_team: c.home_team, away_team: c.away_team, starts_at: c.starts_at }))
+          })
+        : null;
+      if (geminiResult) {
+        const geminiFixture = fixtureById.get(geminiResult.fixtureId);
+        const geminiFixtureLinks = geminiFixture ? (linksByFixtureId.get(geminiFixture.id) ?? []) : [];
+        const hasConflict = geminiFixtureLinks.some((link) => String(link.external_event_id) !== String(snapshot.external_event_id));
+        if (geminiFixture && !hasConflict) {
+          await options.logger?.("info", "evento meridianbet confirmado via gemini", {
+            eventName: snapshot.event_name,
+            bookmakerHome: snapshot.home_team,
+            bookmakerAway: snapshot.away_team,
+            canonicalHome: geminiFixture.home_team,
+            canonicalAway: geminiFixture.away_team,
+            orientation: geminiResult.orientation
+          });
+          processed.push({
+            snapshot,
+            fixture: geminiFixture,
+            orientation: geminiResult.orientation,
+            score: 0.9,
+            reused: false,
+            link: buildLink(snapshot, geminiFixture, 0.9, geminiResult.orientation, existingLink?.raw ?? null),
+            odds: buildOdds(snapshot, geminiFixture, geminiResult.orientation)
+          });
+          continue;
+        }
+      }
       unmatched += 1;
       await options.logger?.("warn", "evento meridianbet pendente no matching", {
         eventName: snapshot.event_name,
@@ -283,7 +327,7 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
         "meridianbet",
         safeProcessed.map((item) => item.link),
         safeProcessed.flatMap((item) => item.odds),
-        { replaceExistingOdds: false, replaceExistingLinks: false }
+        { replaceExistingOdds: true, replaceExistingLinks: true }
       )
     : 0;
 
