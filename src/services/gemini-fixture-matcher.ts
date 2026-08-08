@@ -63,7 +63,7 @@ Responda SOMENTE com JSON válido (sem markdown, sem explicações):
       fixtureId: parsed.fixtureId,
       orientation: parsed.orientation === "INVERTED" ? "INVERTED" : "NORMAL"
     };
-  } catch {
-    return null;
+  } catch (err) {
+    throw new Error(`Gemini fixture matching failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

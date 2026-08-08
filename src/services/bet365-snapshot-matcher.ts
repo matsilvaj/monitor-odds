@@ -334,6 +334,12 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
             leagueName: snapshot.league_name,
             startsAt: snapshot.starts_at,
             candidates: candidates.map((c) => ({ id: c.id, home_team: c.home_team, away_team: c.away_team, starts_at: c.starts_at }))
+          }).catch(async (err: unknown) => {
+            await options.logger?.("warn", "erro no fallback gemini da bet365", {
+              eventName: snapshot.event_name,
+              error: err instanceof Error ? err.message : String(err)
+            });
+            return null;
           })
         : null;
       if (geminiResult) {
