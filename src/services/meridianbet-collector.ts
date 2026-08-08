@@ -107,6 +107,8 @@ function meridianEventTiming(event: MeridianLeagueEvent, allowedDateKeys: string
       eventDateKey = allowedDateKeys.find((key) => key.slice(5) === dayMonth) ?? null;
     }
   }
+  // Se não conseguiu determinar a data pelo label, usa o primeiro dateKey como fallback
+  if (!eventDateKey) eventDateKey = allowedDateKeys[0] ?? null;
   if (!eventDateKey || !allowedDateKeys.includes(eventDateKey)) return null;
   const time = String(event.timeLabel ?? "").match(/^(\d{1,2}):(\d{2})$/);
   const startsAt = time ? new Date(`${eventDateKey}T${String(Number(time[1])).padStart(2, "0")}:${time[2]}:00-03:00`).toISOString() : null;
@@ -156,8 +158,8 @@ function formatConsoleLine(level: "info" | "warn" | "error", message: string, co
   if (message === "evento meridianbet confirmado no matching") return `[meridianbet] Matching confirmado: ${fixtureName(context)} | ${contextValue(context, "orientation")} | ${contextValue(context, "oddsSaved")} odds.`;
   if (message === "evento meridianbet pendente no matching") return `[meridianbet] Matching pendente: ${fixtureName(context)}.`;
   if (message === "snapshot da meridianbet sem dados suficientes para matching") return `[meridianbet] Snapshot inválido: ${fixtureName(context)} | sem mercados válidos.`;
-  if (message === "erro no fallback gemini da meridianbet") return `[meridianbet] Gemini falhou: ${fixtureName(context)} | ${contextValue(context, "error")}.`;
-  if (message === "evento meridianbet confirmado via gemini") return `[meridianbet] Gemini confirmou: ${fixtureName(context)} | ${contextValue(context, "canonicalHome")} x ${contextValue(context, "canonicalAway")} | ${contextValue(context, "orientation")}.`;
+  if (message === "erro no fallback llm da meridianbet") return `[meridianbet] LLM falhou: ${fixtureName(context)} | ${contextValue(context, "error")}.`;
+  if (message === "evento meridianbet confirmado via llm") return `[meridianbet] LLM confirmou: ${fixtureName(context)} | ${contextValue(context, "canonicalHome")} x ${contextValue(context, "canonicalAway")} | ${contextValue(context, "orientation")}.`;
   if (message === "matching externo da meridianbet finalizado") return `[meridianbet] Pós-coleta: ${contextValue(context, "reused")} vínculos reutilizados | ${contextValue(context, "newMatches")} novos matchings | ${contextValue(context, "unmatched")} pendentes | ${contextValue(context, "invalid")} inválidos | ${contextValue(context, "oddsProcessed")} odds processadas | ${contextValue(context, "oddsUpserted")} alteradas.`;
   if (message === "eventos brutos encontrados na liga da meridianbet") return `[meridianbet] Liga ${contextValue(context, "leagueName")}: ${contextValue(context, "eventsFound")} D0/D1 encontrados | ${contextValue(context, "eventsTargeted")} alvo | ${contextValue(context, "visibleEvents")} visíveis.`;
   if (message === "evento bruto da meridianbet não pôde ser aberto") return `[meridianbet] Evento não abriu: ${fixtureName(context)} | liga ${contextValue(context, "leagueName")}.`;
@@ -457,6 +459,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
 
       const cacheSuccessFixtureIds = new Set<string>();
       const cacheSuccessEventIds = new Set<number>();
+      const cacheSuccessTeamPairs = new Set<string>(); // dedup por nome quando sem URL
       const cachedWork = fixtures
         .map((fixture) => ({ fixture, cached: cachedUrlByFixtureId.get(fixture.id) }))
         .filter((item): item is { fixture: CanonicalFixture; cached: CachedEventLink } => Boolean(item.cached));
@@ -502,6 +505,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
                   if (oddsFound > 0) {
                     cacheSuccessFixtureIds.add(item.fixture.id);
                     cacheSuccessEventIds.add(item.cached.externalEventId);
+                    cacheSuccessTeamPairs.add(`${normalizeName(item.cached.homeTeam)}|${normalizeName(item.cached.awayTeam)}`);
                   }
                 } catch (error) {
                   await logger("warn", "falha ao coletar jogo da meridianbet por URL cacheada; tentando pela liga", {
@@ -562,7 +566,36 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           }
           summary.leaguesOpened += 1;
           await saveLeagueLink(bookmaker, league, discoveryPage.url(), hardcoded?.name ?? league.name, hardcoded?.url ? "hardcoded" : "saved");
-          const visiblePageEvents = await client.listLeagueEvents(discoveryPage);
+          let visiblePageEvents = await client.listLeagueEvents(discoveryPage);
+
+          // Quando URL tem ?leagueIds= e encontrou menos eventos que fixtures precisando coleta,
+          // tenta a URL base (sem filtro) para capturar outros subgrupos da liga
+          if (visiblePageEvents.length < fixturesNeedingLeague.length && !hardcoded?.url) {
+            try {
+              const currentUrl = new URL(discoveryPage.url());
+              if (currentUrl.searchParams.has("leagueIds")) {
+                currentUrl.searchParams.delete("leagueIds");
+                const baseUrl = currentUrl.href;
+                await logger("info", "eventos insuficientes; tentando URL base sem filtro leagueIds para capturar subgrupos", { leagueName: league.name, baseUrl, found: visiblePageEvents.length, needed: fixturesNeedingLeague.length });
+                await client.goToUrl(discoveryPage, baseUrl, "tentando URL base da liga meridianbet para capturar subgrupos");
+                await client.selectAllPeriod(discoveryPage);
+                if (await client.pageLooksLikeLeague(discoveryPage)) {
+                  await saveLeagueLink(bookmaker, league, discoveryPage.url(), hardcoded?.name ?? league.name, "base-url-expanded");
+                  const additionalEvents = await client.listLeagueEvents(discoveryPage);
+                  // Merge por nome de time (IDs podem ser hash diferentes sem URL)
+                  const existingTeams = new Set(visiblePageEvents.map((e) => `${e.homeTeam}|${e.awayTeam}`));
+                  for (const e of additionalEvents) {
+                    if (!existingTeams.has(`${e.homeTeam}|${e.awayTeam}`)) {
+                      visiblePageEvents.push(e);
+                      existingTeams.add(`${e.homeTeam}|${e.awayTeam}`);
+                    }
+                  }
+                }
+              }
+            } catch {
+              // URL parse falhou, continua com eventos encontrados
+            }
+          }
           const allPageEvents = visiblePageEvents
             .map((pageEvent) => ({ pageEvent, timing: meridianEventTiming(pageEvent, dateKeys) }))
             .filter((item): item is { pageEvent: MeridianLeagueEvent; timing: { dateKey: string; startsAt: string | null } } => Boolean(item.timing));
@@ -580,7 +613,8 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
             });
           }
           for (const { pageEvent, timing } of pageEvents) {
-            if (cacheSuccessEventIds.has(pageEvent.externalEventId)) {
+            const teamPair = `${normalizeName(pageEvent.homeTeam)}|${normalizeName(pageEvent.awayTeam)}`;
+            if (cacheSuccessEventIds.has(pageEvent.externalEventId) || cacheSuccessTeamPairs.has(teamPair)) {
               await logger("info", "evento da liga meridianbet ja atualizado pelo cache", {
                 eventName: pageEvent.eventName,
                 externalEventId: pageEvent.externalEventId,

@@ -4,6 +4,7 @@ import type { BetanoBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
+import { findFixtureWithLlmFallback } from "./llm-fixture-matcher.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { matchingTokens, normalizeForMatching } from "../domain/matching/text-similarity.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
@@ -512,7 +513,19 @@ export function createBetanoCollector(bookmaker: BetanoBookmakerConfig) {
       const bestMatchByFixtureId = new Map<string, { event: BetanoEvent; matched: NonNullable<ReturnType<typeof findBestMatch>> }>();
 
       for (const event of targetEvents) {
-        const matched = findBestMatch(event, discoveryFixtures);
+        let matched = findBestMatch(event, discoveryFixtures);
+        if (!matched) {
+          const { homeTeam, awayTeam } = eventTeams(event);
+          const llm = await findFixtureWithLlmFallback({
+            bookmakerHomeTeam: homeTeam,
+            bookmakerAwayTeam: awayTeam,
+            startsAt: Number(event.startTime),
+            leagueName: event.leagueName ?? event.leagueDescription ?? null,
+            fixtures: discoveryFixtures,
+            getLeagueName: (f) => fixtureLeague(f)?.name ?? null
+          }).catch(() => null);
+          if (llm) matched = { fixture: llm.fixture, orientation: llm.orientation, score: 0.9, matched: true, timeScore: 1, teamScore: 0.9, bestSingleTeamScore: 0.9, reason: "matched" } as unknown as NonNullable<ReturnType<typeof findBestMatch>>;
+        }
         if (!matched) {
           summary.eventsUnmatched += 1;
           continue;

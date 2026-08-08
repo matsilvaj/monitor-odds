@@ -12,7 +12,7 @@ import {
   linkOrientation,
   loadBookmakerAliasIndex
 } from "./bookmaker-match-memory.js";
-import { findFixtureWithGemini } from "./gemini-fixture-matcher.js";
+import { findFixtureWithLlm } from "./llm-fixture-matcher.js";
 
 type Logger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
 type Snapshot = {
@@ -230,7 +230,7 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
           homeTeam: matchedHomeTeam,
           awayTeam: matchedAwayTeam,
           leagueName: snapshot.league_name
-        }, { context: "league-scoped", singleTeamMinScore: 0.72 })
+        }, { context: "league-scoped" })
         ?? (snapshot.league_api_football_id
           ? findBestCanonicalEventMatch(candidates, {
               id: snapshot.external_event_id,
@@ -244,42 +244,42 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
       ? { ...result, reused: "reused" in result ? result.reused : Boolean(associatedFixture || (snapshot.raw?.stage === "matched" && snapshotOrientation)) }
       : null;
     if (!confirmedResult) {
-      const geminiResult = snapshot.league_api_football_id
-        ? await findFixtureWithGemini({
+      const llmResult = snapshot.league_api_football_id
+        ? await findFixtureWithLlm({
             bookmakerHomeTeam: snapshot.home_team ?? "",
             bookmakerAwayTeam: snapshot.away_team ?? "",
             leagueName: snapshot.league_name,
             startsAt: snapshot.starts_at,
             candidates: candidates.map((c) => ({ id: c.id, home_team: c.home_team, away_team: c.away_team, starts_at: c.starts_at }))
           }).catch(async (err: unknown) => {
-            await options.logger?.("warn", "erro no fallback gemini da meridianbet", {
+            await options.logger?.("warn", "erro no fallback llm da meridianbet", {
               eventName: snapshot.event_name,
               error: err instanceof Error ? err.message : String(err)
             });
             return null;
           })
         : null;
-      if (geminiResult) {
-        const geminiFixture = fixtureById.get(geminiResult.fixtureId);
-        const geminiFixtureLinks = geminiFixture ? (linksByFixtureId.get(geminiFixture.id) ?? []) : [];
-        const hasConflict = geminiFixtureLinks.some((link) => String(link.external_event_id) !== String(snapshot.external_event_id));
-        if (geminiFixture && !hasConflict) {
-          await options.logger?.("info", "evento meridianbet confirmado via gemini", {
+      if (llmResult) {
+        const llmFixture = fixtureById.get(llmResult.fixtureId);
+        const llmFixtureLinks = llmFixture ? (linksByFixtureId.get(llmFixture.id) ?? []) : [];
+        const hasConflict = llmFixtureLinks.some((link) => String(link.external_event_id) !== String(snapshot.external_event_id));
+        if (llmFixture && !hasConflict) {
+          await options.logger?.("info", "evento meridianbet confirmado via llm", {
             eventName: snapshot.event_name,
             bookmakerHome: snapshot.home_team,
             bookmakerAway: snapshot.away_team,
-            canonicalHome: geminiFixture.home_team,
-            canonicalAway: geminiFixture.away_team,
-            orientation: geminiResult.orientation
+            canonicalHome: llmFixture.home_team,
+            canonicalAway: llmFixture.away_team,
+            orientation: llmResult.orientation
           });
           processed.push({
             snapshot,
-            fixture: geminiFixture,
-            orientation: geminiResult.orientation,
+            fixture: llmFixture,
+            orientation: llmResult.orientation,
             score: 0.9,
             reused: false,
-            link: buildLink(snapshot, geminiFixture, 0.9, geminiResult.orientation, existingLink?.raw ?? null),
-            odds: buildOdds(snapshot, geminiFixture, geminiResult.orientation)
+            link: buildLink(snapshot, llmFixture, 0.9, llmResult.orientation, existingLink?.raw ?? null),
+            odds: buildOdds(snapshot, llmFixture, llmResult.orientation)
           });
           continue;
         }

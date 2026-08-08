@@ -152,8 +152,7 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
   const score = timeScore * 0.4 + teamScore * 0.6;
   const threshold = timeScore >= 0.95 ? 0.58 : timeScore >= 0.85 ? 0.64 : 0.72;
   const maxSideScore = Math.max(selectedScore.homeScore, selectedScore.awayScore);
-  const hasPairIdentityEvidence =
-    maxSideScore >= MIN_ANCHORED_TEAM_SCORE || selectedScore.minSideScore >= MIN_BALANCED_SIDE_TEAM_SCORE;
+  const hasPairIdentityEvidence = selectedScore.minSideScore >= MIN_BALANCED_SIDE_TEAM_SCORE;
   const pairMatched =
     hasPairIdentityEvidence &&
     selectedScore.minSideScore >= MIN_SIDE_TEAM_SCORE &&

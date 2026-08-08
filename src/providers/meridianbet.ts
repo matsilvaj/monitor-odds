@@ -417,11 +417,11 @@ export class MeridianbetBrowserClient {
       return null;
     }
   };
-  return [...document.querySelectorAll(".c-event")].flatMap((node) => {
+  const extractFromNode = (node) => {
     if (!(node instanceof HTMLElement)) return [];
     const rect = node.getBoundingClientRect();
     const style = window.getComputedStyle(node);
-    if (rect.width < 300 || rect.height < 30 || rect.height > 160 || rect.bottom < 80 || rect.top > window.innerHeight || style.visibility === "hidden" || style.display === "none") return [];
+    if (rect.width < 200 || rect.height < 20 || style.visibility === "hidden" || style.display === "none") return [];
     const homeTeam = node.querySelector(".c-event__rivals--home span")?.textContent?.trim() || null;
     const awayTeam = node.querySelector(".c-event__rivals--away span")?.textContent?.trim() || null;
     if (!homeTeam || !awayTeam) return [];
@@ -429,9 +429,15 @@ export class MeridianbetBrowserClient {
     const dateLabel = node.querySelector(".c-event__period-min")?.textContent?.trim() || null;
     const timeLabel = node.querySelector(".c-event__period-time")?.textContent?.trim() || null;
     const anchor = [...node.querySelectorAll("a[href]")].find((item) => eventUrl(item.getAttribute("href")));
-    if (!anchor) return [];
-    return [{ sourceUrl: eventUrl(anchor.getAttribute("href") || null) || "", rawText, homeTeam, awayTeam, dateLabel, timeLabel }];
-  });
+    const sourceUrl = anchor ? (eventUrl(anchor.getAttribute("href") || null) || "") : "";
+    return [{ sourceUrl, rawText, homeTeam, awayTeam, dateLabel, timeLabel }];
+  };
+  // Tenta primeiro .c-event; se vazio, tenta .c-event__game como container alternativo
+  const primaryNodes = [...document.querySelectorAll(".c-event")];
+  const results = primaryNodes.flatMap(extractFromNode);
+  if (results.length > 0) return results;
+  const fallbackNodes = [...document.querySelectorAll(".c-event__game")];
+  return fallbackNodes.flatMap(extractFromNode);
 })()
 `;
 

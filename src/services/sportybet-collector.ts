@@ -3,6 +3,7 @@ import type { SportybetBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
+import { findFixtureWithLlmFallback } from "./llm-fixture-matcher.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import type { PaCategory, Selection } from "../domain/normalize.js";
 import { normalizeForMatching, teamNameSimilarity, tokenSetSimilarity } from "../domain/matching/text-similarity.js";
@@ -301,8 +302,19 @@ export function createSportybetCollector(bookmaker: SportybetBookmakerConfig) {
 
       for (const event of targetEventsById.values()) {
         try {
-          const matched = matchFixture(event, fixtures);
+          let matched = matchFixture(event, fixtures);
 
+          if (!matched) {
+            const llm = await findFixtureWithLlmFallback({
+              bookmakerHomeTeam: event.homeTeamName ?? null,
+              bookmakerAwayTeam: event.awayTeamName ?? null,
+              startsAt: event.estimateStartTime,
+              leagueName: eventLeagueName(event),
+              fixtures,
+              getLeagueName: (f) => fixtureLeague(f)?.name ?? null
+            }).catch(() => null);
+            if (llm) matched = { fixture: llm.fixture, orientation: llm.orientation, score: 0.9, matched: true, timeScore: 1, teamScore: 0.9, bestSingleTeamScore: 0.9, reason: "matched" } as unknown as NonNullable<ReturnType<typeof matchFixture>>;
+          }
           if (!matched) {
             summary.eventsUnmatched += 1;
             continue;

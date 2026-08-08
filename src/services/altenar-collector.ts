@@ -6,6 +6,7 @@ import { MVP_LEAGUES } from "../config/leagues.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
+import { findFixtureWithLlmFallback } from "./llm-fixture-matcher.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { classifyPa, isMoneylineMarket, selectionFromOddType } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
@@ -346,7 +347,19 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
             await sleep(env.COLLECT_DELAY_MS + Math.floor(Math.random() * 500));
             const details = await client.getEventDetails(event.id);
 
-            const matched = matchFixture(details, discoveryFixtures);
+            let matched = matchFixture(details, discoveryFixtures);
+            if (!matched) {
+              const { homeTeam, awayTeam } = splitTeams(details);
+              const llm = await findFixtureWithLlmFallback({
+                bookmakerHomeTeam: homeTeam,
+                bookmakerAwayTeam: awayTeam,
+                startsAt: details.startDate,
+                leagueName: details.champ?.name ?? null,
+                fixtures: discoveryFixtures,
+                getLeagueName: (f) => fixtureLeague(f)?.name ?? null
+              }).catch(() => null);
+              if (llm) matched = { fixture: llm.fixture, orientation: llm.orientation, score: 0.9, matched: true, timeScore: 1, teamScore: 0.9, bestSingleTeamScore: 0.9, reason: "matched" } as unknown as NonNullable<ReturnType<typeof matchFixture>>;
+            }
             if (!matched) {
               summary.eventsUnmatched += 1;
               await log(bookmaker, "warn", "bookmaker event did not match canonical fixture", {
