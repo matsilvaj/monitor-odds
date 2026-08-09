@@ -24,9 +24,6 @@
     "sync:all": "tsx src/jobs/sync-all.ts",
     "sync:watch": "tsx src/jobs/sync-watch.ts",
     "sync:watch:worker": "tsx src/jobs/sync-watch-worker.ts",
-    "client:dev": "npm --prefix servidor-monitor-odds run dev",
-    "client:package": "npm --prefix servidor-monitor-odds run package",
-    "client:release": "npm --prefix servidor-monitor-odds run release",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:matching": "tsx --test test/event-matcher.test.ts"
   },
@@ -34,7 +31,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.105.3",
     "dotenv": "^17.4.2",
     "got-scraping": "^4.2.1",
