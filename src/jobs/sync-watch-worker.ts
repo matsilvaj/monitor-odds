@@ -81,10 +81,10 @@ async function collectLane(targetLane: WatchLane) {
   }
 
   if (targetLane === "fast") {
-    return collectFastBookmakers({ concurrency: 3, logProgress: true, trigger: "watch" });
+    return collectFastBookmakers({ concurrency: 3, logProgress: false, trigger: "watch" });
   }
 
-  return collectBookmakerBySlug(targetLane, { concurrency: 1, logProgress: true, trigger: "watch" });
+  return collectBookmakerBySlug(targetLane, { concurrency: 1, logProgress: false, trigger: "watch" });
 }
 
 process.on("message", (message: unknown) => {

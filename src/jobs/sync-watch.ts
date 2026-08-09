@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { BOOKMAKER_COLLECTORS } from "../bookmakers/registry.js";
 import { supabase } from "../db/supabase.js";
 import { syncApiFootballFixtures, type SyncApiFootballFixturesOptions } from "../services/api-football-sync.js";
-import { formatFixtureSyncSummary } from "../services/sync-report.js";
+import { defaultSyncDateBuckets, formatFixtureSyncSummary } from "../services/sync-report.js";
 import { errorMessage } from "../utils/errors.js";
 import { installProcessErrorHandlers } from "../utils/process-errors.js";
 import { parseSyncWatchEventLine, type SyncWatchWorkerEvent, type WatchLane } from "./sync-watch-events.js";
@@ -100,9 +100,10 @@ async function runFixtureSync(label: string, options: SyncApiFootballFixturesOpt
   }
 
   const syncPromise = (async () => {
-    console.log(`[sync] Sincronizando jogos via API-Football (${label})...`);
     const fixtures = await syncApiFootballFixtures(options);
-    console.log(formatFixtureSyncSummary(fixtures));
+    const summary = formatFixtureSyncSummary(fixtures);
+    if (summary) console.log(summary);
+    void refreshAndRender();
   })();
 
   fixtureSyncInFlight = syncPromise;
@@ -119,7 +120,7 @@ function scheduleMidnightFixtureSync() {
 
   const nextMidnight = nextLocalMidnight();
   const delayMs = Math.max(MIN_MIDNIGHT_SYNC_DELAY_MS, nextMidnight.getTime() - Date.now());
-  console.log(`[sync] API-Football: próxima atualização de amanhã em ${nextMidnight.toLocaleString("pt-BR")}.`);
+  console.log(`[sync] Próxima atualização da API-Football: ${nextMidnight.toLocaleString("pt-BR")}.`);
 
   midnightFixtureSyncTimer = setTimeout(() => {
     midnightFixtureSyncTimer = null;
@@ -207,6 +208,128 @@ function restartWindowText() {
   return formatDuration(RESTART_WINDOW_MS);
 }
 
+// ─── Dashboard ───────────────────────────────────────────────────────────────
+
+type BookmakerDashRow = { slug: string; today: number; tomorrow: number };
+type LaneDashInfo = { cycle: number; ok: boolean | null; durationMs: number | null };
+
+const ANSI_CLEAR = "\x1b[2J\x1b[H";
+const ANSI_RESET = "\x1b[0m";
+const ANSI_BOLD = "\x1b[1m";
+const ANSI_DIM = "\x1b[2m";
+const ANSI_RED = "\x1b[31m";
+
+const dashRows: BookmakerDashRow[] = [];
+const dashLanes = new Map<WatchLane, LaneDashInfo>();
+let dashApiToday = 0;
+let dashApiTomorrow = 0;
+let dashUpdatedAt: Date | null = null;
+
+async function refreshDashboard() {
+  const buckets = defaultSyncDateBuckets();
+  const todayKey = buckets[0].key;
+  const tomorrowKey = buckets[1].key;
+
+  const { data: fixtures, error: fErr } = await supabase
+    .from("jogos")
+    .select("id,date_key")
+    .in("date_key", [todayKey, tomorrowKey]);
+  if (fErr) throw fErr;
+
+  const fixtureList = (fixtures ?? []) as Array<{ id: string; date_key: string }>;
+  const fixtureDateMap = new Map(fixtureList.map((f) => [f.id, f.date_key] as const));
+  const allIds = fixtureList.map((f) => f.id);
+
+  dashApiToday = fixtureList.filter((f) => f.date_key === todayKey).length;
+  dashApiTomorrow = fixtureList.filter((f) => f.date_key === tomorrowKey).length;
+
+  const byBookmaker = new Map<string, { today: Set<string>; tomorrow: Set<string> }>();
+
+  if (allIds.length > 0) {
+    const { data: odds, error: oErr } = await supabase
+      .from("cotacoes")
+      .select("bookmaker_slug,fixture_id")
+      .eq("market_code", "1X2")
+      .in("fixture_id", allIds)
+      .limit(10000);
+    if (oErr) throw oErr;
+
+    for (const row of (odds ?? []) as Array<{ bookmaker_slug: string; fixture_id: string }>) {
+      const dateKey = fixtureDateMap.get(row.fixture_id);
+      if (!dateKey) continue;
+      if (!byBookmaker.has(row.bookmaker_slug)) {
+        byBookmaker.set(row.bookmaker_slug, { today: new Set(), tomorrow: new Set() });
+      }
+      const entry = byBookmaker.get(row.bookmaker_slug)!;
+      if (dateKey === todayKey) entry.today.add(row.fixture_id);
+      else entry.tomorrow.add(row.fixture_id);
+    }
+  }
+
+  dashRows.length = 0;
+  for (const collector of BOOKMAKER_COLLECTORS) {
+    const entry = byBookmaker.get(collector.slug);
+    dashRows.push({ slug: collector.slug, today: entry?.today.size ?? 0, tomorrow: entry?.tomorrow.size ?? 0 });
+  }
+
+  dashUpdatedAt = new Date();
+}
+
+function renderDashboard() {
+  const W_NAME = 17;
+  const W_NUM = 7;
+  const SEP_LEN = W_NAME + W_NUM * 3;
+  const SEP = "─".repeat(SEP_LEN);
+
+  const time = dashUpdatedAt
+    ? dashUpdatedAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : "--:--:--";
+
+  const apiTotal = dashApiToday + dashApiTomorrow;
+  const titlePad = Math.max(1, SEP_LEN - "Servidor de odds".length - time.length);
+  const out: string[] = [
+    ANSI_CLEAR,
+    `${ANSI_BOLD}Servidor de odds${ANSI_RESET}${" ".repeat(titlePad)}${ANSI_DIM}${time}${ANSI_RESET}`,
+    SEP,
+    " ".repeat(W_NAME) + "Hoje".padStart(W_NUM) + "Amanhã".padStart(W_NUM) + "Total".padStart(W_NUM),
+    "API".padEnd(W_NAME) + String(dashApiToday).padStart(W_NUM) + String(dashApiTomorrow).padStart(W_NUM) + String(apiTotal).padStart(W_NUM),
+    SEP
+  ];
+
+  for (const row of dashRows) {
+    const total = row.today + row.tomorrow;
+    const isEmpty = apiTotal > 0 && total === 0;
+    let line = row.slug.padEnd(W_NAME) + String(row.today).padStart(W_NUM) + String(row.tomorrow).padStart(W_NUM) + String(total).padStart(W_NUM);
+    if (isEmpty) line = ANSI_RED + line + ANSI_RESET;
+    out.push(line);
+  }
+
+  out.push(SEP);
+
+  const laneParts: string[] = [];
+  for (const [lane, info] of dashLanes) {
+    if (!info.cycle) continue;
+    const label = lane === "fast" ? "rápidas" : lane;
+    const dur = info.durationMs ? ` ${formatDuration(info.durationMs)}` : "";
+    const errMark = info.ok === false ? ` ${ANSI_RED}✗${ANSI_RESET}` : "";
+    laneParts.push(`${ANSI_DIM}${label}${ANSI_RESET} ciclo ${info.cycle}${dur}${errMark}`);
+  }
+  if (laneParts.length) out.push(laneParts.join("  │  "));
+
+  process.stdout.write(out.join("\n") + "\n");
+}
+
+async function refreshAndRender() {
+  try {
+    await refreshDashboard();
+  } catch {
+    // mostra dados desatualizados silenciosamente
+  }
+  renderDashboard();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function attachWorkerOutput(state: WorkerState, stream: NodeJS.ReadableStream | null, isError: boolean) {
   if (!stream) return;
   let buffer = "";
@@ -245,7 +368,6 @@ function handleWorkerEvent(state: WorkerState, event: SyncWatchWorkerEvent) {
     state.status = "running";
     state.startedAt = now;
     state.lastHeartbeatAt = now;
-    console.log(`[sync:${state.config.label}] Worker pronto (pid ${event.pid}).`);
     return;
   }
 
@@ -267,7 +389,6 @@ function handleWorkerEvent(state: WorkerState, event: SyncWatchWorkerEvent) {
     state.lastHeartbeatAt = now;
     state.cycleStartedAt = now;
     state.currentCycle = event.cycle ?? state.currentCycle;
-    console.log(`[sync:${state.config.label}] Ciclo ${state.currentCycle} iniciado.`);
     return;
   }
 
@@ -278,12 +399,17 @@ function handleWorkerEvent(state: WorkerState, event: SyncWatchWorkerEvent) {
     state.cycleStartedAt = null;
     state.currentCycle = event.cycle ?? state.currentCycle;
 
-    const duration = typeof event.durationMs === "number" ? formatDuration(event.durationMs) : "tempo indefinido";
+    dashLanes.set(state.config.lane, {
+      cycle: state.currentCycle,
+      ok: event.ok ?? true,
+      durationMs: event.durationMs ?? null
+    });
+
     if (event.ok === false) {
-      console.warn(`[sync:${state.config.label}] Ciclo ${state.currentCycle} finalizado com erro em ${duration}: ${event.error ?? "erro desconhecido"}.`);
-    } else {
-      console.log(`[sync:${state.config.label}] Ciclo ${state.currentCycle} finalizado em ${duration}. Próximo ciclo em 2s.`);
+      console.warn(`[sync:${state.config.label}] Ciclo ${state.currentCycle} falhou: ${event.error ?? "erro desconhecido"}.`);
     }
+
+    void refreshAndRender();
     return;
   }
 
@@ -323,7 +449,6 @@ function startWorker(state: WorkerState) {
   state.currentCycle = 0;
   state.stopRequested = false;
 
-  console.log(`[sync:${state.config.label}] Worker iniciado (pid ${child.pid ?? "?"}).`);
 
   attachWorkerOutput(state, child.stdout, false);
   attachWorkerOutput(state, child.stderr, true);
@@ -571,13 +696,6 @@ for (const config of laneConfigs) {
 const enabledStates = workerStates.filter((state) => state.config.enabled);
 for (const state of enabledStates) startWorker(state);
 
-console.log(`[sync] Workers supervisionados iniciados: ${enabledStates.map((state) => state.config.label).join(", ")}.`);
-console.log(
-  `[watchdog] Heartbeat limite: ${formatDuration(HEARTBEAT_STALE_MS)} | timeouts: ${laneConfigs
-    .filter((config) => config.enabled)
-    .map((config) => `${config.label}=${formatDuration(config.cycleTimeoutMs)}`)
-    .join(", ")}.`
-);
 
 watchdogTimer = setInterval(checkWorkers, WATCHDOG_CHECK_MS);
 
