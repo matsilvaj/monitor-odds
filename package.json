@@ -1,6 +1,6 @@
 {
   "name": "monitor-odds",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Coletor de odds pre-jogo com persistencia no Supabase.",
   "main": "dist/jobs/sync-watch.js",
   "type": "module",

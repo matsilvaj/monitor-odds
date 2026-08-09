@@ -80,11 +80,15 @@ async function collectLane(targetLane: WatchLane) {
     return { smoke: true, lane: targetLane };
   }
 
+  const onBookmakerResult = (slug: string, today: number, tomorrow: number) => {
+    emitWorkerEvent({ type: "bookmaker-result", bookmakerSlug: slug, today, tomorrow });
+  };
+
   if (targetLane === "fast") {
-    return collectFastBookmakers({ concurrency: 3, logProgress: false, trigger: "watch" });
+    return collectFastBookmakers({ concurrency: 3, logProgress: false, trigger: "watch", onBookmakerResult });
   }
 
-  return collectBookmakerBySlug(targetLane, { concurrency: 1, logProgress: false, trigger: "watch" });
+  return collectBookmakerBySlug(targetLane, { concurrency: 1, logProgress: false, trigger: "watch", onBookmakerResult });
 }
 
 process.on("message", (message: unknown) => {

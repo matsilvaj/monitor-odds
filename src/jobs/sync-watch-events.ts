@@ -11,6 +11,7 @@ export type SyncWatchWorkerEvent = {
     | "heartbeat"
     | "cycle-started"
     | "cycle-finished"
+    | "bookmaker-result"
     | "shutdown-requested"
     | "worker-stopped";
   lane: WatchLane;
@@ -23,6 +24,9 @@ export type SyncWatchWorkerEvent = {
   heartbeatMs?: number;
   source?: string;
   error?: string;
+  bookmakerSlug?: string;
+  today?: number;
+  tomorrow?: number;
 };
 
 export function isWatchLane(value: unknown): value is WatchLane {

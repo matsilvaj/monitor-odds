@@ -224,6 +224,7 @@ export type CollectAllBookmakersOptions = {
   logProgress?: boolean;
   trigger?: "manual" | "sync" | "watch";
   cleanupStarted?: boolean;
+  onBookmakerResult?: (slug: string, today: number, tomorrow: number) => void;
 };
 
 const BROWSER_COLLECTOR_SLUGS = new Set<string>(["meridianbet", "bet365"]);
@@ -246,13 +247,23 @@ async function collectBookmakers(bookmakers: BookmakerCollector[], options: Coll
   }
 
   const printBookmakerResult = async (result: BookmakerCollectorResult) => {
-    if (!logProgress) return;
+    const needsReport = logProgress || !!options.onBookmakerResult;
+    if (!needsReport) return;
 
     try {
       const report = await getBookmakerOddsReport(result.bookmaker, fixtureReport);
-      for (const line of formatBookmakerResultLines(result, report, fixtureReport)) console.log(line);
+      if (logProgress) {
+        for (const line of formatBookmakerResultLines(result, report, fixtureReport)) console.log(line);
+      }
+      if (options.onBookmakerResult) {
+        const todayKey = fixtureReport.buckets[0]?.key ?? "";
+        const tomorrowKey = fixtureReport.buckets[1]?.key ?? "";
+        options.onBookmakerResult(result.bookmaker, report.byDate.get(todayKey)?.games ?? 0, report.byDate.get(tomorrowKey)?.games ?? 0);
+      }
     } catch (error) {
-      console.warn(`[${result.bookmaker}] Coleta finalizada, mas não consegui montar o resumo do banco: ${errorMessage(error)}`);
+      if (logProgress) {
+        console.warn(`[${result.bookmaker}] Coleta finalizada, mas não consegui montar o resumo do banco: ${errorMessage(error)}`);
+      }
     }
   };
 
@@ -295,13 +306,23 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
   }
 
   const printBookmakerResult = async (result: BookmakerCollectorResult) => {
-    if (!logProgress) return;
+    const needsReport = logProgress || !!options.onBookmakerResult;
+    if (!needsReport) return;
 
     try {
       const report = await getBookmakerOddsReport(result.bookmaker, fixtureReport);
-      for (const line of formatBookmakerResultLines(result, report, fixtureReport)) console.log(line);
+      if (logProgress) {
+        for (const line of formatBookmakerResultLines(result, report, fixtureReport)) console.log(line);
+      }
+      if (options.onBookmakerResult) {
+        const todayKey = fixtureReport.buckets[0]?.key ?? "";
+        const tomorrowKey = fixtureReport.buckets[1]?.key ?? "";
+        options.onBookmakerResult(result.bookmaker, report.byDate.get(todayKey)?.games ?? 0, report.byDate.get(tomorrowKey)?.games ?? 0);
+      }
     } catch (error) {
-      console.warn(`[${result.bookmaker}] Coleta finalizada, mas não consegui montar o resumo do banco: ${errorMessage(error)}`);
+      if (logProgress) {
+        console.warn(`[${result.bookmaker}] Coleta finalizada, mas não consegui montar o resumo do banco: ${errorMessage(error)}`);
+      }
     }
   };
 

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { BOOKMAKER_COLLECTORS } from "../bookmakers/registry.js";
 import { supabase } from "../db/supabase.js";
 import { syncApiFootballFixtures, type SyncApiFootballFixturesOptions } from "../services/api-football-sync.js";
-import { defaultSyncDateBuckets, formatFixtureSyncSummary } from "../services/sync-report.js";
+import { defaultSyncDateBuckets } from "../services/sync-report.js";
 import { errorMessage } from "../utils/errors.js";
 import { installProcessErrorHandlers } from "../utils/process-errors.js";
 import { parseSyncWatchEventLine, type SyncWatchWorkerEvent, type WatchLane } from "./sync-watch-events.js";
@@ -100,9 +100,7 @@ async function runFixtureSync(label: string, options: SyncApiFootballFixturesOpt
   }
 
   const syncPromise = (async () => {
-    const fixtures = await syncApiFootballFixtures(options);
-    const summary = formatFixtureSyncSummary(fixtures);
-    if (summary) console.log(summary);
+    await syncApiFootballFixtures(options);
     void refreshAndRender();
   })();
 
@@ -210,7 +208,9 @@ function restartWindowText() {
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
-type BookmakerDashRow = { slug: string; today: number; tomorrow: number };
+const BROWSER_DASH_SLUGS = new Set(["meridianbet", "bet365"]);
+
+type BookmakerDashRow = { slug: string; today: number; tomorrow: number; isBrowser: boolean; cycle: number };
 type LaneDashInfo = { cycle: number; ok: boolean | null; durationMs: number | null };
 
 const ANSI_CLEAR = "\x1b[2J\x1b[H";
@@ -219,7 +219,15 @@ const ANSI_BOLD = "\x1b[1m";
 const ANSI_DIM = "\x1b[2m";
 const ANSI_RED = "\x1b[31m";
 
-const dashRows: BookmakerDashRow[] = [];
+let lastRenderLineCount = 0;
+
+const dashRows: BookmakerDashRow[] = BOOKMAKER_COLLECTORS.map((c) => ({
+  slug: c.slug,
+  today: 0,
+  tomorrow: 0,
+  isBrowser: BROWSER_DASH_SLUGS.has(c.slug),
+  cycle: 0
+}));
 const dashLanes = new Map<WatchLane, LaneDashInfo>();
 let dashApiToday = 0;
 let dashApiTomorrow = 0;
@@ -232,53 +240,21 @@ async function refreshDashboard() {
 
   const { data: fixtures, error: fErr } = await supabase
     .from("jogos")
-    .select("id,date_key")
+    .select("date_key")
     .in("date_key", [todayKey, tomorrowKey]);
   if (fErr) throw fErr;
 
-  const fixtureList = (fixtures ?? []) as Array<{ id: string; date_key: string }>;
-  const fixtureDateMap = new Map(fixtureList.map((f) => [f.id, f.date_key] as const));
-  const allIds = fixtureList.map((f) => f.id);
-
+  const fixtureList = (fixtures ?? []) as Array<{ date_key: string }>;
   dashApiToday = fixtureList.filter((f) => f.date_key === todayKey).length;
   dashApiTomorrow = fixtureList.filter((f) => f.date_key === tomorrowKey).length;
-
-  const byBookmaker = new Map<string, { today: Set<string>; tomorrow: Set<string> }>();
-
-  if (allIds.length > 0) {
-    const { data: odds, error: oErr } = await supabase
-      .from("cotacoes")
-      .select("bookmaker_slug,fixture_id")
-      .eq("market_code", "1X2")
-      .in("fixture_id", allIds)
-      .limit(10000);
-    if (oErr) throw oErr;
-
-    for (const row of (odds ?? []) as Array<{ bookmaker_slug: string; fixture_id: string }>) {
-      const dateKey = fixtureDateMap.get(row.fixture_id);
-      if (!dateKey) continue;
-      if (!byBookmaker.has(row.bookmaker_slug)) {
-        byBookmaker.set(row.bookmaker_slug, { today: new Set(), tomorrow: new Set() });
-      }
-      const entry = byBookmaker.get(row.bookmaker_slug)!;
-      if (dateKey === todayKey) entry.today.add(row.fixture_id);
-      else entry.tomorrow.add(row.fixture_id);
-    }
-  }
-
-  dashRows.length = 0;
-  for (const collector of BOOKMAKER_COLLECTORS) {
-    const entry = byBookmaker.get(collector.slug);
-    dashRows.push({ slug: collector.slug, today: entry?.today.size ?? 0, tomorrow: entry?.tomorrow.size ?? 0 });
-  }
-
   dashUpdatedAt = new Date();
 }
 
 function renderDashboard() {
   const W_NAME = 17;
   const W_NUM = 7;
-  const SEP_LEN = W_NAME + W_NUM * 3;
+  const W_CYCLE = 7;
+  const SEP_LEN = W_NAME + W_NUM * 3 + W_CYCLE;
   const SEP = "─".repeat(SEP_LEN);
 
   const time = dashUpdatedAt
@@ -291,32 +267,43 @@ function renderDashboard() {
     ANSI_CLEAR,
     `${ANSI_BOLD}Servidor de odds${ANSI_RESET}${" ".repeat(titlePad)}${ANSI_DIM}${time}${ANSI_RESET}`,
     SEP,
-    " ".repeat(W_NAME) + "Hoje".padStart(W_NUM) + "Amanhã".padStart(W_NUM) + "Total".padStart(W_NUM),
-    "API".padEnd(W_NAME) + String(dashApiToday).padStart(W_NUM) + String(dashApiTomorrow).padStart(W_NUM) + String(apiTotal).padStart(W_NUM),
+    " ".repeat(W_NAME) + "Hoje".padStart(W_NUM) + "Amanhã".padStart(W_NUM) + "Total".padStart(W_NUM) + "Ciclo".padStart(W_CYCLE),
+    "API".padEnd(W_NAME) + String(dashApiToday).padStart(W_NUM) + String(dashApiTomorrow).padStart(W_NUM) + String(apiTotal).padStart(W_NUM) + " ".repeat(W_CYCLE),
     SEP
   ];
 
-  for (const row of dashRows) {
+  const buildRow = (row: BookmakerDashRow) => {
     const total = row.today + row.tomorrow;
     const isEmpty = apiTotal > 0 && total === 0;
-    let line = row.slug.padEnd(W_NAME) + String(row.today).padStart(W_NUM) + String(row.tomorrow).padStart(W_NUM) + String(total).padStart(W_NUM);
+    const cycleStr = row.cycle ? `#${row.cycle}` : "-";
+    let line =
+      row.slug.padEnd(W_NAME) +
+      String(row.today).padStart(W_NUM) +
+      String(row.tomorrow).padStart(W_NUM) +
+      String(total).padStart(W_NUM) +
+      cycleStr.padStart(W_CYCLE);
     if (isEmpty) line = ANSI_RED + line + ANSI_RESET;
-    out.push(line);
+    return line;
+  };
+
+  const fastRows = dashRows.filter((r) => !r.isBrowser);
+  const browserRows = dashRows.filter((r) => r.isBrowser);
+
+  for (const row of fastRows) out.push(buildRow(row));
+
+  if (browserRows.length) {
+    out.push(`${ANSI_DIM}${"─".repeat(SEP_LEN)}${ANSI_RESET}`);
+    for (const row of browserRows) out.push(buildRow(row));
   }
 
   out.push(SEP);
 
-  const laneParts: string[] = [];
-  for (const [lane, info] of dashLanes) {
-    if (!info.cycle) continue;
-    const label = lane === "fast" ? "rápidas" : lane;
-    const dur = info.durationMs ? ` ${formatDuration(info.durationMs)}` : "";
-    const errMark = info.ok === false ? ` ${ANSI_RED}✗${ANSI_RESET}` : "";
-    laneParts.push(`${ANSI_DIM}${label}${ANSI_RESET} ciclo ${info.cycle}${dur}${errMark}`);
-  }
-  if (laneParts.length) out.push(laneParts.join("  │  "));
+  const prefix = lastRenderLineCount === 0
+    ? ANSI_CLEAR
+    : `\x1b[${lastRenderLineCount}A\x1b[0J`;
 
-  process.stdout.write(out.join("\n") + "\n");
+  process.stdout.write(prefix + out.join("\n") + "\n");
+  lastRenderLineCount = out.length;
 }
 
 async function refreshAndRender() {
@@ -341,9 +328,7 @@ function attachWorkerOutput(state: WorkerState, stream: NodeJS.ReadableStream | 
       return;
     }
 
-    if (!line.trim()) return;
-    const method = isError ? console.error : console.log;
-    method(line);
+    // todo output dos workers é descartado — o dashboard substitui os logs
   };
 
   stream.on("data", (chunk) => {
@@ -410,6 +395,18 @@ function handleWorkerEvent(state: WorkerState, event: SyncWatchWorkerEvent) {
     }
 
     void refreshAndRender();
+    return;
+  }
+
+  if (event.type === "bookmaker-result") {
+    const row = dashRows.find((r) => r.slug === event.bookmakerSlug);
+    if (row && typeof event.today === "number" && typeof event.tomorrow === "number") {
+      row.today = event.today;
+      row.tomorrow = event.tomorrow;
+      row.cycle = state.currentCycle;
+      dashUpdatedAt = new Date();
+      renderDashboard();
+    }
     return;
   }
 
@@ -670,10 +667,7 @@ process.on("message", (message: unknown) => {
 process.once("SIGINT", () => requestShutdown("Ctrl+C"));
 process.once("SIGTERM", () => requestShutdown("sistema"));
 
-console.log("sync:watch iniciado. Ctrl+C para parar.");
-
 if (SKIP_FIXTURE_SYNC) {
-  console.log("[sync] Sincronização API-Football pulada por modo de teste.");
 } else {
   await runFixtureSync("inicial").catch((error) => {
     console.error("[sync] Falha na sincronizacao inicial da API-Football.", error);
