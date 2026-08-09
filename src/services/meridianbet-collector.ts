@@ -6,7 +6,6 @@ import { supabase } from "../db/supabase.js";
 import { normalizeName } from "../domain/text.js";
 import { isFixturePrematchForOddsRefresh as isPrematch } from "./collector-resilience.js";
 import { errorMessage } from "../utils/errors.js";
-import { requestBookmakerLeagueUrl, resolveBookmakerLeagueUrlRequest } from "./bookmaker-league-url-requests.js";
 import {
   isMeridianEventPageUrl,
   MeridianbetBrowserClient,
@@ -324,7 +323,6 @@ async function saveLeagueLink(bookmaker: MeridianbetBookmakerConfig, league: Act
     { onConflict: "bookmaker_slug,api_football_league_id" }
   );
   if (error) throw error;
-  await resolveBookmakerLeagueUrlRequest(bookmaker.slug, league, sourceUrl);
 }
 
 async function persistEventSnapshot(
@@ -543,7 +541,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           const hardcoded = MERIDIAN_LEAGUES[league.api_football_league_id];
           const leagueUrl = hardcoded?.url ?? savedUrl ?? null;
           if (!leagueUrl) {
-            await emitLeagueUrlError(bookmaker, league, null, "league-not-found", logger);
+            await emitLeagueUrlError(bookmaker, league, null, logger);
             summary.leaguesSkipped += 1;
             continue;
           }
@@ -557,7 +555,7 @@ export function createMeridianbetCollector(bookmaker: MeridianbetBookmakerConfig
           await client.goToUrl(discoveryPage, leagueUrl, "navegando para URL de liga da meridianbet");
           await client.selectAllPeriod(discoveryPage);
           if (!(await client.pageLooksLikeLeague(discoveryPage))) {
-            await emitLeagueUrlError(bookmaker, league, savedUrl ?? leagueUrl, savedUrl ? "saved-url-failed" : "league-not-found", logger);
+            await emitLeagueUrlError(bookmaker, league, savedUrl ?? leagueUrl, logger);
             summary.leaguesSkipped += 1;
             continue;
           }
@@ -704,26 +702,11 @@ async function emitLeagueUrlError(
   bookmaker: MeridianbetBookmakerConfig,
   league: ActiveLeague,
   previousUrl: string | null,
-  reason: "league-not-found" | "saved-url-failed",
   logger: Logger
 ) {
-  const errorMessageText = `MeridianBet - '${league.name}' não foi encontrada - atualizar link`;
-  await requestBookmakerLeagueUrl(
-    {
-      bookmakerSlug: bookmaker.slug,
-      league,
-      reason,
-      previousUrl,
-      raw: {
-        message: errorMessageText
-      }
-    },
-    logger
-  );
   await logger("error", "liga da meridianbet precisa atualizar link", {
     leagueName: league.name,
     apiFootballLeagueId: league.api_football_league_id,
-    previousUrl,
-    errorMessage: errorMessageText
+    previousUrl
   });
 }

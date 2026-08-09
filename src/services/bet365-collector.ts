@@ -15,7 +15,6 @@ import type { Bet365Event, Bet365Market, Logger } from "../providers/bet365/type
 import { ChromeClient, type Bet365ChromeTabSession } from "../providers/bet365/chrome-client.js";
 import { isFixturePrematchForOddsRefresh as isPrematch } from "./collector-resilience.js";
 import { Bet365CollectionStateRepository } from "./bet365-collection-state.js";
-import { requestBookmakerLeagueUrl, resolveBookmakerLeagueUrlRequest } from "./bookmaker-league-url-requests.js";
 import { getSavedBookmakerEventLinks, objectRaw, type SavedBookmakerEventLink } from "./saved-bookmaker-events.js";
 import { errorMessage } from "../utils/errors.js";
 import { matchBet365Snapshots } from "./bet365-snapshot-matcher.js";
@@ -476,26 +475,6 @@ async function saveLeagueLink(bookmaker: Bet365BookmakerConfig, league: Canonica
   );
 
   if (error) throw error;
-  await resolveBookmakerLeagueUrlRequest(bookmaker.slug, league, candidate.sourceUrl, logger);
-}
-
-async function requestLeagueUrlUpdate(bookmaker: Bet365BookmakerConfig, league: CanonicalLeague, previousUrl: string | null, attemptedUrls: Bet365LeagueUrlCandidate[], logger: Logger) {
-  await requestBookmakerLeagueUrl(
-    {
-      bookmakerSlug: bookmaker.slug,
-      league,
-      reason: previousUrl ? "saved-url-failed" : "league-not-found",
-      previousUrl,
-      raw: {
-        attemptedUrls: attemptedUrls.map((candidate) => ({
-          source: candidate.source,
-          label: candidate.label,
-          sourceUrl: candidate.sourceUrl
-        }))
-      }
-    },
-    logger
-  );
 }
 
 function numericRawValue(value: unknown) {
@@ -1041,7 +1020,6 @@ export class Bet365Collector {
         apiFootballLeagueId: league.api_football_league_id,
         fixtures: canonicalFixtures.length
       });
-      await requestLeagueUrlUpdate(this.config, league, null, [], this.logger);
       return leagueSummary;
     }
 
@@ -1161,7 +1139,6 @@ export class Bet365Collector {
     }
 
     if (!leagueSummary.eventsCollected) {
-      await requestLeagueUrlUpdate(this.config, league, savedLeagueLink?.source_url ?? null, attempted, this.logger);
     }
     return leagueSummary;
   }

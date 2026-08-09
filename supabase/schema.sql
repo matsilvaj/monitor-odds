@@ -110,24 +110,6 @@ create table if not exists links_campeonatos (
   unique (bookmaker_slug, api_football_league_id)
 );
 
-create table if not exists pendencias_links_campeonatos (
-  id uuid primary key default gen_random_uuid(),
-  bookmaker_slug text not null references casas_apostas(slug) on delete cascade,
-  api_football_league_id bigint not null,
-  league_name text not null,
-  league_country text,
-  mode text not null check (mode in ('add', 'update')),
-  reason text not null check (reason in ('league-not-found', 'saved-url-failed')),
-  previous_url text,
-  status text not null default 'pending' check (status in ('pending', 'resolved')),
-  resolved_url text,
-  resolved_at timestamptz,
-  raw jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (bookmaker_slug, api_football_league_id)
-);
-
 
 create table if not exists cotacoes (
   id uuid primary key default gen_random_uuid(),
@@ -285,8 +267,6 @@ create index if not exists odds_bookmaker_market_fixture_idx on cotacoes (bookma
 create index if not exists bookmaker_event_links_fixture_id_idx on links_eventos (fixture_id);
 create index if not exists bookmaker_event_links_bookmaker_fixture_idx on links_eventos (bookmaker_slug, fixture_id);
 create index if not exists bookmaker_league_links_slug_league_idx on links_campeonatos (bookmaker_slug, api_football_league_id);
-create index if not exists bookmaker_league_url_requests_status_idx on pendencias_links_campeonatos (status, updated_at);
-create index if not exists bookmaker_league_url_requests_slug_league_idx on pendencias_links_campeonatos (bookmaker_slug, api_football_league_id);
 create index if not exists bookmaker_event_snapshots_bookmaker_date_idx on capturas_eventos (bookmaker_slug, date_key);
 create index if not exists bookmaker_event_snapshots_league_idx on capturas_eventos (league_api_football_id);
 create index if not exists bookmaker_collection_state_next_run_idx on estado_coletas (next_run_at);
@@ -476,7 +456,6 @@ revoke all on
   jogos,
   links_eventos,
   links_campeonatos,
-  pendencias_links_campeonatos,
   cotacoes,
   execucoes_sync_jogos,
   capturas_eventos,
@@ -491,7 +470,6 @@ alter table apelidos_times enable row level security;
 alter table jogos enable row level security;
 alter table links_eventos enable row level security;
 alter table links_campeonatos enable row level security;
-alter table pendencias_links_campeonatos enable row level security;
 alter table cotacoes enable row level security;
 alter table execucoes_sync_jogos enable row level security;
 alter table capturas_eventos enable row level security;
