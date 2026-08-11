@@ -213,13 +213,24 @@ const BROWSER_DASH_SLUGS = new Set(["meridianbet", "bet365"]);
 type BookmakerDashRow = { slug: string; today: number; tomorrow: number; isBrowser: boolean; cycle: number };
 type LaneDashInfo = { cycle: number; ok: boolean | null; durationMs: number | null };
 
-const ANSI_CLEAR = "\x1b[2J\x1b[H";
 const ANSI_RESET = "\x1b[0m";
 const ANSI_BOLD = "\x1b[1m";
 const ANSI_DIM = "\x1b[2m";
 const ANSI_RED = "\x1b[31m";
 
-let lastRenderLineCount = 0;
+let altScreenActive = false;
+
+function enterAltScreen() {
+  if (altScreenActive) return;
+  process.stdout.write("\x1b[?1049h\x1b[H");
+  altScreenActive = true;
+}
+
+function exitAltScreen() {
+  if (!altScreenActive) return;
+  process.stdout.write("\x1b[?1049l");
+  altScreenActive = false;
+}
 
 const dashRows: BookmakerDashRow[] = BOOKMAKER_COLLECTORS.map((c) => ({
   slug: c.slug,
@@ -264,7 +275,6 @@ function renderDashboard() {
   const apiTotal = dashApiToday + dashApiTomorrow;
   const titlePad = Math.max(1, SEP_LEN - "Servidor de odds".length - time.length);
   const out: string[] = [
-    ANSI_CLEAR,
     `${ANSI_BOLD}Servidor de odds${ANSI_RESET}${" ".repeat(titlePad)}${ANSI_DIM}${time}${ANSI_RESET}`,
     SEP,
     " ".repeat(W_NAME) + "Hoje".padStart(W_NUM) + "Amanhã".padStart(W_NUM) + "Total".padStart(W_NUM) + "Ciclo".padStart(W_CYCLE),
@@ -298,12 +308,8 @@ function renderDashboard() {
 
   out.push(SEP);
 
-  const prefix = lastRenderLineCount === 0
-    ? ANSI_CLEAR
-    : `\x1b[${lastRenderLineCount}A\x1b[0J`;
-
-  process.stdout.write(prefix + out.join("\n") + "\n");
-  lastRenderLineCount = out.length;
+  enterAltScreen();
+  process.stdout.write("\x1b[H\x1b[0J" + out.join("\n") + "\n");
 }
 
 async function refreshAndRender() {
@@ -666,6 +672,7 @@ process.on("message", (message: unknown) => {
 });
 process.once("SIGINT", () => requestShutdown("Ctrl+C"));
 process.once("SIGTERM", () => requestShutdown("sistema"));
+process.once("exit", () => exitAltScreen());
 
 if (SKIP_FIXTURE_SYNC) {
 } else {
@@ -700,4 +707,5 @@ await resetBrowserCollectionStates().catch((error) => {
   console.warn(`[sync] Não consegui limpar o estado final das coletas de navegador: ${errorMessage(error)}`);
 });
 
+exitAltScreen();
 console.log("[sync] Monitor encerrado com segurança.");

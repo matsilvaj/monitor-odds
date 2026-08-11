@@ -599,7 +599,7 @@ class Bet365PageController {
 
     await this.logger?.("info", "tentando abrir evento da bet365", { eventIndex, homeTeam, awayTeam, sourceUrl });
 
-    const rowSelector = '.rrc-e, [class*="ParticipantFixtureDetails"]';
+    const rowSelector = '.rrc-0, [class*="ParticipantFixtureDetails"]';
 
     try {
       const locator = homeTeam

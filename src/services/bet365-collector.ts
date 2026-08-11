@@ -133,6 +133,7 @@ const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   71: [{ label: "Brasileirao Serie A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E88369731/G40/" }],
   72: [{ label: "Brasileirao Serie B", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E102584281/G40/H%5E1/" }],
   137: [{ label: "Coppa Italia", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E137112511/G40/" }],
+  182: [{ label: "Scottish Challenge Cup", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E137205045/G40/" }],
   185: [{ label: "Scottish League Cup", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E135851259/G40/" }]
 };
 

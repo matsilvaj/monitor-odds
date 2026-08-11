@@ -28,7 +28,8 @@ import {
   formatBookmakerStartLine,
   formatFixtureReportLines,
   getBookmakerOddsReport,
-  getFixtureReport
+  getFixtureReport,
+  type FixtureReport
 } from "../services/sync-report.js";
 import { errorMessage } from "../utils/errors.js";
 import type { BookmakerCollector, BookmakerCollectorResult } from "./types.js";
@@ -224,6 +225,7 @@ export type CollectAllBookmakersOptions = {
   logProgress?: boolean;
   trigger?: "manual" | "sync" | "watch";
   cleanupStarted?: boolean;
+  sharedFixtureReport?: FixtureReport;
   onBookmakerResult?: (slug: string, today: number, tomorrow: number) => void;
 };
 
@@ -240,9 +242,9 @@ async function collectBookmakers(bookmakers: BookmakerCollector[], options: Coll
     }
   }
 
-  const fixtureReport = await getFixtureReport();
+  const fixtureReport = options.sharedFixtureReport ?? await getFixtureReport();
 
-  if (logProgress) {
+  if (logProgress && !options.sharedFixtureReport) {
     for (const line of formatFixtureReportLines(fixtureReport)) console.log(line);
   }
 
@@ -361,9 +363,48 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
   return [...fastResults, ...browserResults];
 }
 
+// Concorrência máxima por provider dentro do grupo (providers únicos usam 1 por padrão)
+const FAST_PROVIDER_CONCURRENCY: Partial<Record<string, number>> = {
+  altenar: 3, // 7 casas, mesma API Altenar (integrações distintas, seguro em 3)
+  bet7k: 1,   // 2 casas (bet7k + betvip), mesmo backend fssb.io
+};
+
 export async function collectFastBookmakers(options: CollectAllBookmakersOptions = {}) {
+  const logProgress = options.logProgress ?? true;
   const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => !BROWSER_COLLECTOR_SLUGS.has(bookmaker.slug));
-  return collectBookmakers(fastCollectors, options);
+
+  // Cleanup e fixture report uma única vez para todos os grupos
+  if (options.cleanupStarted ?? true) {
+    const cleanup = await cleanupStartedFixtures();
+    if (logProgress) console.log(formatStartedFixtureCleanupSummary(cleanup));
+  }
+  const sharedFixtureReport = await getFixtureReport();
+  if (logProgress) {
+    for (const line of formatFixtureReportLines(sharedFixtureReport)) console.log(line);
+  }
+
+  // Agrupa por provider — mesmo provider = mesmo backend = mesmo rate limit
+  const groups = new Map<string, BookmakerCollector[]>();
+  for (const collector of fastCollectors) {
+    const providerKey = BOOKMAKERS.find((b) => b.slug === collector.slug)?.provider ?? collector.slug;
+    const existing = groups.get(providerKey) ?? [];
+    existing.push(collector);
+    groups.set(providerKey, existing);
+  }
+
+  // Todos os grupos rodam em paralelo (APIs distintas = sem conflito)
+  const groupResults = await Promise.all(
+    [...groups.entries()].map(([provider, group]) =>
+      collectBookmakers(group, {
+        ...options,
+        concurrency: FAST_PROVIDER_CONCURRENCY[provider] ?? 1,
+        cleanupStarted: false,
+        sharedFixtureReport,
+      })
+    )
+  );
+
+  return groupResults.flat();
 }
 
 export async function collectBookmakerBySlug(slug: string, options: CollectAllBookmakersOptions = {}) {

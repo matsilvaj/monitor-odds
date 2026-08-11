@@ -162,7 +162,12 @@ function formatConsoleLine(level: "info" | "warn" | "error", message: string, co
   if (message === "coleta bruta da liga da meridianbet finalizada") return `[meridianbet] Liga ${contextValue(context, "leagueName")} finalizada: ${contextValue(context, "eventsFound")} D0/D1 | ${contextValue(context, "eventsTargeted")} alvo | ${contextValue(context, "snapshotsSaved")} salvos | ${contextValue(context, "errors")} erros.`;
   if (message === "liga da meridianbet sem eventos D0/D1") return `[meridianbet] Liga sem jogos D0/D1: ${contextValue(context, "leagueName")} | ${contextValue(context, "visibleEvents")} eventos visiveis fora do periodo.`;
   if (message === "liga da meridianbet abriu, mas nenhum evento foi encontrado") return `[meridianbet] Liga sem jogos visíveis: ${contextValue(context, "leagueName")} | ${contextValue(context, "sourceUrl")}.`;
-  if (message === "liga da meridianbet precisa atualizar link") return `[meridianbet] Erro: ${contextValue(context, "errorMessage")}`;
+  if (message === "liga da meridianbet precisa atualizar link") {
+    const previousUrl = contextValue(context, "previousUrl");
+    return previousUrl
+      ? `[meridianbet] Liga com URL inválida: ${contextValue(context, "leagueName")} | ${previousUrl}.`
+      : `[meridianbet] Liga sem URL configurada: ${contextValue(context, "leagueName")}.`;
+  }
   if (message === "coleta da meridianbet finalizada") return `[meridianbet] Coleta finalizada: ${contextValue(context, "eventsCollected")} jogos coletados | ${contextValue(context, "oddsFound")} odds lidas | ${contextValue(context, "oddsUpserted")} alteradas | ${contextValue(context, "errors")} erros.`;
   if (level === "error") return `[meridianbet] Erro: ${message}.`;
   return null;

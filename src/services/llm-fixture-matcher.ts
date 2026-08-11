@@ -16,6 +16,42 @@ export type LlmMatchResult = {
 const LLM_MAX_CANDIDATES = 30;
 const LLM_LEAGUE_MIN_SIMILARITY = 0.45;
 
+// Modelos em ordem de preferência — quando um dá rate limit, tenta o próximo
+const GROQ_MODEL_ROTATION = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+];
+
+// Modelos marcados como esgotados nesta sessão (rate limit 429)
+const exhaustedModels = new Map<string, number>();
+const MODEL_RETRY_MS = 10 * 60 * 1000; // tenta de novo após 10 min
+
+// Cache em memória: evita chamar o LLM para o mesmo par de times na mesma sessão
+const matchCache = new Map<string, LlmMatchResult | null>();
+
+function cacheKey(homeTeam: string, awayTeam: string, leagueName: string | null): string {
+  return `${homeTeam.toLowerCase()}|${awayTeam.toLowerCase()}|${leagueName?.toLowerCase() ?? ""}`;
+}
+
+function nextAvailableModel(): string | null {
+  const now = Date.now();
+  for (const model of GROQ_MODEL_ROTATION) {
+    const exhaustedAt = exhaustedModels.get(model);
+    if (!exhaustedAt || now - exhaustedAt > MODEL_RETRY_MS) return model;
+  }
+  return null;
+}
+
+function isRateLimit(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("429") || msg.includes("rate_limit_exceeded") || msg.includes("Rate limit");
+}
+
+function isDecommissioned(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("model_decommissioned") || msg.includes("decommissioned");
+}
+
 export async function findFixtureWithLlm(input: {
   bookmakerHomeTeam: string;
   bookmakerAwayTeam: string;
@@ -26,14 +62,14 @@ export async function findFixtureWithLlm(input: {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey || !input.candidates.length) return null;
 
-  try {
-    const groq = new Groq({ apiKey });
+  const key = cacheKey(input.bookmakerHomeTeam, input.bookmakerAwayTeam, input.leagueName);
+  if (matchCache.has(key)) return matchCache.get(key) ?? null;
 
-    const candidateList = input.candidates
-      .map((c, i) => `${i + 1}. id="${c.id}" | casa="${c.home_team}" | visitante="${c.away_team}" | data="${c.starts_at}"`)
-      .join("\n");
+  const candidateList = input.candidates
+    .map((c, i) => `${i + 1}. id="${c.id}" | casa="${c.home_team}" | visitante="${c.away_team}" | data="${c.starts_at}"`)
+    .join("\n");
 
-    const prompt = `Você é especialista em futebol internacional. Identifique qual fixture do banco de dados corresponde ao evento abaixo.
+  const prompt = `Você é especialista em futebol internacional. Identifique qual fixture do banco de dados corresponde ao evento abaixo.
 
 EVENTO DA CASA DE APOSTAS:
 - Casa: "${input.bookmakerHomeTeam}"
@@ -52,26 +88,55 @@ Responda SOMENTE com JSON válido (sem markdown, sem explicações):
 - Se encontrou o fixture: {"fixtureId":"<o id do fixture>","orientation":"NORMAL"} ou {"fixtureId":"<id>","orientation":"INVERTED"} se os times estão com posições trocadas
 - Se não encontrou: {"fixtureId":null}`;
 
-    const completion = await groq.chat.completions.create({
-      model: process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0,
-      max_tokens: 100
-    });
+  const groq = new Groq({ apiKey });
 
-    const text = completion.choices[0]?.message?.content?.trim() ?? "";
-    const jsonMatch = text.match(/\{[^{}]*"fixtureId"[^{}]*\}/);
-    if (!jsonMatch) return null;
+  for (;;) {
+    const model = nextAvailableModel();
+    if (!model) {
+      console.warn(`[LLM] Todos os modelos Groq estão com rate limit. Matching sem LLM para: ${input.bookmakerHomeTeam} x ${input.bookmakerAwayTeam}`);
+      return null;
+    }
 
-    const parsed = JSON.parse(jsonMatch[0]) as { fixtureId?: string | null; orientation?: unknown };
-    if (!parsed.fixtureId || typeof parsed.fixtureId !== "string") return null;
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+        max_tokens: 100
+      });
 
-    return {
-      fixtureId: parsed.fixtureId,
-      orientation: parsed.orientation === "INVERTED" ? "INVERTED" : "NORMAL"
-    };
-  } catch (err) {
-    throw new Error(`LLM fixture matching failed: ${err instanceof Error ? err.message : String(err)}`);
+      const text = completion.choices[0]?.message?.content?.trim() ?? "";
+      const jsonMatch = text.match(/\{[^{}]*"fixtureId"[^{}]*\}/);
+      if (!jsonMatch) {
+        matchCache.set(key, null);
+        return null;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]) as { fixtureId?: string | null; orientation?: unknown };
+      if (!parsed.fixtureId || typeof parsed.fixtureId !== "string") {
+        matchCache.set(key, null);
+        return null;
+      }
+
+      const result: LlmMatchResult = {
+        fixtureId: parsed.fixtureId,
+        orientation: parsed.orientation === "INVERTED" ? "INVERTED" : "NORMAL"
+      };
+      matchCache.set(key, result);
+      return result;
+    } catch (err) {
+      if (isRateLimit(err)) {
+        console.warn(`[LLM] Rate limit no modelo ${model} — tentando próximo.`);
+        exhaustedModels.set(model, Date.now());
+        continue;
+      }
+      if (isDecommissioned(err)) {
+        console.warn(`[LLM] Modelo ${model} descontinuado — removendo da rotação.`);
+        exhaustedModels.set(model, Date.now() + 24 * 60 * 60 * 1000); // marca por 24h
+        continue;
+      }
+      throw new Error(`LLM fixture matching failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 
