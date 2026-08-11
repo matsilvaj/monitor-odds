@@ -23,6 +23,7 @@
     "match:meridianbet": "tsx src/jobs/match-meridianbet-snapshots.ts",
     "sync:all": "tsx src/jobs/sync-all.ts",
     "sync:watch": "tsx src/jobs/sync-watch.ts",
+    "status": "tsx src/jobs/status.ts",
     "sync:watch:worker": "tsx src/jobs/sync-watch-worker.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:matching": "tsx --test test/event-matcher.test.ts"
@@ -31,10 +32,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/genai": "^2.16.0",
     "@supabase/supabase-js": "^2.105.3",
     "dotenv": "^17.4.2",
     "got-scraping": "^4.2.1",
-    "groq-sdk": "^1.5.0",
     "p-map": "^7.0.4",
     "pg": "^8.20.0",
     "playwright-core": "^1.60.0",
