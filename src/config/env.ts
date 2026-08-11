@@ -40,6 +40,7 @@ const envSchema = z.object({
   BET365_FIXTURE_LIMIT: z.coerce.number().int().min(1).max(25).optional(),
   BET365_FIXTURE_LIMIT_PER_LEAGUE: z.coerce.number().int().min(1).max(25).default(25),
   BET365_EVENT_TEXT_FILE: optionalNonEmptyString(),
+  GEMINI_API_KEY: optionalNonEmptyString(),
 });
 
 export const env = envSchema.parse({

@@ -30,7 +30,7 @@ const schemaPath = path.resolve("supabase", "schema.sql");
 const sql = await fs.readFile(schemaPath, "utf8");
 const client = new Client({
   connectionString,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: true }
 });
 
 try {

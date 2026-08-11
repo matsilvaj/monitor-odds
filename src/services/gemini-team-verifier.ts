@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { env } from "../config/env.js";
 
 const MODEL = "gemini-3.5-flash-lite";
 
@@ -23,7 +24,7 @@ let client: GoogleGenAI | null = null;
 
 function getClient(): GoogleGenAI {
   if (!client) {
-    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    const apiKey = env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("GEMINI_API_KEY não configurada");
     client = new GoogleGenAI({ apiKey });
   }
@@ -46,7 +47,7 @@ export type GeminiSelectionResult = {
 export async function selectFixtureWithGemini(
   input: GeminiSelectionInput
 ): Promise<GeminiSelectionResult | null> {
-  if (!process.env.GEMINI_API_KEY || !input.candidates.length) return null;
+  if (!env.GEMINI_API_KEY || !input.candidates.length) return null;
 
   const candidateList = input.candidates
     .map((c, i) => `${i + 1}. id="${c.id}" | casa="${c.home_team}" | visitante="${c.away_team}" | data="${c.starts_at}"`)
