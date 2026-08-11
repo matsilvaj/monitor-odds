@@ -57,14 +57,19 @@ npm run db:setup
 
 ## Uso
 
-### Daemon principal (loop contínuo)
+### Loop contínuo (uso normal)
+
+O comando principal é `sync:watch`. Ele inicia o supervisor com três workers em paralelo e mantém a coleta rodando indefinidamente:
 
 ```bash
-npm run dev      # desenvolvimento (sem build)
-npm start        # produção (requer npm run build antes)
+npm run sync:watch
 ```
 
-O daemon inicia três workers paralelos:
+O supervisor reinicia workers automaticamente em caso de crash ou timeout (veja [Arquitetura](#arquitetura)). Enquanto roda, exibe um dashboard ao vivo no terminal com a cobertura de fixtures por bookmaker.
+
+> `npm run dev` é um alias para o mesmo comando (convenção npm). `npm start` faz a mesma coisa, mas roda a versão compilada — exige `npm run build` antes e é mais indicado para ambientes de produção onde não há `tsx` instalado.
+
+Os três workers iniciados pelo `sync:watch`:
 
 | Lane | Descrição |
 |---|---|
@@ -72,17 +77,24 @@ O daemon inicia três workers paralelos:
 | `meridianbet` | Browser Playwright dedicado, ciclo ≤45 min |
 | `bet365` | Browser Playwright dedicado, ciclo ≤45 min (requer `BET365_ENABLED=true`) |
 
-### Comandos avulsos
+### Coleta pontual (sem loop)
+
+Para rodar uma coleta única — útil para testar, debugar ou reprocessar dados — use os comandos abaixo. Eles executam uma vez e encerram.
 
 ```bash
-npm run sync:all       # Sincroniza fixtures + coleta odds uma vez
-npm run sync:fixtures  # Sincroniza só fixtures da API-Football
-npm run sync:odds      # Coleta odds de todos os bookmakers uma vez
-npm run collect        # Coleta um bookmaker específico (ex: npm run collect -- sportingbet)
-npm run status         # Relatório de cobertura por bookmaker no terminal
-npm run build          # Compila TypeScript
-npm run typecheck      # Verifica tipos sem emitir
-npm run test:matching  # Testes do pipeline de matching
+npm run sync:all       # Sincroniza fixtures da API-Football + coleta odds de todos os bookmakers
+npm run sync:fixtures  # Sincroniza só os fixtures (sem coletar odds)
+npm run sync:odds      # Coleta odds de todos os bookmakers (sem sincronizar fixtures)
+npm run collect -- sportingbet  # Coleta um bookmaker específico pelo slug
+```
+
+### Utilitários
+
+```bash
+npm run status         # Relatório de cobertura: quantos fixtures cada bookmaker tem para hoje e amanhã
+npm run build          # Compila TypeScript (necessário antes de npm start)
+npm run typecheck      # Verifica tipos sem gerar arquivos
+npm run test:matching  # Testes do pipeline de matching de times
 ```
 
 ## Configuração
