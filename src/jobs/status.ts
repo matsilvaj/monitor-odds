@@ -38,7 +38,7 @@ const fixtureKeyMap = new Map(fixtures.map((f) => [f.id, f.date_key]));
 const fixtureLeagueMap = new Map(fixtures.map((f) => [f.id, leagueName(f)]));
 
 const linksRes = fixtureIds.length
-  ? await supabase.from("links_eventos").select("bookmaker_slug, fixture_id").in("fixture_id", fixtureIds)
+  ? await supabase.rpc("get_fixture_coverage", { fixture_ids: fixtureIds })
   : { data: [], error: null };
 
 if (linksRes.error) { console.error(linksRes.error); process.exit(1); }
