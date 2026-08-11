@@ -120,6 +120,11 @@ export async function findFixtureWithLlmFallback<T extends { id: string; home_te
     return { ...r, fixture: aliasMatch.fixture };
   }
 
+  const startsAt =
+    typeof input.startsAt === "number"
+      ? new Date(input.startsAt).toISOString()
+      : (input.startsAt ?? null);
+
   // Sem alias: só chama o Gemini se há evidência textual em ao menos um candidato
   const hasTextualEvidence = candidates.some((f) =>
     hasTokenEvidence(bkHome, f.home_team ?? "") ||
@@ -127,12 +132,42 @@ export async function findFixtureWithLlmFallback<T extends { id: string; home_te
     hasTokenEvidence(bkAway, f.home_team ?? "") ||
     hasTokenEvidence(bkAway, f.away_team ?? "")
   );
-  if (!hasTextualEvidence) return null;
 
-  const startsAt =
-    typeof input.startsAt === "number"
-      ? new Date(input.startsAt).toISOString()
-      : (input.startsAt ?? null);
+  if (!hasTextualEvidence) {
+    // Fallback para nomes completamente diferentes (ex: "Crvena Zvezda" = "Estrela Vermelha"):
+    // filtra por mesma data e horário ±20 min, verifica cada par via Google Search.
+    // Alias table impede chamadas repetidas para pares já conhecidos.
+    if (!startsAt) { matchCache.set(key, null); return null; }
+    const bkTimeMs = new Date(startsAt).getTime();
+    if (isNaN(bkTimeMs)) { matchCache.set(key, null); return null; }
+
+    const strictCandidates = candidates
+      .filter((f) => Math.abs(new Date(f.starts_at).getTime() - bkTimeMs) <= 20 * 60 * 1000)
+      .slice(0, 3);
+
+    for (const candidate of strictCandidates) {
+      const fHome = candidate.home_team ?? "";
+      const fAway = candidate.away_team ?? "";
+
+      const cachedHome = await checkAlias(bkHome, fHome);
+      if (cachedHome === false) continue;
+      const homeVerified = cachedHome === true ? true : await verifyAndLearn(bkHome, fHome, leagueName);
+      if (!homeVerified) continue;
+
+      const cachedAway = await checkAlias(bkAway, fAway);
+      if (cachedAway === false) continue;
+      const awayVerified = cachedAway === true ? true : await verifyAndLearn(bkAway, fAway, leagueName);
+      if (!awayVerified) continue;
+
+      console.log(`[Gemini] Match via busca estrita: "${bkHome} x ${bkAway}" → fixture ${candidate.id}`);
+      const r = { fixtureId: candidate.id, orientation: "NORMAL" as const };
+      matchCache.set(key, r);
+      return { ...r, fixture: candidate };
+    }
+
+    matchCache.set(key, null);
+    return null;
+  }
 
   // Chama Gemini para selecionar o melhor candidato
   const result = await selectFixtureWithGemini({
