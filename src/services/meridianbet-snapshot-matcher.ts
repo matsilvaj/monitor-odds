@@ -3,7 +3,6 @@ import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { supabase } from "../db/supabase.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation } from "../domain/matching/event-matcher.js";
-import { teamNameSimilarity } from "../domain/matching/text-similarity.js";
 import { normalizeName } from "../domain/text.js";
 import type { MeridianCollectedMarket, MeridianCollectedSelection } from "../providers/meridianbet.js";
 import type { Selection } from "../domain/normalize.js";
@@ -13,7 +12,7 @@ import {
   linkOrientation,
   loadBookmakerAliasIndex
 } from "./bookmaker-match-memory.js";
-import { findFixtureWithLlm } from "./llm-fixture-matcher.js";
+import { findFixtureWithLlmFallback } from "./llm-fixture-matcher.js";
 
 type Logger = (level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>) => Promise<void>;
 type Snapshot = {
@@ -256,12 +255,13 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
       : null;
     if (!confirmedResult) {
       const llmResult = snapshot.league_api_football_id
-        ? await findFixtureWithLlm({
+        ? await findFixtureWithLlmFallback({
             bookmakerHomeTeam: snapshot.home_team ?? "",
             bookmakerAwayTeam: snapshot.away_team ?? "",
             leagueName: snapshot.league_name,
             startsAt: snapshot.starts_at,
-            candidates: candidates.map((c) => ({ id: c.id, home_team: c.home_team, away_team: c.away_team, starts_at: c.starts_at }))
+            fixtures: candidates,
+            getLeagueName: (f) => league(f)?.name ?? null,
           }).catch(async (err: unknown) => {
             await options.logger?.("warn", "erro no fallback llm da meridianbet", {
               eventName: snapshot.event_name,
@@ -271,32 +271,10 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
           })
         : null;
       if (llmResult) {
-        const llmFixture = fixtureById.get(llmResult.fixtureId);
-        if (llmFixture) {
-          const MIN_LLM_SIDE_SCORE = 0.3;
-          const [fixtureHome, fixtureAway] = llmResult.orientation === "INVERTED"
-            ? [llmFixture.away_team, llmFixture.home_team]
-            : [llmFixture.home_team, llmFixture.away_team];
-          const homeScore = teamNameSimilarity(snapshot.home_team ?? "", fixtureHome);
-          const awayScore = teamNameSimilarity(snapshot.away_team ?? "", fixtureAway);
-          if (homeScore < MIN_LLM_SIDE_SCORE || awayScore < MIN_LLM_SIDE_SCORE) {
-            unmatched += 1;
-            await options.logger?.("warn", "resultado do llm rejeitado por baixa similaridade de times", {
-              eventName: snapshot.event_name,
-              bookmakerHome: snapshot.home_team,
-              bookmakerAway: snapshot.away_team,
-              fixtureHome: llmFixture.home_team,
-              fixtureAway: llmFixture.away_team,
-              homeScore: Number(homeScore.toFixed(3)),
-              awayScore: Number(awayScore.toFixed(3)),
-              minRequired: MIN_LLM_SIDE_SCORE
-            });
-            continue;
-          }
-        }
-        const llmFixtureLinks = llmFixture ? (linksByFixtureId.get(llmFixture.id) ?? []) : [];
+        const llmFixture = llmResult.fixture;
+        const llmFixtureLinks = linksByFixtureId.get(llmFixture.id) ?? [];
         const hasConflict = llmFixtureLinks.some((link) => String(link.external_event_id) !== String(snapshot.external_event_id));
-        if (llmFixture && !hasConflict) {
+        if (!hasConflict) {
           await options.logger?.("info", "evento meridianbet confirmado via llm", {
             eventName: snapshot.event_name,
             bookmakerHome: snapshot.home_team,

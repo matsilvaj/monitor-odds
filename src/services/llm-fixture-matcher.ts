@@ -92,39 +92,6 @@ export async function findFixtureWithLlmFallback<T extends { id: string; home_te
 
   if (candidates.length === 0 || candidates.length > LLM_MAX_CANDIDATES) return null;
 
-  // Pré-filtro: exige evidência textual OU alias confirmado em ao menos um candidato.
-  // Sem nenhuma sobreposição o modelo não tem base para decidir.
-  const hasTextualEvidence = candidates.some((f) =>
-    hasTokenEvidence(bkHome, f.home_team ?? "") ||
-    hasTokenEvidence(bkHome, f.away_team ?? "") ||
-    hasTokenEvidence(bkAway, f.home_team ?? "") ||
-    hasTokenEvidence(bkAway, f.away_team ?? "")
-  );
-
-  // Verifica aliases no DB para os candidatos sem evidência textual
-  const aliasEvidenceCandidate = !hasTextualEvidence
-    ? await (async () => {
-        for (const f of candidates) {
-          const homeAlias = await checkAlias(bkHome, f.home_team ?? "");
-          const awayAlias = await checkAlias(bkAway, f.away_team ?? "");
-          if (homeAlias === true && awayAlias === true) return f;
-          const invHomeAlias = await checkAlias(bkHome, f.away_team ?? "");
-          const invAwayAlias = await checkAlias(bkAway, f.home_team ?? "");
-          if (invHomeAlias === true && invAwayAlias === true) return f;
-        }
-        return null;
-      })()
-    : null;
-
-  // Se encontrou via alias sem evidência textual, retorna direto
-  if (!hasTextualEvidence && aliasEvidenceCandidate) {
-    const homeAlias = await checkAlias(bkHome, aliasEvidenceCandidate.home_team ?? "");
-    const orientation: "NORMAL" | "INVERTED" = homeAlias === true ? "NORMAL" : "INVERTED";
-    return { fixtureId: aliasEvidenceCandidate.id, orientation, fixture: aliasEvidenceCandidate };
-  }
-
-  if (!hasTextualEvidence && !aliasEvidenceCandidate) return null;
-
   const key = cacheKey(bkHome, bkAway, leagueName);
   if (matchCache.has(key)) {
     const cached = matchCache.get(key) ?? null;
@@ -132,6 +99,35 @@ export async function findFixtureWithLlmFallback<T extends { id: string; home_te
     const fixture = candidates.find((f) => f.id === cached.fixtureId);
     return fixture ? { ...cached, fixture } : null;
   }
+
+  // Alias table tem prioridade sobre o Gemini: verifica todos os candidatos antes de chamar a API.
+  // Isso garante que pares já confirmados em sessões anteriores nunca gerem custo.
+  const aliasMatch = await (async () => {
+    for (const f of candidates) {
+      const fHome = f.home_team ?? "";
+      const fAway = f.away_team ?? "";
+      const [homeAlias, awayAlias] = await Promise.all([checkAlias(bkHome, fHome), checkAlias(bkAway, fAway)]);
+      if (homeAlias === true && awayAlias === true) return { fixture: f, orientation: "NORMAL" as const };
+      const [invHomeAlias, invAwayAlias] = await Promise.all([checkAlias(bkHome, fAway), checkAlias(bkAway, fHome)]);
+      if (invHomeAlias === true && invAwayAlias === true) return { fixture: f, orientation: "INVERTED" as const };
+    }
+    return null;
+  })();
+
+  if (aliasMatch) {
+    const r = { fixtureId: aliasMatch.fixture.id, orientation: aliasMatch.orientation };
+    matchCache.set(key, r);
+    return { ...r, fixture: aliasMatch.fixture };
+  }
+
+  // Sem alias: só chama o Gemini se há evidência textual em ao menos um candidato
+  const hasTextualEvidence = candidates.some((f) =>
+    hasTokenEvidence(bkHome, f.home_team ?? "") ||
+    hasTokenEvidence(bkHome, f.away_team ?? "") ||
+    hasTokenEvidence(bkAway, f.home_team ?? "") ||
+    hasTokenEvidence(bkAway, f.away_team ?? "")
+  );
+  if (!hasTextualEvidence) return null;
 
   const startsAt =
     typeof input.startsAt === "number"
