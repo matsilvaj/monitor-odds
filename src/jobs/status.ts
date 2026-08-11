@@ -6,112 +6,109 @@ import { installProcessErrorHandlers } from "../utils/process-errors.js";
 installProcessErrorHandlers();
 
 const BROWSER_SLUGS = new Set(["meridianbet", "bet365"]);
-
 const R = "\x1b[0m";
 const BOLD = "\x1b[1m";
-const DIM = "\x1b[2m";
 const RED = "\x1b[31m";
 const YELLOW = "\x1b[33m";
-
-const W_NAME = 17;
-const W_NUM = 7;
-const SEP_LEN = W_NAME + W_NUM * 3;
-const SEP = "─".repeat(SEP_LEN);
+const GREEN = "\x1b[32m";
+const DIM = "\x1b[2m";
 
 const buckets = defaultSyncDateBuckets();
 const todayKey = buckets[0].key;
 const tomorrowKey = buckets[1].key;
 
-const [fixturesRes, oddsRes] = await Promise.all([
-  supabase
-    .from("jogos")
-    .select("date_key, liga:ligas(nome)")
-    .in("date_key", [todayKey, tomorrowKey]),
-  supabase
-    .from("cotacoes")
-    .select("bookmaker_slug, fixture_id, date_key")
-    .in("date_key", [todayKey, tomorrowKey])
-]);
+const fixturesRes = await supabase
+  .from("jogos")
+  .select("id, date_key, league:campeonatos(name)")
+  .in("date_key", [todayKey, tomorrowKey]);
 
-if (fixturesRes.error) throw fixturesRes.error;
-if (oddsRes.error) throw oddsRes.error;
+if (fixturesRes.error) { console.error(fixturesRes.error); process.exit(1); }
 
-const fixtures = (fixturesRes.data ?? []) as unknown as Array<{ date_key: string; liga: { nome: string } | null }>;
+type FixtureRow = { id: string; date_key: string; league: { name: string } | Array<{ name: string }> | null };
+const fixtures = (fixturesRes.data ?? []) as unknown as FixtureRow[];
+const fixtureIds = fixtures.map((f) => f.id);
+
+function leagueName(f: FixtureRow): string {
+  const l = f.league;
+  if (!l) return "Desconhecida";
+  return Array.isArray(l) ? (l[0]?.name ?? "Desconhecida") : l.name;
+}
+
+const fixtureKeyMap = new Map(fixtures.map((f) => [f.id, f.date_key]));
+const fixtureLeagueMap = new Map(fixtures.map((f) => [f.id, leagueName(f)]));
+
+const linksRes = fixtureIds.length
+  ? await supabase.from("links_eventos").select("bookmaker_slug, fixture_id").in("fixture_id", fixtureIds)
+  : { data: [], error: null };
+
+if (linksRes.error) { console.error(linksRes.error); process.exit(1); }
+
+type LinkRow = { bookmaker_slug: string; fixture_id: string };
+const links = (linksRes.data ?? []) as unknown as LinkRow[];
+
 const apiToday = fixtures.filter((f) => f.date_key === todayKey).length;
 const apiTomorrow = fixtures.filter((f) => f.date_key === tomorrowKey).length;
 const apiTotal = apiToday + apiTomorrow;
 
-// ─── tabela de casas ──────────────────────────────────────────────────────────
-
-const todaySets = new Map<string, Set<string>>();
-const tomorrowSets = new Map<string, Set<string>>();
-for (const row of (oddsRes.data ?? []) as Array<{ bookmaker_slug: string; fixture_id: string; date_key: string }>) {
-  const map = row.date_key === todayKey ? todaySets : tomorrowSets;
-  if (!map.has(row.bookmaker_slug)) map.set(row.bookmaker_slug, new Set());
-  map.get(row.bookmaker_slug)!.add(row.fixture_id);
+// por casa: fixtures únicos
+const bySlug = new Map<string, Set<string>>();
+for (const row of links) {
+  if (!bySlug.has(row.bookmaker_slug)) bySlug.set(row.bookmaker_slug, new Set());
+  bySlug.get(row.bookmaker_slug)!.add(row.fixture_id);
 }
 
-const buildRow = (slug: string) => {
-  const t = todaySets.get(slug)?.size ?? 0;
-  const tm = tomorrowSets.get(slug)?.size ?? 0;
-  const total = t + tm;
-  let color = "";
-  if (apiTotal > 0) {
-    if (total === 0) color = RED;
-    else if (total < apiTotal * 0.5) color = YELLOW;
-  }
-  const line = slug.padEnd(W_NAME) + String(t).padStart(W_NUM) + String(tm).padStart(W_NUM) + String(total).padStart(W_NUM);
-  return color ? color + line + R : line;
-};
-
-const fastSlugs = BOOKMAKER_COLLECTORS.filter((c) => !BROWSER_SLUGS.has(c.slug)).map((c) => c.slug);
-const browserSlugs = BOOKMAKER_COLLECTORS.filter((c) => BROWSER_SLUGS.has(c.slug)).map((c) => c.slug);
-
-const header = " ".repeat(W_NAME) + "Hoje".padStart(W_NUM) + "Amanhã".padStart(W_NUM) + "Total".padStart(W_NUM);
-const apiRow = "API".padEnd(W_NAME) + String(apiToday).padStart(W_NUM) + String(apiTomorrow).padStart(W_NUM) + String(apiTotal).padStart(W_NUM);
-
-console.log(`\n${BOLD}Casas de apostas${R}`);
-console.log(SEP);
-console.log(header);
-console.log(apiRow);
-console.log(SEP);
-for (const slug of fastSlugs) console.log(buildRow(slug));
-if (browserSlugs.length) {
-  console.log(`${DIM}${"─".repeat(SEP_LEN)}${R}`);
-  for (const slug of browserSlugs) console.log(buildRow(slug));
+// por (casa, liga): contagem
+const slugLeague = new Map<string, Map<string, number>>();
+for (const row of links) {
+  const liga = fixtureLeagueMap.get(row.fixture_id) ?? "Desconhecida";
+  if (!slugLeague.has(row.bookmaker_slug)) slugLeague.set(row.bookmaker_slug, new Map());
+  const m = slugLeague.get(row.bookmaker_slug)!;
+  m.set(liga, (m.get(liga) ?? 0) + 1);
 }
-console.log(SEP);
 
-// ─── tabela por liga ──────────────────────────────────────────────────────────
-
-const leagueToday = new Map<string, number>();
-const leagueTomorrow = new Map<string, number>();
+// ligas da API com totais
+const apiLeagues = new Map<string, number>();
 for (const f of fixtures) {
-  const nome = f.liga?.nome ?? "Desconhecida";
-  if (f.date_key === todayKey) leagueToday.set(nome, (leagueToday.get(nome) ?? 0) + 1);
-  else leagueTomorrow.set(nome, (leagueTomorrow.get(nome) ?? 0) + 1);
+  const name = leagueName(f);
+  apiLeagues.set(name, (apiLeagues.get(name) ?? 0) + 1);
 }
-const allLeagues = [...new Set([...leagueToday.keys(), ...leagueTomorrow.keys()])].sort((a, b) => {
-  const ta = (leagueToday.get(a) ?? 0) + (leagueTomorrow.get(a) ?? 0);
-  const tb = (leagueToday.get(b) ?? 0) + (leagueTomorrow.get(b) ?? 0);
-  return tb - ta;
-});
 
-const W_LEAGUE = 30;
-const SEP_L = W_LEAGUE + W_NUM * 3;
-const SEPL = "─".repeat(SEP_L);
-const headerL = " ".repeat(W_LEAGUE) + "Hoje".padStart(W_NUM) + "Amanhã".padStart(W_NUM) + "Total".padStart(W_NUM);
+const allSlugs = BOOKMAKER_COLLECTORS.map((c) => c.slug);
 
-console.log(`\n${BOLD}Jogos por liga${R}`);
-console.log(SEPL);
-console.log(headerL);
-console.log(SEPL);
-for (const liga of allLeagues) {
-  const t = leagueToday.get(liga) ?? 0;
-  const tm = leagueTomorrow.get(liga) ?? 0;
-  const total = t + tm;
-  const name = liga.length > W_LEAGUE - 1 ? liga.slice(0, W_LEAGUE - 2) + "…" : liga;
-  console.log(name.padEnd(W_LEAGUE) + String(t).padStart(W_NUM) + String(tm).padStart(W_NUM) + String(total).padStart(W_NUM));
+// ─── output ───────────────────────────────────────────────────────────────────
+
+console.log(`\n${BOLD}Status — ${todayKey} / ${tomorrowKey}${R}`);
+console.log(`API: ${BOLD}${apiTotal}${R} jogos  (hoje: ${apiToday}, amanhã: ${apiTomorrow})\n`);
+
+console.log(`${BOLD}Ligas na API:${R}`);
+for (const [name, count] of [...apiLeagues.entries()].sort((a, b) => b[1] - a[1])) {
+  console.log(`  ${name}: ${count}`);
 }
-console.log(SEPL);
+
+for (const slug of allSlugs) {
+  const isBrowser = BROWSER_SLUGS.has(slug);
+  const fixtures = bySlug.get(slug);
+  const total = fixtures?.size ?? 0;
+  const pct = apiTotal > 0 ? Math.round((total / apiTotal) * 100) : 0;
+
+  let color = "";
+  if (total === 0) color = RED;
+  else if (pct < 50) color = YELLOW;
+  else if (pct >= 80) color = GREEN;
+
+  const tag = isBrowser ? DIM + " [browser]" + R : "";
+  console.log(`\n${color}${BOLD}${slug}${R}${tag} — ${color}${total}${R} jogos`);
+
+  if (total === 0) continue;
+
+  const leagues = slugLeague.get(slug);
+  if (!leagues) continue;
+
+  for (const [liga, count] of [...leagues.entries()].sort((a, b) => b[1] - a[1])) {
+    const apiCount = apiLeagues.get(liga) ?? 0;
+    const missing = apiCount > count;
+    console.log(`  ${missing ? YELLOW : ""}${liga}: ${count}/${apiCount}${missing ? R : ""}`);
+  }
+}
+
 console.log();
