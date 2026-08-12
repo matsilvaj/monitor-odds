@@ -33,5 +33,6 @@ export const MERIDIAN_LEAGUES: Record<number, MeridianLeagueConfig> = {
   181: { id: 181, name: "Scottish FA Cup", url: "https://meridianbet.bet.br/ca/esportes/futebol/esc%C3%B3cia/cup?leagueIds=244" },
   185: { id: 185, name: "Scottish League Cup", url: "https://meridianbet.bet.br/ca/esportes/futebol/esc%C3%B3cia/league-cup?leagueIds=161" },
   253: { id: 253, name: "MLS", url: "https://meridianbet.bet.br/ca/esportes/futebol/estados-unidos/major-league-soccer?leagueIds=284" },
+  531: { id: 531, name: "UEFA Super Cup", url: "https://meridianbet.bet.br/ca/esportes/futebol/europa/uefa-super-cup?leagueIds=426" },
   848: { id: 848, name: "Conference League", url: "https://meridianbet.bet.br/ca/esportes/futebol/europa/confer%C3%AAncia-liga-europa?leagueIds=173762" }
 };

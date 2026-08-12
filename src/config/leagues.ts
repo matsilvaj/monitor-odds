@@ -52,6 +52,7 @@ export const MVP_LEAGUES: LeagueConfig[] = [
   { slug: "belgian-super-cup", name: "Belgian Super Cup", apiFootballLeagueId: 519 },
   { slug: "france-trophee-des-champions", name: "Trophee des Champions", apiFootballLeagueId: 526 },
   { slug: "germany-super-cup", name: "German Super Cup", apiFootballLeagueId: 529 },
+  { slug: "uefa-super-cup", name: "UEFA Super Cup", apiFootballLeagueId: 531 },
   { slug: "italy-super-cup", name: "Italian Super Cup", apiFootballLeagueId: 547 },
   { slug: "portugal-super-cup", name: "Portugal Super Cup", apiFootballLeagueId: 550 },
   { slug: "turkish-super-cup", name: "Turkish Super Cup", apiFootballLeagueId: 551 },
