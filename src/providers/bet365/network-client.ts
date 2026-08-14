@@ -593,20 +593,44 @@ class Bet365PageController {
     return expanded;
   }
 
-  // Clica no evento da página de liga — primário por nome dos times, fallback por índice.
+  // Clica no evento da página de liga — busca por conteúdo (independente de classes CSS).
   private async clickFixtureContainerByIndex(eventIndex: number, sourceUrl: string, homeTeam = "", awayTeam = ""): Promise<boolean> {
     if (!this.page) return false;
 
     await this.logger?.("info", "tentando abrir evento da bet365", { eventIndex, homeTeam, awayTeam, sourceUrl });
 
-    const rowSelector = '.rrc-0, [class*="ParticipantFixtureDetails"]';
-
     try {
-      const locator = homeTeam
-        ? this.page.locator(rowSelector).filter({ hasText: homeTeam }).first()
-        : this.page.locator(rowSelector).nth(eventIndex);
+      // Localiza a linha de fixture atravessando o DOM pelo conteúdo dos times.
+      // Não depende de classes CSS (que mudam a cada deploy da bet365).
+      const coords = homeTeam && awayTeam
+        ? await this.page.evaluate(({ home, away }: { home: string; away: string }) => {
+            const allEls = [...document.querySelectorAll<HTMLElement>("*")];
+            const homeLeafs = allEls.filter((el) => (el.innerText ?? el.textContent ?? "").trim() === home);
+            for (const leaf of homeLeafs) {
+              let cursor: HTMLElement | null = leaf.parentElement;
+              while (cursor && cursor !== document.body) {
+                if ((cursor.innerText ?? "").includes(away)) {
+                  const rect = cursor.getBoundingClientRect();
+                  if (rect.width > 200 && rect.height >= 40 && rect.height <= 200 && rect.top >= 0 && rect.top < window.innerHeight) {
+                    return {
+                      x: Math.round(rect.left + Math.min(150, rect.width * 0.3)),
+                      y: Math.round(rect.top + Math.min(35, rect.height * 0.4))
+                    };
+                  }
+                }
+                cursor = cursor.parentElement;
+              }
+            }
+            return null;
+          }, { home: homeTeam, away: awayTeam })
+        : null;
 
-      await locator.click({ position: { x: 150, y: 35 }, timeout: 5_000 });
+      if (coords) {
+        await this.page.mouse.move(coords.x, coords.y);
+        await this.page.mouse.click(coords.x, coords.y);
+      } else {
+        throw new Error(`Linha de fixture não encontrada: "${homeTeam}" x "${awayTeam}"`);
+      }
     } catch (error) {
       await this.logger?.("warn", "linha de fixture da bet365 nao encontrada", {
         eventIndex, homeTeam, awayTeam, sourceUrl,
