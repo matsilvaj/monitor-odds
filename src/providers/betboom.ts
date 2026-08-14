@@ -267,11 +267,17 @@ function parseTournamentNode(buf: Buffer): BetboomTournament | null {
   const name = fieldString(tournamentFields, 4);
 
   if (!Number.isFinite(tournamentId) || !name) return null;
+  const cleanName = name.trim();
+  if (
+    !cleanName ||
+    cleanName.length > 160 ||
+    /https?:\/\/|[\x00-\x08\x0b\x0c\x0e-\x1f]/i.test(cleanName)
+  ) return null;
 
   return {
     tournamentId: tournamentId as number,
     categoryId: Number.isFinite(categoryId) ? (categoryId as number) : null,
-    name,
+    name: cleanName,
     alias: fieldString(tournamentFields, 12)
   };
 }
@@ -342,8 +348,10 @@ export class BetboomClient {
 
     this.send(commandAll());
     await this.wait(250);
+    this.buffers.length = 0;
     this.send(commandRootFootball());
     await this.wait(250);
+    this.buffers.length = 0;
     this.send(commandFootballTree());
     await this.wait(2500);
 

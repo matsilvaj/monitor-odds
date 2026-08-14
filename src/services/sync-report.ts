@@ -103,10 +103,14 @@ export async function getFixtureReport(buckets = defaultSyncDateBuckets()): Prom
   const fixtureDateById = new Map<string, string>();
   for (const bucket of buckets) byDate.set(bucket.key, { fixtures: 0, fixtureIds: [] });
 
-  const { data, error } = await supabase.from("jogos").select("id,date_key").in(
-    "date_key",
-    buckets.map((bucket) => bucket.key)
-  );
+  const { data, error } = await supabase
+    .from("jogos")
+    .select("id,date_key")
+    .in(
+      "date_key",
+      buckets.map((bucket) => bucket.key)
+    )
+    .gte("starts_at", new Date().toISOString());
 
   if (error) throw error;
 

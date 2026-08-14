@@ -100,10 +100,21 @@ export async function findFixtureWithLlmFallback<T extends { id: string; home_te
     return fixture ? { ...cached, fixture } : null;
   }
 
+  const startsAt =
+    typeof input.startsAt === "number"
+      ? new Date(input.startsAt).toISOString()
+      : (input.startsAt ?? null);
+  const bookmakerStartsAtMs = startsAt ? new Date(startsAt).getTime() : Number.NaN;
+  const aliasCandidates = Number.isFinite(bookmakerStartsAtMs)
+    ? candidates.filter((fixture) => {
+        const fixtureStartsAtMs = new Date(fixture.starts_at).getTime();
+        return Number.isFinite(fixtureStartsAtMs) && Math.abs(fixtureStartsAtMs - bookmakerStartsAtMs) <= 20 * 60 * 1000;
+      })
+    : candidates;
   // Alias table tem prioridade sobre o Gemini: verifica todos os candidatos antes de chamar a API.
   // Isso garante que pares já confirmados em sessões anteriores nunca gerem custo.
   const aliasMatch = await (async () => {
-    for (const f of candidates) {
+    for (const f of aliasCandidates) {
       const fHome = f.home_team ?? "";
       const fAway = f.away_team ?? "";
       const [homeAlias, awayAlias] = await Promise.all([checkAlias(bkHome, fHome), checkAlias(bkAway, fAway)]);
@@ -120,51 +131,17 @@ export async function findFixtureWithLlmFallback<T extends { id: string; home_te
     return { ...r, fixture: aliasMatch.fixture };
   }
 
-  const startsAt =
-    typeof input.startsAt === "number"
-      ? new Date(input.startsAt).toISOString()
-      : (input.startsAt ?? null);
 
-  // Sem alias: só chama o Gemini se há evidência textual em ao menos um candidato
-  const hasTextualEvidence = candidates.some((f) =>
+  // Sem alias, só envia ao Gemini candidatos com alguma evidência textual.
+  // Assim, coincidências de horário não associam eventos de outros esportes.
+  const plausibleCandidates = candidates.filter((f) =>
     hasTokenEvidence(bkHome, f.home_team ?? "") ||
     hasTokenEvidence(bkHome, f.away_team ?? "") ||
     hasTokenEvidence(bkAway, f.home_team ?? "") ||
     hasTokenEvidence(bkAway, f.away_team ?? "")
   );
 
-  if (!hasTextualEvidence) {
-    // Fallback para nomes completamente diferentes (ex: "Crvena Zvezda" = "Estrela Vermelha"):
-    // filtra por mesma data e horário ±20 min, verifica cada par via Google Search.
-    // Alias table impede chamadas repetidas para pares já conhecidos.
-    if (!startsAt) { matchCache.set(key, null); return null; }
-    const bkTimeMs = new Date(startsAt).getTime();
-    if (isNaN(bkTimeMs)) { matchCache.set(key, null); return null; }
-
-    const strictCandidates = candidates
-      .filter((f) => Math.abs(new Date(f.starts_at).getTime() - bkTimeMs) <= 20 * 60 * 1000)
-      .slice(0, 3);
-
-    for (const candidate of strictCandidates) {
-      const fHome = candidate.home_team ?? "";
-      const fAway = candidate.away_team ?? "";
-
-      const cachedHome = await checkAlias(bkHome, fHome);
-      if (cachedHome === false) continue;
-      const homeVerified = cachedHome === true ? true : await verifyAndLearn(bkHome, fHome, leagueName);
-      if (!homeVerified) continue;
-
-      const cachedAway = await checkAlias(bkAway, fAway);
-      if (cachedAway === false) continue;
-      const awayVerified = cachedAway === true ? true : await verifyAndLearn(bkAway, fAway, leagueName);
-      if (!awayVerified) continue;
-
-      console.log(`[Gemini] Match via busca estrita: "${bkHome} x ${bkAway}" → fixture ${candidate.id}`);
-      const r = { fixtureId: candidate.id, orientation: "NORMAL" as const };
-      matchCache.set(key, r);
-      return { ...r, fixture: candidate };
-    }
-
+  if (plausibleCandidates.length === 0) {
     matchCache.set(key, null);
     return null;
   }
@@ -175,7 +152,7 @@ export async function findFixtureWithLlmFallback<T extends { id: string; home_te
     bookmakerAwayTeam: bkAway,
     leagueName,
     startsAt,
-    candidates: candidates.map((f) => ({
+    candidates: plausibleCandidates.map((f) => ({
       id: f.id,
       home_team: f.home_team ?? "",
       away_team: f.away_team ?? "",
@@ -188,7 +165,7 @@ export async function findFixtureWithLlmFallback<T extends { id: string; home_te
     return null;
   }
 
-  const fixture = candidates.find((f) => f.id === result.fixtureId);
+  const fixture = plausibleCandidates.find((f) => f.id === result.fixtureId);
   if (!fixture) {
     matchCache.set(key, null);
     return null;

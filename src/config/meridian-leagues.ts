@@ -27,6 +27,7 @@ export const MERIDIAN_LEAGUES: Record<number, MeridianLeagueConfig> = {
   121: { id: 121, name: "DBU Pokalen", url: "https://meridianbet.bet.br/ca/esportes/futebol/dinamarca/danish-cup?leagueIds=326" },
   128: { id: 128, name: "Argentina Primera Division", url: "https://meridianbet.bet.br/ca/esportes/futebol/argentina/liga-profissional?leagueIds=174077" },
   136: { id: 136, name: "Serie B Itália", url: "https://meridianbet.bet.br/ca/esportes/futebol/it%C3%A1lia/serie-b?leagueIds=96" },
+  140: { id: 140, name: "La Liga", url: "https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga?leagueIds=92" },
   141: { id: 141, name: "La Liga 2", url: "https://meridianbet.bet.br/ca/esportes/futebol/espanha/la-liga-2?leagueIds=93" },
   144: { id: 144, name: "Belgian Pro League", url: "https://meridianbet.bet.br/ca/esportes/futebol/belgica/first-division-a?leagueIds=132" },
   179: { id: 179, name: "Premiership Escócia", url: "https://meridianbet.bet.br/ca/esportes/futebol/esc%C3%B3cia/premiership?leagueIds=145" },
@@ -34,5 +35,6 @@ export const MERIDIAN_LEAGUES: Record<number, MeridianLeagueConfig> = {
   185: { id: 185, name: "Scottish League Cup", url: "https://meridianbet.bet.br/ca/esportes/futebol/esc%C3%B3cia/league-cup?leagueIds=161" },
   253: { id: 253, name: "MLS", url: "https://meridianbet.bet.br/ca/esportes/futebol/estados-unidos/major-league-soccer?leagueIds=284" },
   531: { id: 531, name: "UEFA Super Cup", url: "https://meridianbet.bet.br/ca/esportes/futebol/europa/uefa-super-cup?leagueIds=426" },
+  203: { id: 203, name: "Super Lig", url: "https://meridianbet.bet.br/ca/esportes/futebol/turquia/super-lig?leagueIds=113" },
   848: { id: 848, name: "Conference League", url: "https://meridianbet.bet.br/ca/esportes/futebol/europa/confer%C3%AAncia-liga-europa?leagueIds=173762" }
 };
