@@ -356,7 +356,8 @@ export function createAltenarCollector(bookmaker: AltenarBookmakerConfig) {
                 startsAt: details.startDate,
                 leagueName: details.champ?.name ?? null,
                 fixtures: discoveryFixtures,
-                getLeagueName: (f) => fixtureLeague(f)?.name ?? null
+                getLeagueName: (f) => fixtureLeague(f)?.name ?? null,
+            skipLlm: true
               }).catch(() => null);
               if (llm) matched = { fixture: llm.fixture, orientation: llm.orientation, score: 0.9, matched: true, timeScore: 1, teamScore: 0.9, bestSingleTeamScore: 0.9, reason: "matched" } as unknown as NonNullable<ReturnType<typeof matchFixture>>;
             }

@@ -75,6 +75,7 @@ export async function findFixtureWithLlmFallback<T extends { id: string; home_te
   leagueName: string | null | undefined;
   fixtures: T[];
   getLeagueName: (fixture: T) => string | null;
+  skipLlm?: boolean;
 }): Promise<(LlmMatchResult & { fixture: T }) | null> {
   if (!process.env.GEMINI_API_KEY) return null;
   if (!input.bookmakerHomeTeam || !input.bookmakerAwayTeam) return null;
@@ -131,6 +132,11 @@ export async function findFixtureWithLlmFallback<T extends { id: string; home_te
     return { ...r, fixture: aliasMatch.fixture };
   }
 
+
+  if (input.skipLlm) {
+    matchCache.set(key, null);
+    return null;
+  }
 
   // Sem alias, só envia ao Gemini candidatos com alguma evidência textual.
   // Assim, coincidências de horário não associam eventos de outros esportes.
