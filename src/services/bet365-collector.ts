@@ -130,6 +130,8 @@ type Bet365DirectRefreshResult = {
 const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   1: [{ label: "Copa do Mundo", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E131901075/G40/I%5E88/" }],
   3: [{ label: "Europa League - Classificatórias", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E135566042/G40/" }],
+  39: [{ label: "Premier League", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E91422157/G40/" }],
+  61: [{ label: "Ligue 1", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E135119473/G40/" }],
   71: [{ label: "Brasileirao Serie A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E88369731/G40/" }],
   72: [{ label: "Brasileirao Serie B", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E102584281/G40/H%5E1/" }],
   137: [{ label: "Coppa Italia", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E137112511/G40/" }],

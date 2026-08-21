@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { errorMessage } from "../utils/errors.js";
+import { fetchOddsBlocks } from "../services/odds-consistency.js";
 
 const DEFAULT_BATCH_SIZE = 50;
 const SELECT_BATCH_SIZE = 500;
@@ -314,6 +315,63 @@ async function deleteExistingOdds(bookmakerSlug: string, fixtureIds: string[], m
   }
 }
 
+/**
+ * Remove links e odds ja reprovados pela varredura de consistencia.
+ * - EVENTO bloqueado: nada daquela casa volta para o jogo.
+ * - EVENTO em tentativa: o evento externo ja rejeitado nao pode ser relinkado.
+ * - PARCIAL: apenas o pa_category defeituoso e descartado.
+ */
+async function applyOddsBlocks(bookmakerSlug: string, links: BookmakerLinkRow[], odds: OddRow[]) {
+  const blocks = await fetchOddsBlocks(bookmakerSlug).catch((error) => {
+    console.warn(`[odds] ${bookmakerSlug} nao conseguiu carregar bloqueios de consistencia: ${errorMessage(error)}`);
+    return [];
+  });
+
+  if (!blocks.length) return { links, odds };
+
+  const blockedFixtureIds = new Set<string>();
+  const rejectedEventIdsByFixture = new Map<string, Set<string>>();
+  const blockedPaCategoriesByFixture = new Map<string, Set<string>>();
+
+  for (const block of blocks) {
+    if (block.scope === "PARCIAL") {
+      const categories = blockedPaCategoriesByFixture.get(block.fixture_id) ?? new Set<string>();
+      categories.add(block.pa_category);
+      blockedPaCategoriesByFixture.set(block.fixture_id, categories);
+      continue;
+    }
+
+    if (block.blocked) {
+      blockedFixtureIds.add(block.fixture_id);
+      continue;
+    }
+
+    rejectedEventIdsByFixture.set(block.fixture_id, new Set(block.rejected_event_ids ?? []));
+  }
+
+  const filteredLinks = links.filter((link) => {
+    if (blockedFixtureIds.has(link.fixture_id)) return false;
+    return !rejectedEventIdsByFixture.get(link.fixture_id)?.has(keyValue(link.external_event_id));
+  });
+
+  const droppedFixtureIds = new Set(
+    links.filter((link) => !filteredLinks.includes(link)).map((link) => link.fixture_id)
+  );
+
+  const filteredOdds = odds.filter((odd) => {
+    if (blockedFixtureIds.has(odd.fixture_id) || droppedFixtureIds.has(odd.fixture_id)) return false;
+    return !blockedPaCategoriesByFixture.get(odd.fixture_id)?.has(odd.pa_category);
+  });
+
+  const removedLinks = links.length - filteredLinks.length;
+  const removedOdds = odds.length - filteredOdds.length;
+  if (removedLinks || removedOdds) {
+    console.log(`[odds] ${bookmakerSlug} descartou ${removedLinks} link(s) e ${removedOdds} odd(s) por bloqueio de consistencia.`);
+  }
+
+  return { links: filteredLinks, odds: filteredOdds };
+}
+
 async function touchSeenOdds(ids: string[], seenAt: string) {
   for (const idBatch of chunks(ids, DELETE_ROW_BATCH_SIZE)) {
     await withStatementTimeoutRetry("atualizacao de last_seen_at das odds", async () =>
@@ -323,6 +381,23 @@ async function touchSeenOdds(ids: string[], seenAt: string) {
 }
 
 export class OddsRepository {
+  static async deleteStaleByBookmaker(bookmakerSlug: string, seenBefore: string) {
+    const seenBeforeTimestamp = new Date(seenBefore);
+    if (!Number.isFinite(seenBeforeTimestamp.getTime())) {
+      throw new Error(`Data de inicio invalida para limpeza de odds: ${seenBefore}`);
+    }
+
+    const result = await withStatementTimeoutRetry("limpeza de odds obsoletas do bookmaker", async () =>
+      await supabase
+        .from("cotacoes")
+        .delete({ count: "exact" })
+        .eq("bookmaker_slug", bookmakerSlug)
+        .lt("last_seen_at", seenBeforeTimestamp.toISOString())
+    );
+
+    return result.count ?? 0;
+  }
+
   static async deleteStaleSeenBefore(
     bookmakerSlug: string,
     fixtureIds: string[],
@@ -370,6 +445,9 @@ export class OddsRepository {
   ) {
     const saveStartedAt = new Date().toISOString();
     const marketCodes = options.marketCodes?.length ? options.marketCodes : ["1X2"];
+    const allowed = await applyOddsBlocks(bookmakerSlug, links, odds);
+    links = allowed.links;
+    odds = allowed.odds;
     const uniqueLinksToSave = [
       ...new Map(links.map((link) => [linkKey(link), { ...link, updated_at: saveStartedAt }])).values()
     ];

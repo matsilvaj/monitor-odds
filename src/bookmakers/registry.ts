@@ -31,6 +31,8 @@ import {
   getFixtureReport,
   type FixtureReport
 } from "../services/sync-report.js";
+import { OddsRepository } from "../db/odds-repository.js";
+import { sweepInconsistentOdds } from "../services/odds-consistency.js";
 import { errorMessage } from "../utils/errors.js";
 import type { BookmakerCollector, BookmakerCollectorResult } from "./types.js";
 import type { BookmakerConfig } from "../config/bookmakers.js";
@@ -231,6 +233,16 @@ export type CollectAllBookmakersOptions = {
 
 const BROWSER_COLLECTOR_SLUGS = new Set<string>(["meridianbet", "bet365"]);
 
+// Roda so depois que todas as casas do ciclo salvaram, quando ja existe consenso
+// suficiente para julgar quem esta fora da media.
+async function runConsistencySweep(logProgress: boolean) {
+  try {
+    await sweepInconsistentOdds({ logProgress });
+  } catch (error) {
+    console.warn(`[consistencia] Varredura falhou: ${errorMessage(error)}`);
+  }
+}
+
 async function collectBookmakers(bookmakers: BookmakerCollector[], options: CollectAllBookmakersOptions = {}) {
   const concurrency = options.concurrency ?? 3;
   const logProgress = options.logProgress ?? true;
@@ -280,6 +292,11 @@ async function collectBookmakers(bookmakers: BookmakerCollector[], options: Coll
       const durationMs = Math.round(performance.now() - start);
       const result = { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
       await printBookmakerResult(result);
+      const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const deleted = await OddsRepository.deleteStaleByBookmaker(bookmaker.slug, staleThreshold);
+      if (deleted > 0 && logProgress) {
+        console.log(`[${bookmaker.slug}] ${deleted} odd(s) obsoleta(s) removidas (não vistas há mais de 2h).`);
+      }
       return result;
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
@@ -339,6 +356,11 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
       const durationMs = Math.round(performance.now() - start);
       const result = { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
       await printBookmakerResult(result);
+      const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const deleted = await OddsRepository.deleteStaleByBookmaker(bookmaker.slug, staleThreshold);
+      if (deleted > 0 && logProgress) {
+        console.log(`[${bookmaker.slug}] ${deleted} odd(s) obsoleta(s) removidas (não vistas há mais de 2h).`);
+      }
       return result;
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
@@ -359,6 +381,8 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
   const fastResultsPromise = pMap(fastCollectors, collectOne, { concurrency });
   const browserResultsPromise = Promise.all(browserCollectors.map((bookmaker) => collectOne(bookmaker)));
   const [fastResults, browserResults] = await Promise.all([fastResultsPromise, browserResultsPromise]);
+
+  await runConsistencySweep(logProgress);
 
   return [...fastResults, ...browserResults];
 }
@@ -403,6 +427,8 @@ export async function collectFastBookmakers(options: CollectAllBookmakersOptions
       })
     )
   );
+
+  await runConsistencySweep(logProgress);
 
   return groupResults.flat();
 }

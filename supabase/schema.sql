@@ -136,6 +136,29 @@ alter table cotacoes add column if not exists last_seen_at timestamptz not null 
 update cotacoes
 set last_seen_at = coalesce(last_seen_at, updated_at, now());
 
+-- Bloqueios de cotacoes inconsistentes.
+-- Registra casas cujas odds destoam do consenso das demais para o mesmo jogo.
+-- scope 'EVENTO'  = todas as odds da casa naquele jogo estao erradas (evento errado linkado).
+-- scope 'PARCIAL' = apenas um pa_category vem errado (erro de coleta/parsing); pa_category preenchido.
+-- O on delete cascade garante que o bloqueio some junto com o jogo.
+create table if not exists bloqueios_cotacoes (
+  id uuid primary key default gen_random_uuid(),
+  fixture_id uuid not null references jogos(id) on delete cascade,
+  bookmaker_slug text not null references casas_apostas(slug) on delete cascade,
+  scope text not null check (scope in ('EVENTO', 'PARCIAL')),
+  pa_category text not null default '',
+  attempts smallint not null default 0,
+  blocked boolean not null default false,
+  rejected_event_ids text[] not null default '{}',
+  last_reason text,
+  last_detected_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (fixture_id, bookmaker_slug, scope, pa_category)
+);
+
+create index if not exists odds_blocks_bookmaker_idx on bloqueios_cotacoes (bookmaker_slug);
+
 create or replace function set_database_updated_at()
 returns trigger
 language plpgsql
@@ -162,6 +185,12 @@ execute function set_database_updated_at();
 drop trigger if exists bookmaker_event_links_set_database_updated_at on links_eventos;
 create trigger bookmaker_event_links_set_database_updated_at
 before insert or update on links_eventos
+for each row
+execute function set_database_updated_at();
+
+drop trigger if exists odds_blocks_set_database_updated_at on bloqueios_cotacoes;
+create trigger odds_blocks_set_database_updated_at
+before insert or update on bloqueios_cotacoes
 for each row
 execute function set_database_updated_at();
 
@@ -459,7 +488,8 @@ revoke all on
   cotacoes,
   execucoes_sync_jogos,
   capturas_eventos,
-  estado_coletas
+  estado_coletas,
+  bloqueios_cotacoes
 from anon, authenticated;
 revoke all on function public.try_acquire_bookmaker_collection_lock(text, timestamptz) from anon, authenticated;
 
@@ -474,6 +504,7 @@ alter table cotacoes enable row level security;
 alter table execucoes_sync_jogos enable row level security;
 alter table capturas_eventos enable row level security;
 alter table estado_coletas enable row level security;
+alter table bloqueios_cotacoes enable row level security;
 
 drop policy if exists public_read_bookmakers on casas_apostas;
 create policy public_read_bookmakers
