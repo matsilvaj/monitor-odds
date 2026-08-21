@@ -1,4 +1,5 @@
 import { supabase } from "../db/supabase.js";
+import { fetchAllPages } from "../db/paginate.js";
 
 const MARKET_CODE = "1X2";
 // Minimo de casas com odds no mesmo grupo para o consenso ser confiavel.
@@ -72,27 +73,29 @@ export async function fetchOddsBlocks(bookmakerSlug: string): Promise<OddsBlock[
 }
 
 async function fetchUpcomingFixtureIds() {
-  const { data, error } = await supabase
-    .from("jogos")
-    .select("id")
-    .gt("starts_at", new Date().toISOString());
+  const nowIso = new Date().toISOString();
+  const rows = await fetchAllPages<{ id: string }>((from, to) =>
+    supabase.from("jogos").select("id").gt("starts_at", nowIso).order("id", { ascending: true }).range(from, to)
+  );
 
-  if (error) throw error;
-  return ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+  return rows.map((row) => row.id);
 }
 
 async function fetchOddsForFixtures(fixtureIds: string[]) {
   const rows: ConsistencyOddRow[] = [];
 
   for (const fixtureIdBatch of chunks(fixtureIds, SELECT_BATCH_SIZE)) {
-    const { data, error } = await supabase
-      .from("cotacoes")
-      .select("fixture_id,bookmaker_slug,selection,price,pa_category")
-      .eq("market_code", MARKET_CODE)
-      .in("fixture_id", fixtureIdBatch);
+    const page = await fetchAllPages<ConsistencyOddRow>((from, to) =>
+      supabase
+        .from("cotacoes")
+        .select("fixture_id,bookmaker_slug,selection,price,pa_category")
+        .eq("market_code", MARKET_CODE)
+        .in("fixture_id", fixtureIdBatch)
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
 
-    if (error) throw error;
-    rows.push(...((data ?? []) as unknown as ConsistencyOddRow[]));
+    rows.push(...page);
   }
 
   return rows;

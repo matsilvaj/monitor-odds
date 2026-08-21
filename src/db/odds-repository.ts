@@ -1,6 +1,7 @@
 import { supabase } from "./supabase.js";
 import { errorMessage } from "../utils/errors.js";
 import { fetchOddsBlocks } from "../services/odds-consistency.js";
+import { fetchAllPages } from "./paginate.js";
 
 const DEFAULT_BATCH_SIZE = 50;
 const SELECT_BATCH_SIZE = 500;
@@ -238,16 +239,19 @@ async function fetchExistingLinks(bookmakerSlug: string, fixtureIds: string[]) {
   const rows: ExistingBookmakerLinkRow[] = [];
 
   for (const fixtureIdBatch of chunks(fixtureIds, SELECT_BATCH_SIZE)) {
-    const { data, error } = await supabase
-      .from("links_eventos")
-      .select(
-        "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,raw,updated_at"
-      )
-      .eq("bookmaker_slug", bookmakerSlug)
-      .in("fixture_id", fixtureIdBatch);
+    const page = await fetchAllPages<ExistingBookmakerLinkRow>((from, to) =>
+      supabase
+        .from("links_eventos")
+        .select(
+          "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,raw,updated_at"
+        )
+        .eq("bookmaker_slug", bookmakerSlug)
+        .in("fixture_id", fixtureIdBatch)
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
 
-    if (error) throw error;
-    rows.push(...((data ?? []) as unknown as ExistingBookmakerLinkRow[]));
+    rows.push(...page);
   }
 
   return rows;
@@ -264,16 +268,19 @@ async function fetchExistingLinksByEventIds(bookmakerSlug: string, externalEvent
   ];
 
   for (const eventIdBatch of chunks(eventIds, SELECT_BATCH_SIZE)) {
-    const { data, error } = await supabase
-      .from("links_eventos")
-      .select(
-        "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,raw,updated_at"
-      )
-      .eq("bookmaker_slug", bookmakerSlug)
-      .in("external_event_id", eventIdBatch);
+    const page = await fetchAllPages<ExistingBookmakerLinkRow>((from, to) =>
+      supabase
+        .from("links_eventos")
+        .select(
+          "id,bookmaker_slug,external_event_id,fixture_id,bookmaker_event_name,bookmaker_home_team,bookmaker_away_team,normalized_bookmaker_home_team,normalized_bookmaker_away_team,starts_at,match_confidence_score,source_url,raw,updated_at"
+        )
+        .eq("bookmaker_slug", bookmakerSlug)
+        .in("external_event_id", eventIdBatch)
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
 
-    if (error) throw error;
-    rows.push(...((data ?? []) as unknown as ExistingBookmakerLinkRow[]));
+    rows.push(...page);
   }
 
   return rows;
@@ -283,17 +290,20 @@ async function fetchExistingOdds(bookmakerSlug: string, fixtureIds: string[], ma
   const rows: ExistingOddRow[] = [];
 
   for (const fixtureIdBatch of chunks(fixtureIds, SELECT_BATCH_SIZE)) {
-    const { data, error } = await supabase
-      .from("cotacoes")
-      .select(
-        "id,fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,raw_odd_type,source_odd_id,updated_at,last_seen_at"
-      )
-      .eq("bookmaker_slug", bookmakerSlug)
-      .in("market_code", marketCodes)
-      .in("fixture_id", fixtureIdBatch);
+    const page = await fetchAllPages<ExistingOddRow>((from, to) =>
+      supabase
+        .from("cotacoes")
+        .select(
+          "id,fixture_id,bookmaker_slug,market_code,market_name,selection,price,pa_category,confidence_score,raw_market_name,raw_label,raw_odd_type,source_odd_id,updated_at,last_seen_at"
+        )
+        .eq("bookmaker_slug", bookmakerSlug)
+        .in("market_code", marketCodes)
+        .in("fixture_id", fixtureIdBatch)
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
 
-    if (error) throw error;
-    rows.push(...((data ?? []) as unknown as ExistingOddRow[]));
+    rows.push(...page);
   }
 
   return rows;
