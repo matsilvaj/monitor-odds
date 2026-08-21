@@ -29,6 +29,7 @@ export type MatchEventsOptions = {
   singleTeamMinTimeScore?: number;
   pairScoreMargin?: number;
   singleTeamScoreMargin?: number;
+  orientationMargin?: number;
 };
 
 const MAX_TIME_DIFF_MS = 20 * 60 * 1000;
@@ -36,6 +37,10 @@ const MIN_TEAM_SCORE = 0.65;
 const MIN_SIDE_TEAM_SCORE = 0.68;
 const MIN_ANCHORED_TEAM_SCORE = 0.88;
 const MIN_BALANCED_SIDE_TEAM_SCORE = 0.8;
+// Margem minima para preferir INVERTED a NORMAL. As casas publicam o mandante primeiro,
+// entao inverter HOME/AWAY exige evidencia clara. Sem isso, times de prefixo comum
+// (ex: "Gimnasia L.P." x "Gimnasia M.") invertem por diferencas de milesimos.
+const MIN_ORIENTATION_MARGIN = 0.05;
 const MIN_SINGLE_TEAM_SCORE = 0.88;
 const MIN_SINGLE_TEAM_TIME_SCORE = 0.62;
 const VIRTUAL_EVENT_RE = /\b(?:e\s*soccer|esoccer|virtual|fantasy|simulado|simulacao|srl|cyber|pes|ebasket|basketball\s*cyber|kings\s*league)\b/i;
@@ -101,21 +106,18 @@ function pairScore(leftHome: unknown, leftAway: unknown, rightHome: unknown, rig
   };
 }
 
-function teamEvidence(leftHome: unknown, leftAway: unknown, rightHome: unknown, rightAway: unknown) {
+function teamEvidence(leftHome: unknown, leftAway: unknown, rightHome: unknown, rightAway: unknown, orientationMargin: number) {
   const normalHome = teamNameSimilarity(leftHome, rightHome);
   const normalAway = teamNameSimilarity(leftAway, rightAway);
   const invertedHome = teamNameSimilarity(leftHome, rightAway);
   const invertedAway = teamNameSimilarity(leftAway, rightHome);
-  const bestSingle = [
-    { score: normalHome, orientation: "NORMAL" as const },
-    { score: normalAway, orientation: "NORMAL" as const },
-    { score: invertedHome, orientation: "INVERTED" as const },
-    { score: invertedAway, orientation: "INVERTED" as const }
-  ].sort((left, right) => right.score - left.score)[0];
+  const bestNormal = Math.max(normalHome, normalAway);
+  const bestInverted = Math.max(invertedHome, invertedAway);
 
   return {
-    bestSingleTeamScore: bestSingle?.score ?? 0,
-    bestSingleOrientation: bestSingle?.orientation ?? ("NORMAL" as const)
+    // Aceitacao continua usando a melhor evidencia disponivel; so a orientacao exige margem.
+    bestSingleTeamScore: Math.max(bestNormal, bestInverted),
+    bestSingleOrientation: bestInverted - bestNormal > orientationMargin ? ("INVERTED" as const) : ("NORMAL" as const)
   };
 }
 
@@ -144,9 +146,11 @@ export function matchEvents(canonical: MatchableEvent, bookmaker: MatchableEvent
 
   const normalScore = pairScore(canonical.homeTeam, canonical.awayTeam, bookmaker.homeTeam, bookmaker.awayTeam);
   const invertedScore = pairScore(canonical.homeTeam, canonical.awayTeam, bookmaker.awayTeam, bookmaker.homeTeam);
-  const selectedScore = normalScore.score >= invertedScore.score ? normalScore : invertedScore;
-  const orientation = normalScore.score >= invertedScore.score ? "NORMAL" : "INVERTED";
-  const evidence = teamEvidence(canonical.homeTeam, canonical.awayTeam, bookmaker.homeTeam, bookmaker.awayTeam);
+  const orientationMargin = options.orientationMargin ?? MIN_ORIENTATION_MARGIN;
+  const preferInverted = invertedScore.score - normalScore.score > orientationMargin;
+  const selectedScore = preferInverted ? invertedScore : normalScore;
+  const orientation = preferInverted ? "INVERTED" : "NORMAL";
+  const evidence = teamEvidence(canonical.homeTeam, canonical.awayTeam, bookmaker.homeTeam, bookmaker.awayTeam, orientationMargin);
   const teamScore = selectedScore.score;
   const timeScore = 1 - diffMs / maxTimeDiffMs;
   const score = timeScore * 0.4 + teamScore * 0.6;
