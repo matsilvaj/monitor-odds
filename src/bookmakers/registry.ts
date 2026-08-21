@@ -428,8 +428,9 @@ export async function collectFastBookmakers(options: CollectAllBookmakersOptions
     )
   );
 
-  await runConsistencySweep(logProgress);
-
+  // No modo watch quem dispara a varredura e o supervisor, em intervalo proprio:
+  // amarrar ao fim da raia rapida deixava odds de bet365/meridianbet um ciclo inteiro
+  // no ar, porque elas gravam em processos separados com timing independente.
   return groupResults.flat();
 }
 

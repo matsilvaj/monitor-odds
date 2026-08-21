@@ -33,11 +33,17 @@ export type OddsBlock = Pick<BlockRow, "fixture_id" | "scope" | "pa_category" | 
 
 export type ConsistencySweepSummary = {
   fixturesChecked: number;
+  fixturesSkipped: number;
   eventMismatches: number;
   partialMismatches: number;
   oddsDeleted: number;
   linksDeleted: number;
 };
+
+// Marca de agua da ultima varredura bem-sucedida. Fica em memoria de proposito:
+// apos um restart a primeira varredura reavalia tudo, o que corrige qualquer
+// inconsistencia que tenha entrado enquanto o processo estava fora do ar.
+let lastSweepAt: string | null = null;
 
 function chunks<T>(items: T[], size: number) {
   const result: T[][] = [];
@@ -79,6 +85,29 @@ async function fetchUpcomingFixtureIds() {
   );
 
   return rows.map((row) => row.id);
+}
+
+/**
+ * Jogos cujas odds mudaram desde a marca de agua. Retorna null na primeira
+ * varredura do processo, sinalizando que tudo deve ser avaliado.
+ *
+ * O trigger set_database_updated_at nao mexe em updated_at quando so o
+ * last_seen_at muda, entao isto reflete alteracao real de odd, nao revisita.
+ */
+async function fetchChangedFixtureIds(since: string | null) {
+  if (!since) return null;
+
+  const rows = await fetchAllPages<{ fixture_id: string }>((from, to) =>
+    supabase
+      .from("cotacoes")
+      .select("fixture_id")
+      .eq("market_code", MARKET_CODE)
+      .gt("updated_at", since)
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
+
+  return new Set(rows.map((row) => row.fixture_id));
 }
 
 async function fetchOddsForFixtures(fixtureIds: string[]) {
@@ -246,20 +275,40 @@ export async function sweepInconsistentOdds(options: { logProgress?: boolean } =
   const logProgress = options.logProgress ?? true;
   const summary: ConsistencySweepSummary = {
     fixturesChecked: 0,
+    fixturesSkipped: 0,
     eventMismatches: 0,
     partialMismatches: 0,
     oddsDeleted: 0,
     linksDeleted: 0
   };
 
-  const fixtureIds = await fetchUpcomingFixtureIds();
-  if (!fixtureIds.length) return summary;
+  // Tomado antes de qualquer leitura: odds gravadas durante a varredura ficam
+  // para a proxima em vez de serem puladas.
+  const sweepStartedAt = new Date().toISOString();
+  const upcomingFixtureIds = await fetchUpcomingFixtureIds();
+  if (!upcomingFixtureIds.length) return summary;
+
+  // Um jogo ja bloqueado nao regrava a odd reprovada, porque applyOddsBlocks a
+  // descarta na gravacao. Reavaliar tudo a cada intervalo seria trabalho perdido,
+  // entao so entram jogos cujas odds mudaram desde a ultima varredura.
+  const changedFixtureIds = await fetchChangedFixtureIds(lastSweepAt);
+  const fixtureIds = changedFixtureIds
+    ? upcomingFixtureIds.filter((id) => changedFixtureIds.has(id))
+    : upcomingFixtureIds;
+  summary.fixturesSkipped = upcomingFixtureIds.length - fixtureIds.length;
+
+  if (!fixtureIds.length) {
+    lastSweepAt = sweepStartedAt;
+    if (logProgress) console.log("[consistencia] Nenhum jogo com odds alteradas desde a ultima varredura.");
+    return summary;
+  }
 
   const odds = await fetchOddsForFixtures(fixtureIds);
   summary.fixturesChecked = new Set(odds.map((odd) => odd.fixture_id)).size;
 
   const mismatches = detectMismatches(odds);
   if (!mismatches.length) {
+    lastSweepAt = sweepStartedAt;
     if (logProgress) console.log("[consistencia] Nenhuma odd fora do consenso.");
     return summary;
   }
@@ -369,6 +418,8 @@ export async function sweepInconsistentOdds(options: { logProgress?: boolean } =
       console.log(`[consistencia] ${mismatch.bookmakerSlug} / ${mismatch.fixtureId}: ${mismatch.reason} — ${tail}`);
     }
   }
+
+  lastSweepAt = sweepStartedAt;
 
   if (logProgress) {
     console.log(

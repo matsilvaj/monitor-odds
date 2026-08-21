@@ -5,6 +5,7 @@ import { BOOKMAKER_COLLECTORS } from "../bookmakers/registry.js";
 import { supabase } from "../db/supabase.js";
 import { syncApiFootballFixtures, type SyncApiFootballFixturesOptions } from "../services/api-football-sync.js";
 import { defaultSyncDateBuckets } from "../services/sync-report.js";
+import { sweepInconsistentOdds } from "../services/odds-consistency.js";
 import { errorMessage } from "../utils/errors.js";
 import { installProcessErrorHandlers } from "../utils/process-errors.js";
 import { parseSyncWatchEventLine, type SyncWatchWorkerEvent, type WatchLane } from "./sync-watch-events.js";
@@ -38,6 +39,10 @@ const WORKER_SHUTDOWN_TIMEOUT_MS = numberEnv("WATCHDOG_WORKER_SHUTDOWN_TIMEOUT_M
 const RESTART_COOLDOWN_MS = numberEnv("WATCHDOG_RESTART_COOLDOWN_MS", 5_000, 1_000);
 const RESTART_WINDOW_MS = numberEnv("WATCHDOG_RESTART_WINDOW_MS", 30 * 60_000, 60_000);
 const MAX_RESTARTS_PER_WINDOW = numberEnv("WATCHDOG_MAX_RESTARTS_PER_WINDOW", 5, 1);
+// A varredura de consistencia roda em intervalo proprio, desacoplada das raias:
+// odds de bet365/meridianbet sao gravadas em processos separados e ficariam ate um
+// ciclo inteiro visiveis se a deteccao dependesse do fim da raia rapida.
+const CONSISTENCY_SWEEP_MS = numberEnv("CONSISTENCY_SWEEP_MS", 120_000, 30_000);
 
 type LaneConfig = {
   lane: WatchLane;
@@ -65,6 +70,7 @@ let shutdownRequested = false;
 let resolveShutdown: (() => void) | null = null;
 let midnightFixtureSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+let consistencyTimer: ReturnType<typeof setInterval> | null = null;
 const shutdownPromise = new Promise<void>((resolve) => {
   resolveShutdown = resolve;
 });
@@ -243,6 +249,8 @@ const dashLanes = new Map<WatchLane, LaneDashInfo>();
 let dashApiToday = 0;
 let dashApiTomorrow = 0;
 let dashUpdatedAt: Date | null = null;
+let dashSweepAt: Date | null = null;
+let dashSweepInfo = "aguardando";
 
 async function refreshDashboard() {
   const buckets = defaultSyncDateBuckets();
@@ -259,6 +267,26 @@ async function refreshDashboard() {
   dashApiToday = fixtureList.filter((f) => f.date_key === todayKey).length;
   dashApiTomorrow = fixtureList.filter((f) => f.date_key === tomorrowKey).length;
   dashUpdatedAt = new Date();
+}
+
+async function runConsistencySweepTick() {
+  if (shutdownRequested) return;
+
+  try {
+    const result = await sweepInconsistentOdds({ logProgress: false });
+    const blocks = result.eventMismatches + result.partialMismatches;
+    const scope = `${result.fixturesChecked} avaliado(s), ${result.fixturesSkipped} sem alteração`;
+    dashSweepInfo = blocks
+      ? `${ANSI_RED}${blocks} bloqueio(s), ${result.oddsDeleted} odd(s) removida(s)${ANSI_RESET} ${ANSI_DIM}(${scope})${ANSI_RESET}`
+      : `${ANSI_DIM}sem inconsistências (${scope})${ANSI_RESET}`;
+  } catch (error) {
+    // Falha estrutural (tabela ausente, schema desatualizado) fica visível no painel
+    // em vez de sumir num warn que ninguém lê.
+    dashSweepInfo = `${ANSI_RED}falhou: ${errorMessage(error)}${ANSI_RESET}`;
+  }
+
+  dashSweepAt = new Date();
+  renderDashboard();
 }
 
 function renderDashboard() {
@@ -307,6 +335,11 @@ function renderDashboard() {
   }
 
   out.push(SEP);
+
+  const sweepTime = dashSweepAt
+    ? dashSweepAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : "--:--:--";
+  out.push(`${ANSI_DIM}consistência${ANSI_RESET} ${ANSI_DIM}${sweepTime}${ANSI_RESET}  ${dashSweepInfo}`);
 
   enterAltScreen();
   process.stdout.write("\x1b[H\x1b[0J" + out.join("\n") + "\n");
@@ -699,9 +732,11 @@ for (const state of enabledStates) startWorker(state);
 
 
 watchdogTimer = setInterval(checkWorkers, WATCHDOG_CHECK_MS);
+consistencyTimer = setInterval(() => void runConsistencySweepTick(), CONSISTENCY_SWEEP_MS);
 
 await shutdownPromise;
 
+if (consistencyTimer) clearInterval(consistencyTimer);
 await Promise.all(workerStates.map((state) => stopWorker(state, "shutdown")));
 await resetBrowserCollectionStates().catch((error) => {
   console.warn(`[sync] Não consegui limpar o estado final das coletas de navegador: ${errorMessage(error)}`);
