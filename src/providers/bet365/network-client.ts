@@ -241,6 +241,10 @@ class Bet365PageController {
     private readonly closePageOnClose = false
   ) {}
 
+  isUsable() {
+    return !this.page.isClosed() && !isBlankPageUrl(this.page.url());
+  }
+
   async navigate(url: string, timeoutMs: number) {
     if (!this.page) throw new Error("Browser da Bet365 nao conectado via CDP.");
     const timeout = Math.max(timeoutMs, 10_000);
@@ -818,6 +822,12 @@ class Bet365PageController {
   }
 }
 
+// Aba recem-aberta ou orfa: nao serve como aba principal da coleta.
+function isBlankPageUrl(url: string) {
+  const normalized = (url ?? "").trim().toLowerCase();
+  return normalized === "" || normalized === "about:blank" || normalized.startsWith("chrome://newtab") || normalized === "about:newtab";
+}
+
 export class Bet365NetworkClient {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -825,20 +835,54 @@ export class Bet365NetworkClient {
 
   constructor(private readonly logger?: Logger) {}
 
-  async connectToExistingChrome(debugPort: number) {
-    if (this.browser?.isConnected() && this.context && this.mainController) return;
+  /**
+   * Escolhe a aba principal. A selecao anterior caia em pages[0] quando nenhuma aba
+   * tinha URL da bet365, e pages[0] costuma ser uma about:blank orfa — a coleta
+   * ficava presa nela ate alguem fechar a aba na mao. Alem disso o controller nunca
+   * era reavaliado, entao uma aba fechada ou em branco no meio do caminho travava
+   * o restante da sessao.
+   */
+  async connectToExistingChrome(debugPort: number, baseUrl?: string) {
+    if (this.browser?.isConnected() && this.context && this.mainController?.isUsable()) return;
 
-    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
+    if (this.mainController && !this.mainController.isUsable()) {
+      await this.logger?.("warn", "aba principal da bet365 em branco ou fechada; reselecionando", {});
+      this.mainController = null;
+    }
+
+    const browser = this.browser?.isConnected() ? this.browser : await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
     const contexts = browser.contexts();
     const context = contexts[0] ?? (await browser.newContext());
     const pages = context.pages();
-    const bet365Page = pages.find((page) => page.url().includes("bet365"));
-    const page = bet365Page ?? pages[0] ?? (await context.newPage());
+    const usable = pages.filter((page) => !page.isClosed());
+    const blankPages = usable.filter((page) => isBlankPageUrl(page.url()));
+
+    let page = usable.find((item) => item.url().includes("bet365")) ?? usable.find((item) => !isBlankPageUrl(item.url()));
+
+    if (!page) {
+      // So restaram abas em branco: aproveita uma e leva para a bet365 em vez de
+      // deixar a coleta apontada para about:blank.
+      page = blankPages[0] ?? (await context.newPage());
+      if (baseUrl) {
+        await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => undefined);
+      }
+    }
+
+    // Fecha as demais abas em branco, que so acumulam e confundem a proxima selecao.
+    const strays = blankPages.filter((item) => item !== page);
+    for (const stray of strays) {
+      await stray.close({ runBeforeUnload: false }).catch(() => undefined);
+    }
 
     this.browser = browser;
     this.context = context;
     this.mainController = new Bet365PageController(page, this.logger, false);
-    await this.logger?.("info", "cliente CDP da bet365 conectado", { debugPort, pages: pages.length });
+    await this.logger?.("info", "cliente CDP da bet365 conectado", {
+      debugPort,
+      pages: pages.length,
+      abasEmBrancoFechadas: strays.length,
+      urlDaAbaPrincipal: page.url()
+    });
   }
 
   private requireMainController() {

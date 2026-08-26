@@ -96,7 +96,7 @@ export class ChromeClient {
       throw new Error(`Chrome CDP nao respondeu na porta ${this.config.debugPort}.`);
     }
 
-    await this.networkClient.connectToExistingChrome(this.config.debugPort);
+    await this.networkClient.connectToExistingChrome(this.config.debugPort, initialUrl);
   }
 
   async collectEventOdds(url: string, eventIndex = -1, clickEvent = false, forceNavigate = false, homeTeam = "", awayTeam = ""): Promise<Bet365NetworkCapture> {
