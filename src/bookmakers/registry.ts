@@ -233,6 +233,23 @@ export type CollectAllBookmakersOptions = {
 
 const BROWSER_COLLECTOR_SLUGS = new Set<string>(["meridianbet", "bet365"]);
 
+function summaryNumber(summary: unknown, key: string) {
+  if (!summary || typeof summary !== "object") return 0;
+  const value = (summary as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * A limpeza de odds nao vistas so pode rodar quando o ciclo realmente coletou.
+ * Um coletor que falha (Chrome fora do ar, por exemplo) retorna resumo com erro em
+ * vez de lancar, e sem esta guarda a casa inteira era apagada do banco depois de 2h
+ * de indisponibilidade — perda de dados causada por uma falha de infraestrutura.
+ */
+function collectedSomething(summary: unknown) {
+  if (summaryNumber(summary, "errors") > 0) return false;
+  return summaryNumber(summary, "eventsCollected") > 0 || summaryNumber(summary, "oddsUpserted") > 0;
+}
+
 // Roda so depois que todas as casas do ciclo salvaram, quando ja existe consenso
 // suficiente para julgar quem esta fora da media.
 async function runConsistencySweep(logProgress: boolean) {
@@ -292,10 +309,12 @@ async function collectBookmakers(bookmakers: BookmakerCollector[], options: Coll
       const durationMs = Math.round(performance.now() - start);
       const result = { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
       await printBookmakerResult(result);
-      const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-      const deleted = await OddsRepository.deleteStaleByBookmaker(bookmaker.slug, staleThreshold);
-      if (deleted > 0 && logProgress) {
-        console.log(`[${bookmaker.slug}] ${deleted} odd(s) obsoleta(s) removidas (não vistas há mais de 2h).`);
+      if (collectedSomething(summary)) {
+        const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const deleted = await OddsRepository.deleteStaleByBookmaker(bookmaker.slug, staleThreshold);
+        if (deleted > 0 && logProgress) {
+          console.log(`[${bookmaker.slug}] ${deleted} odd(s) obsoleta(s) removidas (não vistas há mais de 2h).`);
+        }
       }
       return result;
     } catch (error) {
@@ -356,10 +375,12 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
       const durationMs = Math.round(performance.now() - start);
       const result = { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
       await printBookmakerResult(result);
-      const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-      const deleted = await OddsRepository.deleteStaleByBookmaker(bookmaker.slug, staleThreshold);
-      if (deleted > 0 && logProgress) {
-        console.log(`[${bookmaker.slug}] ${deleted} odd(s) obsoleta(s) removidas (não vistas há mais de 2h).`);
+      if (collectedSomething(summary)) {
+        const staleThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const deleted = await OddsRepository.deleteStaleByBookmaker(bookmaker.slug, staleThreshold);
+        if (deleted > 0 && logProgress) {
+          console.log(`[${bookmaker.slug}] ${deleted} odd(s) obsoleta(s) removidas (não vistas há mais de 2h).`);
+        }
       }
       return result;
     } catch (error) {

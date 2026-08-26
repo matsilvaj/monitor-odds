@@ -490,6 +490,29 @@ function marketsSeen(event: Bet365Event) {
   return [...new Set(event.markets.map((market) => market.paCategory))];
 }
 
+/**
+ * Categorias que capturas anteriores deste evento ja registraram.
+ */
+function previouslySeenCategories(previousRaw: unknown): string[] {
+  const seen = objectRaw(previousRaw).marketsSeen;
+  return Array.isArray(seen) ? seen.filter((item): item is string => typeof item === "string") : [];
+}
+
+/**
+ * Um evento que ja apareceu com pagamento antecipado continua com PA ate comecar —
+ * o mercado pode fechar, mas nao troca de natureza. Como classifyPaCategory assume
+ * SEM_PA na ausencia da etiqueta, uma captura que perdeu o rotulo (acontece na camada
+ * direct) rebaixaria COM_PA para SEM_PA e gravaria odds de PA como se nao fossem.
+ *
+ * Nesse caso a captura e ambigua: nao da para saber se o bloco sem etiqueta e o
+ * mercado de PA ou um mercado comum. Preservar o snapshot anterior, que tinha rotulo
+ * confiavel, e mais seguro do que sobrescrever com um palpite.
+ */
+function downgradesEarlyPayout(event: Bet365Event, previousRaw: unknown) {
+  if (!previouslySeenCategories(previousRaw).includes("COM_PA")) return false;
+  return !marketsSeen(event).includes("COM_PA");
+}
+
 function missingBet365MarketCategories(event: Bet365Event) {
   const seen = new Set(marketsSeen(event));
   return (["COM_PA", "SEM_PA"] as const).filter((category) => !seen.has(category));
@@ -1459,6 +1482,18 @@ export class Bet365Collector {
           eventName: event.eventName,
           externalEventId: event.externalEventId,
           markets: event.markets.map((m) => m.paCategory),
+          context: context.layer
+        });
+        return { oddsFound: 0, oddsUpserted: 0 };
+      }
+
+      if (downgradesEarlyPayout(event, context.previousRaw)) {
+        await this.logger("warn", "captura da bet365 perdeu a etiqueta de pagamento antecipado; snapshot anterior preservado", {
+          fixtureId: fixture.id,
+          eventName: event.eventName,
+          externalEventId: event.externalEventId,
+          categoriasAgora: marketsSeen(event),
+          categoriasAntes: previouslySeenCategories(context.previousRaw),
           context: context.layer
         });
         return { oddsFound: 0, oddsUpserted: 0 };
