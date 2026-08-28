@@ -332,7 +332,8 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://www.estrelabet.bet.br",
     referer: "https://www.estrelabet.bet.br/",
-    engine: "fetch"
+    engine: "got-scraping",
+    acceptHeader: "*/*"
   },
   {
     slug: "br4bet",
@@ -343,7 +344,8 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://br4.bet.br",
     referer: "https://br4.bet.br/",
-    engine: "fetch",
+    engine: "got-scraping",
+    acceptHeader: "*/*",
     eventListMode: "coupon-events",
     listDeviceType: "1"
   },
@@ -356,7 +358,8 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://lotogreen.bet.br",
     referer: "https://lotogreen.bet.br/",
-    engine: "fetch"
+    engine: "got-scraping",
+    acceptHeader: "*/*"
   },
   {
     slug: "jogodeouro",
@@ -381,7 +384,8 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://www.vupi.bet.br",
     referer: "https://www.vupi.bet.br/",
-    engine: "fetch",
+    engine: "got-scraping",
+    acceptHeader: "*/*",
     eventListMode: "coupon-events",
     listDeviceType: "1"
   },
@@ -416,7 +420,8 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     baseUrl: env.ALTENAR_BASE_URL,
     origin: "https://vaidebet.bet.br",
     referer: "https://vaidebet.bet.br/",
-    engine: "fetch"
+    engine: "got-scraping",
+    acceptHeader: "*/*"
   },
   {
     slug: "esportesdasorte",
