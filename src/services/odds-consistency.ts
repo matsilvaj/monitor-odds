@@ -4,8 +4,14 @@ import { fetchAllPages } from "../db/paginate.js";
 const MARKET_CODE = "1X2";
 // Minimo de casas com odds no mesmo grupo para o consenso ser confiavel.
 const MIN_BOOKMAKERS = 4;
-// Desvio maximo tolerado em pontos percentuais de probabilidade implicita.
-const MAX_DEVIATION_PP = 20;
+// Piso absoluto de desvio, em pontos percentuais de probabilidade implicita.
+// Medido sobre 15628 comparacoes reais: p50=0.70 p90=1.98 p99=3.45 p99.9=5.62 max=8.06.
+const MAX_DEVIATION_PP = 7;
+// O piso sozinho nao serve: ligas menores tem spread legitimo largo. Em
+// Maia Lidador x Vila Meã as casas variavam de 2.48 a 3.10 no mandante, e um piso
+// fixo de 7pp reprovava tres casas corretas. Entao o desvio tambem precisa superar
+// o proprio desacordo do grupo — 2x o intervalo interquartil das demais casas.
+const MIN_SPREAD_MULTIPLE = 2;
 // Tentativas de re-link antes de suprimir a casa naquele jogo em definitivo.
 const MAX_RELINK_ATTEMPTS = 3;
 const SELECT_BATCH_SIZE = 500;
@@ -58,6 +64,14 @@ function median(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
+}
+
+// Desacordo tipico do grupo. Interquartil em vez de amplitude total para que um unico
+// extremo nao alargue a tolerancia e acabe blindando o proprio outlier.
+function interquartileRange(values: number[]) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const at = (quantile: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * quantile))]!;
+  return at(0.75) - at(0.25);
 }
 
 function groupKey(paCategory: string, selection: string) {
@@ -185,6 +199,8 @@ export function detectMismatches(odds: ConsistencyOddRow[]): Mismatch[] {
 
         const deviationPp = Math.abs(implied - median(others)) * 100;
         if (deviationPp <= MAX_DEVIATION_PP) continue;
+        // Mercado frouxo tolera mais: so destoa quem se afasta alem do desacordo do grupo.
+        if (deviationPp <= MIN_SPREAD_MULTIPLE * interquartileRange(others) * 100) continue;
 
         const deviatingByPa = deviating.get(bookmakerSlug) ?? new Map<string, Map<string, number>>();
         const deviatingSelections = deviatingByPa.get(paCategory) ?? new Map<string, number>();
