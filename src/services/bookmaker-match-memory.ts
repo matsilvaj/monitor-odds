@@ -1,4 +1,5 @@
 import { supabase } from "../db/supabase.js";
+import { fetchAllPages } from "../db/paginate.js";
 import { normalizeName } from "../domain/text.js";
 
 export type MatchMemoryLogger = (
@@ -37,14 +38,19 @@ export async function loadBookmakerAliasIndex(fixtures: FixtureTeamIdentity[]): 
   const teamIds = [...canonicalNameByTeamId.keys()];
   if (!teamIds.length) return new Map();
 
-  const { data, error } = await supabase
-    .from("apelidos_times")
-    .select("team_id,alias,normalized_alias")
-    .in("team_id", teamIds);
-  if (error) throw error;
+  // Paginado: o PostgREST corta em 1000 linhas sem avisar, e apelidos_times cresce
+  // sem teto. Truncar aqui faria apelidos ja aprendidos sumirem em silencio.
+  const data = await fetchAllPages<AliasRow>((from, to) =>
+    supabase
+      .from("apelidos_times")
+      .select("team_id,alias,normalized_alias")
+      .in("team_id", teamIds)
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
 
   const candidates = new Map<string, Set<string>>();
-  for (const row of (data ?? []) as AliasRow[]) {
+  for (const row of data) {
     const normalized = normalizeName(row.normalized_alias || row.alias);
     if (!normalized) continue;
     const ids = candidates.get(normalized) ?? new Set<string>();

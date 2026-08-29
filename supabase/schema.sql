@@ -293,6 +293,10 @@ create index if not exists fixtures_league_id_idx on jogos (league_id);
 create index if not exists teams_normalized_name_idx on times (normalized_name);
 create index if not exists odds_fixture_id_idx on cotacoes (fixture_id);
 create index if not exists odds_bookmaker_market_fixture_idx on cotacoes (bookmaker_slug, market_code, fixture_id);
+-- Limpeza de odds obsoletas: roda uma vez por casa a cada ciclo.
+create index if not exists odds_bookmaker_last_seen_idx on cotacoes (bookmaker_slug, last_seen_at);
+-- Varredura de consistencia incremental: roda a cada 2 minutos.
+create index if not exists odds_market_updated_idx on cotacoes (market_code, updated_at);
 create index if not exists bookmaker_event_links_fixture_id_idx on links_eventos (fixture_id);
 create index if not exists bookmaker_event_links_bookmaker_fixture_idx on links_eventos (bookmaker_slug, fixture_id);
 create index if not exists bookmaker_league_links_slug_league_idx on links_campeonatos (bookmaker_slug, api_football_league_id);

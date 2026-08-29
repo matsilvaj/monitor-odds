@@ -32,9 +32,10 @@ import {
   type FixtureReport
 } from "../services/sync-report.js";
 import { OddsRepository } from "../db/odds-repository.js";
+import { supabase } from "../db/supabase.js";
 import { sweepInconsistentOdds } from "../services/odds-consistency.js";
 import { errorMessage } from "../utils/errors.js";
-import type { BookmakerCollector, BookmakerCollectorResult } from "./types.js";
+import type { BookmakerCollectOptions, BookmakerCollector, BookmakerCollectorResult } from "./types.js";
 import type { BookmakerConfig } from "../config/bookmakers.js";
 
 function createBookmakerCollector(bookmaker: BookmakerConfig): BookmakerCollector {
@@ -233,6 +234,70 @@ export type CollectAllBookmakersOptions = {
 
 const BROWSER_COLLECTOR_SLUGS = new Set<string>(["meridianbet", "bet365"]);
 
+// Teto por casa. Sem ele, um coletor que trava sem resposta segura o Promise.all do
+// grupo e a raia inteira fica pendurada ate o watchdog matar o worker 25 min depois —
+// as outras 28 casas param junto por causa de uma.
+const COLLECT_TIMEOUT_MS = numberEnv("BOOKMAKER_COLLECT_TIMEOUT_MS", 6 * 60_000, 30_000);
+const BROWSER_COLLECT_TIMEOUT_MS = numberEnv("BROWSER_COLLECT_TIMEOUT_MS", 20 * 60_000, 60_000);
+
+function numberEnv(name: string, fallback: number, min: number) {
+  const raw = process.env[name];
+  const parsed = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.trunc(parsed));
+}
+
+class CollectTimeoutError extends Error {
+  constructor(slug: string, ms: number) {
+    super(`Coleta de ${slug} passou de ${Math.round(ms / 1000)}s sem responder.`);
+    this.name = "CollectTimeoutError";
+  }
+}
+
+/**
+ * Promise.race nao cancela o trabalho em andamento — o coletor continua rodando em
+ * segundo plano e pode gravar depois. Ainda assim e melhor que travar a raia: a casa
+ * lenta e dada como falha, o ciclo segue, e o proximo ciclo a reavalia.
+ */
+async function collectWithTimeout(bookmaker: BookmakerCollector, options: BookmakerCollectOptions) {
+  const timeoutMs = BROWSER_COLLECTOR_SLUGS.has(bookmaker.slug) ? BROWSER_COLLECT_TIMEOUT_MS : COLLECT_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      bookmaker.collect(options),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new CollectTimeoutError(bookmaker.slug, timeoutMs)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Estado de cada casa no banco. Antes so bet365 e meridianbet gravavam aqui, entao uma
+ * casa rapida podia falhar todo ciclo por dias sem deixar rastro: no watch logProgress
+ * e false e o erro morria dentro do resultado, sem ir para lugar nenhum.
+ */
+async function recordCollectionState(slug: string, summary: unknown, error: unknown, durationMs: number) {
+  const failed = Boolean(error) || summaryNumber(summary, "errors") > 0;
+  const payload = {
+    bookmaker_slug: slug,
+    status: failed ? "error" : "idle",
+    last_finished_at: new Date().toISOString(),
+    last_error: error ? errorMessage(error) : null,
+    summary: {
+      ...(summary && typeof summary === "object" ? (summary as Record<string, unknown>) : {}),
+      durationMs
+    },
+    updated_at: new Date().toISOString()
+  };
+
+  const { error: dbError } = await supabase.from("estado_coletas").upsert(payload, { onConflict: "bookmaker_slug" });
+  if (dbError) console.warn(`[${slug}] Nao consegui registrar o estado da coleta: ${dbError.message}`);
+}
+
 // Odds nao vistas neste intervalo saem quando o ciclo coletou normalmente.
 const STALE_ODDS_MS = 2 * 60 * 60 * 1000;
 // Limite duro: roda mesmo em ciclo falho. Uma casa que quebra em silencio mantinha
@@ -333,16 +398,21 @@ async function collectBookmakers(bookmakers: BookmakerCollector[], options: Coll
     }
 
     try {
-      const summary = await bookmaker.collect({ logToConsole: logProgress, manualFallback: false, trigger });
+      const summary = await collectWithTimeout(bookmaker, { logToConsole: logProgress, manualFallback: false, trigger });
       const durationMs = Math.round(performance.now() - start);
       const result = { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
       await printBookmakerResult(result);
+      await recordCollectionState(bookmaker.slug, summary, null, durationMs).catch(() => undefined);
       await cleanupStaleOdds(bookmaker.slug, summary, logProgress);
       return result;
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
       const result = { bookmaker: bookmaker.slug, summary: null, error: errorMessage(error), durationMs } satisfies BookmakerCollectorResult;
       await printBookmakerResult(result);
+      // warn em vez de depender de logProgress: no watch ele e false e o erro sumia.
+      console.warn(`[${bookmaker.slug}] Coleta falhou apos ${Math.round(durationMs / 1000)}s: ${errorMessage(error)}`);
+      await recordCollectionState(bookmaker.slug, null, error, durationMs).catch(() => undefined);
+      await cleanupStaleOdds(bookmaker.slug, null, logProgress);
       return result;
     }
   };
@@ -393,16 +463,21 @@ export async function collectAllBookmakers(options: CollectAllBookmakersOptions 
     }
 
     try {
-      const summary = await bookmaker.collect({ logToConsole: logProgress, manualFallback: false, trigger });
+      const summary = await collectWithTimeout(bookmaker, { logToConsole: logProgress, manualFallback: false, trigger });
       const durationMs = Math.round(performance.now() - start);
       const result = { bookmaker: bookmaker.slug, summary, durationMs } satisfies BookmakerCollectorResult;
       await printBookmakerResult(result);
+      await recordCollectionState(bookmaker.slug, summary, null, durationMs).catch(() => undefined);
       await cleanupStaleOdds(bookmaker.slug, summary, logProgress);
       return result;
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
       const result = { bookmaker: bookmaker.slug, summary: null, error: errorMessage(error), durationMs } satisfies BookmakerCollectorResult;
       await printBookmakerResult(result);
+      // warn em vez de depender de logProgress: no watch ele e false e o erro sumia.
+      console.warn(`[${bookmaker.slug}] Coleta falhou apos ${Math.round(durationMs / 1000)}s: ${errorMessage(error)}`);
+      await recordCollectionState(bookmaker.slug, null, error, durationMs).catch(() => undefined);
+      await cleanupStaleOdds(bookmaker.slug, null, logProgress);
       return result;
     }
   };

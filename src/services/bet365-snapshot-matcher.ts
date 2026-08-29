@@ -13,6 +13,11 @@ import {
 } from "./bookmaker-match-memory.js";
 import { findFixtureWithLlmFallback } from "./llm-fixture-matcher.js";
 
+// O PostgREST corta em 1000 linhas por padrao, sem erro nem aviso. Estas consultas sao
+// escopadas a bet365 e hoje ficam bem abaixo disso, mas crescem com a cobertura da casa:
+// um range explicito eleva o teto em vez de deixar o corte acontecer em silencio.
+const PAGE_LIMIT = 49_999;
+
 type SnapshotRow = {
   id: string;
   external_event_id: number;
@@ -197,20 +202,28 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
     supabase
       .from("capturas_eventos")
       .select("id,external_event_id,league_api_football_id,league_name,event_name,home_team,away_team,starts_at,date_key,source_url,markets,raw")
-      .eq("bookmaker_slug", "bet365"),
+      .eq("bookmaker_slug", "bet365")
+      .order("id", { ascending: true })
+      .range(0, PAGE_LIMIT),
     supabase
       .from("jogos")
       .select("id,home_team_id,away_team_id,home_team,away_team,starts_at,date_key,league:campeonatos!inner(name,api_football_league_id,enabled)")
       .in("date_key", dates)
-      .eq("campeonatos.enabled", true),
+      .eq("campeonatos.enabled", true)
+      .order("id", { ascending: true })
+      .range(0, PAGE_LIMIT),
     supabase
       .from("links_eventos")
       .select("id,fixture_id,external_event_id,match_confidence_score,source_url,raw")
-      .eq("bookmaker_slug", "bet365"),
+      .eq("bookmaker_slug", "bet365")
+      .order("id", { ascending: true })
+      .range(0, PAGE_LIMIT),
     supabase
       .from("cotacoes")
       .select("fixture_id")
       .eq("bookmaker_slug", "bet365")
+      .order("id", { ascending: true })
+      .range(0, PAGE_LIMIT)
   ]);
   if (snapshotError) throw snapshotError;
   if (fixtureError) throw fixtureError;
@@ -458,7 +471,9 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
   const { data: currentLinkData, error: currentLinkError } = await supabase
     .from("links_eventos")
     .select("id,fixture_id,external_event_id,match_confidence_score,source_url,raw")
-    .eq("bookmaker_slug", "bet365");
+    .eq("bookmaker_slug", "bet365")
+    .order("id", { ascending: true })
+    .range(0, PAGE_LIMIT);
   if (currentLinkError) throw currentLinkError;
   const duplicateLinksRemoved = await removeDuplicateBet365Links((currentLinkData ?? []) as ExistingLinkRow[]);
 
