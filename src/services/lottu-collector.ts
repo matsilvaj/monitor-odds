@@ -1,11 +1,11 @@
 import type { BookmakerCollectOptions } from "../bookmakers/types.js";
-import type { BetboomBookmakerConfig } from "../config/bookmakers.js";
+import type { LottuBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
 import { normalizeName } from "../domain/text.js";
-import { BetboomClient, type BetboomEvent } from "../providers/betboom.js";
+import { LottuClient, type LottuEvent } from "../providers/lottu.js";
 import { errorMessage } from "../utils/errors.js";
 import { logCollectorMessage } from "./collector-log.js";
 
@@ -34,11 +34,11 @@ type CanonicalFixture = {
   starts_at: string;
 };
 
-async function log(bookmaker: BetboomBookmakerConfig, level: "info" | "warn" | "error", message: string, context: Record<string, unknown> = {}) {
+async function log(bookmaker: LottuBookmakerConfig, level: "info" | "warn" | "error", message: string, context: Record<string, unknown> = {}) {
   logCollectorMessage(bookmaker.slug, level, message, context);
 }
 
-async function ensureBaseRows(bookmaker: BetboomBookmakerConfig) {
+async function ensureBaseRows(bookmaker: LottuBookmakerConfig) {
   const { error } = await supabase.from("casas_apostas").upsert({ slug: bookmaker.slug, name: bookmaker.name }, { onConflict: "slug" });
   if (error) throw error;
 }
@@ -62,11 +62,11 @@ function fixtureLeague(fixture: CanonicalFixture) {
   return Array.isArray(fixture.league) ? fixture.league[0] ?? null : fixture.league;
 }
 
-function eventLeagueName(event: BetboomEvent) {
-  return [event.categoryName, event.tournamentName].filter(Boolean).join(" ") || null;
+function eventLeagueName(event: LottuEvent) {
+  return [event.country, event.championship].filter(Boolean).join(" ") || null;
 }
 
-function matchFixture(event: BetboomEvent, fixtures: CanonicalFixture[]) {
+function matchFixture(event: LottuEvent, fixtures: CanonicalFixture[]) {
   return findBestCanonicalEventMatch(
     fixtures.map((fixture) => ({ ...fixture, leagueName: fixtureLeague(fixture)?.name ?? null })),
     {
@@ -80,35 +80,40 @@ function matchFixture(event: BetboomEvent, fixtures: CanonicalFixture[]) {
   );
 }
 
-function isNearCanonicalFixtureWindow(event: BetboomEvent, fixtures: CanonicalFixture[]) {
+function isNearCanonicalFixtureWindow(event: LottuEvent, fixtures: CanonicalFixture[]) {
   const eventStart = Date.parse(event.startsAt);
   if (!Number.isFinite(eventStart)) return false;
 
   return fixtures.some((fixture) => Math.abs(new Date(fixture.starts_at).getTime() - eventStart) <= 20 * 60 * 1000);
 }
 
-// source_odd_id e bigint no banco: junta os ultimos digitos do evento com o outcome
-// (1/2/3) para caber em 15 digitos sem estourar a precisao de Number.
-function sourceOddId(event: BetboomEvent, outcomeId: string) {
-  return Number(`${event.id.replace(/\D/g, "").slice(-14)}${outcomeId}`);
+const SIDE_INDEX: Record<string, number> = { HOME: 1, DRAW: 2, AWAY: 3 };
+
+// O id da Lottu e um ObjectId hex e as colunas do banco sao bigint. Os ultimos 12
+// digitos hex (contador + aleatorio do ObjectId) cabem em 48 bits e seguem unicos.
+function numericEventId(event: LottuEvent) {
+  return Number.parseInt(event.id.slice(-12), 16) || 0;
 }
 
-function compactEventRaw(event: BetboomEvent) {
+function sourceOddId(event: LottuEvent, odd: LottuEvent["odds"][number]) {
+  return numericEventId(event) * 10 + SIDE_INDEX[odd.selection];
+}
+
+function compactEventRaw(event: LottuEvent) {
   return {
     id: event.id,
     startsAt: event.startsAt,
     homeTeam: event.homeTeam,
     awayTeam: event.awayTeam,
-    tournamentId: event.tournamentId,
-    tournamentName: event.tournamentName,
-    categoryName: event.categoryName
+    championship: event.championship,
+    country: event.country
   };
 }
 
-function buildBookmakerLink(bookmaker: BetboomBookmakerConfig, fixtureId: string, event: BetboomEvent, confidenceScore: number): BookmakerLinkRow {
+function buildBookmakerLink(bookmaker: LottuBookmakerConfig, fixtureId: string, event: LottuEvent, confidenceScore: number): BookmakerLinkRow {
   return {
     bookmaker_slug: bookmaker.slug,
-    external_event_id: event.id,
+    external_event_id: numericEventId(event),
     fixture_id: fixtureId,
     bookmaker_event_name: [event.homeTeam, event.awayTeam].filter(Boolean).join(" vs "),
     bookmaker_home_team: event.homeTeam,
@@ -117,13 +122,13 @@ function buildBookmakerLink(bookmaker: BetboomBookmakerConfig, fixtureId: string
     normalized_bookmaker_away_team: normalizeName(event.awayTeam),
     starts_at: event.startsAt,
     match_confidence_score: confidenceScore,
-    source_url: new URL(`sport/football/${event.tournamentId ?? ""}/${event.id}/`, bookmaker.baseUrl).href,
+    source_url: new URL(`esportes/evento/${event.id}`, bookmaker.referer).href,
     raw: compactEventRaw(event),
     updated_at: new Date().toISOString()
   };
 }
 
-function buildMoneylineOdds(bookmaker: BetboomBookmakerConfig, fixtureId: string, event: BetboomEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
+function buildMoneylineOdds(bookmaker: LottuBookmakerConfig, fixtureId: string, event: LottuEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
   const eventRaw = compactEventRaw(event);
 
   return event.odds.map((odd) => ({
@@ -137,16 +142,16 @@ function buildMoneylineOdds(bookmaker: BetboomBookmakerConfig, fixtureId: string
     confidence_score: 1,
     raw_market_name: "Resultado Final",
     raw_label: odd.selection,
-    raw_odd_type: odd.outcomeId,
-    source_odd_id: sourceOddId(event, odd.outcomeId),
-    raw: { event: eventRaw, odd, classificationReason: "betboom-standard-1x2" },
+    raw_odd_type: "full_time",
+    source_odd_id: sourceOddId(event, odd),
+    raw: { event: eventRaw, odd, classificationReason: "lottu-standard-1x2" },
     updated_at: new Date().toISOString()
   }));
 }
 
-export function createBetboomCollector(bookmaker: BetboomBookmakerConfig) {
-  return async function collectBetboom(options: BookmakerCollectOptions = {}) {
-    const client = new BetboomClient(bookmaker);
+export function createLottuCollector(bookmaker: LottuBookmakerConfig) {
+  return async function collectLottu(options: BookmakerCollectOptions = {}) {
+    const client = new LottuClient(bookmaker);
     const summary = {
       eventsSeen: 0,
       eventsInWindow: 0,
@@ -183,7 +188,7 @@ export function createBetboomCollector(bookmaker: BetboomBookmakerConfig) {
       const targetEvents = events.filter((event) => isNearCanonicalFixtureWindow(event, fixtures));
       summary.eventsInWindow = targetEvents.length;
 
-      const bestMatchByFixtureId = new Map<string, { event: BetboomEvent; matched: NonNullable<ReturnType<typeof matchFixture>> }>();
+      const bestMatchByFixtureId = new Map<string, { event: LottuEvent; matched: NonNullable<ReturnType<typeof matchFixture>> }>();
 
       for (const event of targetEvents) {
         const matched = matchFixture(event, fixtures);
@@ -214,10 +219,10 @@ export function createBetboomCollector(bookmaker: BetboomBookmakerConfig) {
     } catch (error) {
       summary.errors += 1;
       summary.lastError = errorMessage(error);
-      await log(bookmaker, "error", "betboom collection failed", { error: serializeError(error) });
+      await log(bookmaker, "error", "lottu collection failed", { error: serializeError(error) });
     }
 
-    await log(bookmaker, "info", "betboom collection finished", summary);
+    await log(bookmaker, "info", "lottu collection finished", summary);
     return summary;
   };
 }

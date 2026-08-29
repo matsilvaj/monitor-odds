@@ -255,8 +255,38 @@ export type BetboomBookmakerConfig = {
   enabled: boolean;
   provider: "betboom";
   baseUrl: string;
+  apiBaseUrl: string;
+  brandId: string;
+  locale: string;
   referer: string;
-  wsUrl: string;
+  engine: BookmakerHttpEngine;
+};
+
+export type LottuBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "lottu";
+  baseUrl: string;
+  referer: string;
+  engine: BookmakerHttpEngine;
+};
+
+export type BravobetBookmakerConfig = {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  provider: "bravobet";
+  baseUrl: string;
+  siteUrl: string;
+  sportsbookPath: string;
+  sportId: string;
+  moneylineMarketType: string;
+  pageSize: number;
+  maxPages: number;
+  marketBatchSize: number;
+  referer: string;
+  engine: BookmakerHttpEngine;
 };
 
 export type TradeballBookmakerConfig = {
@@ -307,6 +337,8 @@ export type BookmakerConfig =
   | CasaDeApostasBookmakerConfig
   | SegurobetBookmakerConfig
   | BetboomBookmakerConfig
+  | LottuBookmakerConfig
+  | BravobetBookmakerConfig
   | TradeballBookmakerConfig
   | VersusbetBookmakerConfig;
 
@@ -617,8 +649,36 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     enabled: true,
     provider: "betboom",
     baseUrl: "https://betboom.bet.br/",
+    apiBaseUrl: "https://api-32-sp-c7818b61-598.sptpub.com/api/",
+    brandId: "2671060590084104192",
+    locale: "pt-BR",
     referer: "https://betboom.bet.br/sport/football/",
-    wsUrl: "wss://com-br-ws.sporthub.bet:444/api/tree_ws/v1"
+    engine: "fetch"
+  },
+  {
+    slug: "lottu",
+    name: "Lottu",
+    enabled: true,
+    provider: "lottu",
+    baseUrl: "https://alpha-sb.ngbras.com/",
+    referer: "https://www.lottu.bet.br/",
+    engine: "fetch"
+  },
+  {
+    slug: "bravobet",
+    name: "Bravo Bet",
+    enabled: true,
+    provider: "bravobet",
+    baseUrl: "https://prod20434-188618173.fssb.io/",
+    siteUrl: "https://bravo.bet.br/",
+    sportsbookPath: "br-pt/spbkv4",
+    sportId: "1",
+    moneylineMarketType: "ML0",
+    pageSize: 500,
+    maxPages: 6,
+    marketBatchSize: 40,
+    referer: "https://prod20434-188618173.fssb.io/br-pt/spbkv4",
+    engine: "fetch"
   },
   {
     slug: "tradeball",

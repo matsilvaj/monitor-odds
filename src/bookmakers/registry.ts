@@ -6,6 +6,7 @@ import { createBet7kCollector } from "../services/bet7k-collector.js";
 import { createBet365Collector } from "../services/bet365-collector.js";
 import { createBetanoCollector } from "../services/betano-collector.js";
 import { createBetboomCollector } from "../services/betboom-collector.js";
+import { createBravobetCollector } from "../services/bravobet-collector.js";
 import { createBetesporteCollector } from "../services/betesporte-collector.js";
 import { createBetfastCollector } from "../services/betfast-collector.js";
 import { createBetfairCollector } from "../services/betfair-collector.js";
@@ -13,6 +14,7 @@ import { createBetmgmCollector } from "../services/betmgm-collector.js";
 import { createBetnacionalCollector } from "../services/betnacional-collector.js";
 import { createCasaDeApostasCollector } from "../services/casadeapostas-collector.js";
 import { createKtoCollector } from "../services/kto-collector.js";
+import { createLottuCollector } from "../services/lottu-collector.js";
 import { createMeridianbetCollector } from "../services/meridianbet-collector.js";
 import { createNovibetCollector } from "../services/novibet-collector.js";
 import { createSegurobetCollector } from "../services/segurobet-collector.js";
@@ -203,6 +205,22 @@ function createBookmakerCollector(bookmaker: BookmakerConfig): BookmakerCollecto
       slug: bookmaker.slug,
       name: bookmaker.name,
       collect: createSegurobetCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "lottu") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createLottuCollector(bookmaker)
+    };
+  }
+
+  if (bookmaker.provider === "bravobet") {
+    return {
+      slug: bookmaker.slug,
+      name: bookmaker.name,
+      collect: createBravobetCollector(bookmaker)
     };
   }
 
