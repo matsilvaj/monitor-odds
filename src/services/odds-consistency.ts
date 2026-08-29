@@ -6,12 +6,23 @@ const MARKET_CODE = "1X2";
 const MIN_BOOKMAKERS = 4;
 // Piso absoluto de desvio, em pontos percentuais de probabilidade implicita.
 // Medido sobre 15628 comparacoes reais: p50=0.70 p90=1.98 p99=3.45 p99.9=5.62 max=8.06.
-const MAX_DEVIATION_PP = 7;
+// Subiu de 7 para 12: com a arbitragem cobrindo os erros grandes (evento errado,
+// inversao), o desvio por perna isolada pode ficar mais frouxo sem perder cobertura.
+const MAX_DEVIATION_PP = 12;
 // O piso sozinho nao serve: ligas menores tem spread legitimo largo. Em
 // Maia Lidador x Vila Meã as casas variavam de 2.48 a 3.10 no mandante, e um piso
-// fixo de 7pp reprovava tres casas corretas. Entao o desvio tambem precisa superar
+// fixo reprovava tres casas corretas. Entao o desvio tambem precisa superar
 // o proprio desacordo do grupo — 2x o intervalo interquartil das demais casas.
 const MIN_SPREAD_MULTIPLE = 2;
+// Arbitragem de melhor-odd acima disso indica perna errada, mesmo com cada desvio
+// isolado abaixo do piso — foi o caso de America Mineiro x Ponte Preta (2.38%) e
+// Cinfães x Espinho (3.08%): nenhuma perna sozinha passava de 12pp, mas a soma
+// das tres melhores denunciava a sportingbet.
+const MIN_ARBITRAGE_PCT = 2;
+// Exchange e bolsa, nao odd fixa: preco reflete outros apostadores e pode ficar
+// extremo com pouca liquidez sem ser erro. Fica fora do calculo de arbitragem
+// (a deteccao por desvio continua valendo para ela normalmente).
+const ARBITRAGE_EXCLUDED_SLUGS = new Set<string>(["exchange"]);
 // Tentativas de re-link antes de suprimir a casa naquele jogo em definitivo.
 const MAX_RELINK_ATTEMPTS = 3;
 const SELECT_BATCH_SIZE = 500;
@@ -162,6 +173,9 @@ export function detectMismatches(odds: ConsistencyOddRow[]): Mismatch[] {
   }
 
   const mismatches: Mismatch[] = [];
+  // Evita reprocessar a mesma casa duas vezes no mesmo jogo: uma casa ja bloqueada
+  // pelo desvio por perna nao precisa passar pela arbitragem tambem.
+  const flaggedPairs = new Set<string>();
 
   for (const [fixtureId, fixtureOdds] of byFixture) {
     const distinctBookmakers = new Set(fixtureOdds.map((odd) => odd.bookmaker_slug));
@@ -235,6 +249,7 @@ export function detectMismatches(odds: ConsistencyOddRow[]): Mismatch[] {
           bookmakerSlug,
           reason: `todos os mercados fora do consenso (max ${worstPp}pp)`
         });
+        flaggedPairs.add(`${fixtureId}:${bookmakerSlug}`);
         continue;
       }
 
@@ -248,7 +263,67 @@ export function detectMismatches(odds: ConsistencyOddRow[]): Mismatch[] {
           paCategory,
           reason: `${paCategory} fora do consenso (max ${paWorstPp}pp)`
         });
+        flaggedPairs.add(`${fixtureId}:${bookmakerSlug}`);
       }
+    }
+
+    // Segundo eixo: arbitragem de melhor-odd. Um erro que desloca uma perna sozinha
+    // pode nao passar do piso de desvio (cada perna isolada parece normal), mas ainda
+    // assim inflar a arbitragem quando as tres melhores odds se somam — foi o caso de
+    // Cinfães x Espinho, onde a sportingbet destoava sem que nenhuma perna sozinha
+    // passasse de 12pp.
+    for (const paCategory of ["COM_PA", "SEM_PA"]) {
+      const bestBySelection = new Map<string, { implied: number; slug: string; runnerUpImplied: number | null }>();
+      const involvedSlugs = new Set<string>();
+
+      for (const selection of ["HOME", "DRAW", "AWAY"]) {
+        const group = groups.get(groupKey(paCategory, selection));
+        if (!group) continue;
+
+        const candidates = [...group.entries()]
+          .filter(([slug]) => !ARBITRAGE_EXCLUDED_SLUGS.has(slug))
+          .sort((left, right) => left[1] - right[1]); // menor implied = maior odd = melhor
+        if (!candidates.length) continue;
+
+        for (const [slug] of candidates) involvedSlugs.add(slug);
+        const [bestSlug, bestImplied] = candidates[0]!;
+        bestBySelection.set(selection, {
+          implied: bestImplied,
+          slug: bestSlug,
+          runnerUpImplied: candidates.length > 1 ? candidates[1]![1] : null
+        });
+      }
+
+      // precisa das 3 pernas para fechar a soma, e confianca minima igual ao desvio.
+      if (bestBySelection.size < 3 || involvedSlugs.size < MIN_BOOKMAKERS) continue;
+
+      const impliedSum = [...bestBySelection.values()].reduce((total, entry) => total + entry.implied, 0);
+      const arbitragePct = (1 - impliedSum) * 100;
+      if (arbitragePct <= MIN_ARBITRAGE_PCT) continue;
+
+      // aponta a perna cuja melhor odd mais se distancia da segunda melhor da mesma
+      // selecao — essa e a candidata a estar errada, nao as outras duas que sustentam
+      // o consenso.
+      let culprit: { selection: string; slug: string; gapPp: number } | null = null;
+      for (const [selection, entry] of bestBySelection) {
+        if (entry.runnerUpImplied === null) continue;
+        const gapPp = (entry.runnerUpImplied - entry.implied) * 100;
+        if (!culprit || gapPp > culprit.gapPp) culprit = { selection, slug: entry.slug, gapPp };
+      }
+      // nenhuma perna tem segunda melhor pra comparar: sem base pra apontar culpado.
+      if (!culprit) continue;
+
+      const pairKey = `${fixtureId}:${culprit.slug}`;
+      if (flaggedPairs.has(pairKey)) continue;
+      flaggedPairs.add(pairKey);
+
+      mismatches.push({
+        scope: "PARCIAL",
+        fixtureId,
+        bookmakerSlug: culprit.slug,
+        paCategory,
+        reason: `arbitragem ${arbitragePct.toFixed(2)}% - ${culprit.selection} destoa ${culprit.gapPp.toFixed(1)}pp da segunda melhor odd`
+      });
     }
   }
 

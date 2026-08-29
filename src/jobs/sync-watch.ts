@@ -42,7 +42,7 @@ const MAX_RESTARTS_PER_WINDOW = numberEnv("WATCHDOG_MAX_RESTARTS_PER_WINDOW", 5,
 // A varredura de consistencia roda em intervalo proprio, desacoplada das raias:
 // odds de bet365/meridianbet sao gravadas em processos separados e ficariam ate um
 // ciclo inteiro visiveis se a deteccao dependesse do fim da raia rapida.
-const CONSISTENCY_SWEEP_MS = numberEnv("CONSISTENCY_SWEEP_MS", 120_000, 30_000);
+const CONSISTENCY_SWEEP_MS = numberEnv("CONSISTENCY_SWEEP_MS", 60_000, 30_000);
 
 type LaneConfig = {
   lane: WatchLane;
