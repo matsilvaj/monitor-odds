@@ -85,6 +85,14 @@ function isNearCanonicalFixtureWindow(event: BravobetEvent, fixtures: CanonicalF
 
 const SIDE_INDEX: Record<string, number> = { HOME: 1, DRAW: 2, AWAY: 3 };
 
+// Os ids da FSB tem 18 digitos e o PostgREST devolve bigint como number JSON, que o JS
+// arredonda acima de 2^53. Se gravassemos o id cheio, a comparacao de links na releitura
+// nunca casaria e cada ciclo apagaria os links do ciclo anterior. Os ultimos 15 digitos
+// cabem em 2^53 e seguem distinguindo os eventos.
+function numericEventId(event: BravobetEvent) {
+  return Number(event.id.replace(/\D/g, "").slice(-15));
+}
+
 // source_odd_id e bigint no banco e o id da selecao vem com prefixo/sufixo de letras.
 function sourceOddId(odd: BravobetEvent["odds"][number]) {
   return Number(`${odd.id.replace(/\D/g, "").slice(-14)}${SIDE_INDEX[odd.selection]}`);
@@ -105,7 +113,7 @@ function compactEventRaw(event: BravobetEvent) {
 function buildBookmakerLink(bookmaker: BravobetBookmakerConfig, fixtureId: string, event: BravobetEvent, confidenceScore: number): BookmakerLinkRow {
   return {
     bookmaker_slug: bookmaker.slug,
-    external_event_id: event.id,
+    external_event_id: numericEventId(event),
     fixture_id: fixtureId,
     bookmaker_event_name: event.eventName ?? [event.homeTeam, event.awayTeam].filter(Boolean).join(" vs "),
     bookmaker_home_team: event.homeTeam,

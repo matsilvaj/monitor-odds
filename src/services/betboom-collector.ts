@@ -87,6 +87,14 @@ function isNearCanonicalFixtureWindow(event: BetboomEvent, fixtures: CanonicalFi
   return fixtures.some((fixture) => Math.abs(new Date(fixture.starts_at).getTime() - eventStart) <= 20 * 60 * 1000);
 }
 
+// Os ids da sptpub tem 19 digitos e o PostgREST devolve bigint como number JSON, que
+// o JS arredonda acima de 2^53. Se gravassemos o id cheio, a comparacao de links na
+// releitura nunca casaria e cada ciclo apagaria os links do ciclo anterior. Os ultimos
+// 15 digitos cabem em 2^53 e seguem distinguindo os eventos.
+function numericEventId(event: BetboomEvent) {
+  return Number(event.id.replace(/\D/g, "").slice(-15));
+}
+
 // source_odd_id e bigint no banco: junta os ultimos digitos do evento com o outcome
 // (1/2/3) para caber em 15 digitos sem estourar a precisao de Number.
 function sourceOddId(event: BetboomEvent, outcomeId: string) {
@@ -108,7 +116,7 @@ function compactEventRaw(event: BetboomEvent) {
 function buildBookmakerLink(bookmaker: BetboomBookmakerConfig, fixtureId: string, event: BetboomEvent, confidenceScore: number): BookmakerLinkRow {
   return {
     bookmaker_slug: bookmaker.slug,
-    external_event_id: event.id,
+    external_event_id: numericEventId(event),
     fixture_id: fixtureId,
     bookmaker_event_name: [event.homeTeam, event.awayTeam].filter(Boolean).join(" vs "),
     bookmaker_home_team: event.homeTeam,
