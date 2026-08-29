@@ -258,6 +258,9 @@ export type BetboomBookmakerConfig = {
   apiBaseUrl: string;
   brandId: string;
   locale: string;
+  moneylineMarketId: string;
+  earlyPayoutMarketId: string;
+  eventDetailConcurrency: number;
   referer: string;
   engine: BookmakerHttpEngine;
 };
@@ -652,6 +655,9 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     apiBaseUrl: "https://api-32-sp-c7818b61-598.sptpub.com/api/",
     brandId: "2671060590084104192",
     locale: "pt-BR",
+    moneylineMarketId: "1",
+    earlyPayoutMarketId: "900001",
+    eventDetailConcurrency: 6,
     referer: "https://betboom.bet.br/sport/football/",
     engine: "fetch"
   },

@@ -1,11 +1,13 @@
+import pMap from "p-map";
 import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import type { BetboomBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import type { PaCategory } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
-import { BetboomClient, type BetboomEvent } from "../providers/betboom.js";
+import { BetboomClient, type BetboomEvent, type BetboomOdd } from "../providers/betboom.js";
 import { errorMessage } from "../utils/errors.js";
 import { logCollectorMessage } from "./collector-log.js";
 
@@ -95,6 +97,16 @@ function numericEventId(event: BetboomEvent) {
   return Number(event.id.replace(/\D/g, "").slice(-15));
 }
 
+// A BetBoom publica o pagamento antecipado como mercado proprio (900001), lado a lado
+// com o 1x2 comum. As duas versoes convivem na mesma partida, entao gravamos as duas.
+function paForOdd(bookmaker: BetboomBookmakerConfig, odd: BetboomOdd): { category: PaCategory; confidence: number; reason: string } {
+  if (odd.marketId === bookmaker.earlyPayoutMarketId) {
+    return { category: "COM_PA", confidence: 1, reason: "betboom-early-payout-market" };
+  }
+
+  return { category: "SEM_PA", confidence: 1, reason: "betboom-standard-1x2" };
+}
+
 // source_odd_id e bigint no banco: junta os ultimos digitos do evento com o outcome
 // (1/2/3) para caber em 15 digitos sem estourar a precisao de Number.
 function sourceOddId(event: BetboomEvent, outcomeId: string) {
@@ -134,22 +146,26 @@ function buildBookmakerLink(bookmaker: BetboomBookmakerConfig, fixtureId: string
 function buildMoneylineOdds(bookmaker: BetboomBookmakerConfig, fixtureId: string, event: BetboomEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
   const eventRaw = compactEventRaw(event);
 
-  return event.odds.map((odd) => ({
-    fixture_id: fixtureId,
-    bookmaker_slug: bookmaker.slug,
-    market_code: "1X2",
-    market_name: "MoneyLine",
-    selection: selectionForCanonicalOrientation(odd.selection, orientation),
-    price: odd.price,
-    pa_category: "SEM_PA",
-    confidence_score: 1,
-    raw_market_name: "Resultado Final",
-    raw_label: odd.selection,
-    raw_odd_type: odd.outcomeId,
-    source_odd_id: sourceOddId(event, odd.outcomeId),
-    raw: { event: eventRaw, odd, classificationReason: "betboom-standard-1x2" },
-    updated_at: new Date().toISOString()
-  }));
+  return event.odds.map((odd) => {
+    const pa = paForOdd(bookmaker, odd);
+
+    return {
+      fixture_id: fixtureId,
+      bookmaker_slug: bookmaker.slug,
+      market_code: "1X2",
+      market_name: "MoneyLine",
+      selection: selectionForCanonicalOrientation(odd.selection, orientation),
+      price: odd.price,
+      pa_category: pa.category,
+      confidence_score: pa.confidence,
+      raw_market_name: pa.category === "COM_PA" ? "Resultado Final - Pagamento Antecipado" : "Resultado Final",
+      raw_label: odd.selection,
+      raw_odd_type: `${odd.marketId}:${odd.outcomeId}`,
+      source_odd_id: sourceOddId(event, odd.outcomeId),
+      raw: { event: eventRaw, odd, classificationReason: pa.reason },
+      updated_at: new Date().toISOString()
+    };
+  });
 }
 
 export function createBetboomCollector(bookmaker: BetboomBookmakerConfig) {
@@ -206,10 +222,22 @@ export function createBetboomCollector(bookmaker: BetboomBookmakerConfig) {
         }
       }
 
+      // O 1x2 com pagamento antecipado nao vem nas paginas do snapshot; buscamos o
+      // detalhe apenas dos jogos que casaram, nao do catalogo inteiro.
+      const matches = [...bestMatchByFixtureId.values()];
+      await pMap(
+        matches,
+        async (entry) => {
+          const odds = await client.getEventMoneylineOdds(entry.event.id).catch(() => null);
+          if (odds?.length) entry.event = { ...entry.event, odds };
+        },
+        { concurrency: bookmaker.eventDetailConcurrency }
+      );
+
       const linksToSave: BookmakerLinkRow[] = [];
       const oddsToSave: OddRow[] = [];
 
-      for (const { event, matched } of bestMatchByFixtureId.values()) {
+      for (const { event, matched } of matches) {
         linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
         oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
         summary.eventsCollected += 1;

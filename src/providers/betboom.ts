@@ -5,7 +5,6 @@ import { httpClient } from "../utils/http-client.js";
 // SportPub. O catalogo prematch vem em paginas versionadas: a chamada com versao 0
 // devolve so o manifesto de versoes, e cada versao listada e uma pagina do snapshot.
 const FOOTBALL_SPORT_ID = "1";
-const MONEYLINE_MARKET_ID = "1";
 const MONEYLINE_SELECTION_BY_OUTCOME: Record<string, BetboomSelection> = {
   "1": "HOME",
   "2": "DRAW",
@@ -43,6 +42,7 @@ type SptpubPage = {
 
 export type BetboomOdd = {
   id: string;
+  marketId: string;
   outcomeId: string;
   selection: BetboomSelection;
   price: number;
@@ -62,6 +62,21 @@ export type BetboomEvent = {
 function parsePrice(value: unknown) {
   const price = Number(value);
   return Number.isFinite(price) && price > 1 ? price : null;
+}
+
+function readMoneyline(eventId: string, markets: SptpubEventNode["markets"], marketId: string) {
+  const outcomes = markets?.[marketId]?.[""];
+  if (!outcomes) return [];
+
+  const odds: BetboomOdd[] = [];
+  for (const [outcomeId, outcome] of Object.entries(outcomes)) {
+    const selection = MONEYLINE_SELECTION_BY_OUTCOME[outcomeId];
+    const price = parsePrice(outcome?.k);
+    if (!selection || price === null) continue;
+    odds.push({ id: `${eventId}:${marketId}:${outcomeId}`, marketId, outcomeId, selection, price });
+  }
+
+  return odds;
 }
 
 export class BetboomClient {
@@ -113,16 +128,7 @@ export class BetboomClient {
         if (!desc || desc.sport !== FOOTBALL_SPORT_ID || !desc.scheduled) continue;
 
         const [home, away] = desc.competitors ?? [];
-        const moneyline = node?.markets?.[MONEYLINE_MARKET_ID]?.[""];
-        if (!moneyline) continue;
-
-        const odds: BetboomOdd[] = [];
-        for (const [outcomeId, outcome] of Object.entries(moneyline)) {
-          const selection = MONEYLINE_SELECTION_BY_OUTCOME[outcomeId];
-          const price = parsePrice(outcome?.k);
-          if (!selection || price === null) continue;
-          odds.push({ id: `${eventId}:${MONEYLINE_MARKET_ID}:${outcomeId}`, outcomeId, selection, price });
-        }
+        const odds = readMoneyline(eventId, node?.markets, this.config.moneylineMarketId);
         if (!odds.length) continue;
 
         const tournament = desc.tournament ? tournaments.get(desc.tournament) : undefined;
@@ -142,5 +148,24 @@ export class BetboomClient {
     }
 
     return [...events.values()];
+  }
+
+  // As paginas do snapshot so trazem os mercados de destaque, e o 1x2 com pagamento
+  // antecipado nao esta entre eles. O feed por evento devolve o conjunto completo.
+  async getEventMoneylineOdds(eventId: string): Promise<BetboomOdd[]> {
+    const page = await httpClient<SptpubPage>({
+      url: new URL(`v4/prematch/brand/${this.config.brandId}/event/${this.config.locale}/${eventId}`, this.config.apiBaseUrl),
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 30_000,
+      maxRetries: 2
+    });
+
+    const markets = page.events?.[eventId]?.markets;
+    return [
+      ...readMoneyline(eventId, markets, this.config.moneylineMarketId),
+      ...readMoneyline(eventId, markets, this.config.earlyPayoutMarketId)
+    ];
   }
 }
