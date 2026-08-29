@@ -236,9 +236,13 @@ const BROWSER_COLLECTOR_SLUGS = new Set<string>(["meridianbet", "bet365"]);
 
 // Teto por casa. Sem ele, um coletor que trava sem resposta segura o Promise.all do
 // grupo e a raia inteira fica pendurada ate o watchdog matar o worker 25 min depois —
-// as outras 28 casas param junto por causa de uma.
-const COLLECT_TIMEOUT_MS = numberEnv("BOOKMAKER_COLLECT_TIMEOUT_MS", 6 * 60_000, 30_000);
-const BROWSER_COLLECT_TIMEOUT_MS = numberEnv("BROWSER_COLLECT_TIMEOUT_MS", 20 * 60_000, 60_000);
+// as outras casas param junto por causa de uma.
+//
+// So vale para as casas rapidas: elas dividem a mesma raia, entao uma travada prejudica
+// as demais. bet365 e meridianbet rodam em raias proprias, onde travar so afeta a si
+// mesmas, e a primeira coleta delas e naturalmente longa — um teto ali cortaria coleta
+// legitima. Nessas quem cuida e o watchdog, pelo cycleTimeoutMs da raia.
+const COLLECT_TIMEOUT_MS = numberEnv("BOOKMAKER_COLLECT_TIMEOUT_MS", 10 * 60_000, 30_000);
 
 function numberEnv(name: string, fallback: number, min: number) {
   const raw = process.env[name];
@@ -260,7 +264,9 @@ class CollectTimeoutError extends Error {
  * lenta e dada como falha, o ciclo segue, e o proximo ciclo a reavalia.
  */
 async function collectWithTimeout(bookmaker: BookmakerCollector, options: BookmakerCollectOptions) {
-  const timeoutMs = BROWSER_COLLECTOR_SLUGS.has(bookmaker.slug) ? BROWSER_COLLECT_TIMEOUT_MS : COLLECT_TIMEOUT_MS;
+  if (BROWSER_COLLECTOR_SLUGS.has(bookmaker.slug)) return bookmaker.collect(options);
+
+  const timeoutMs = COLLECT_TIMEOUT_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   try {
@@ -281,10 +287,16 @@ async function collectWithTimeout(bookmaker: BookmakerCollector, options: Bookma
  * e false e o erro morria dentro do resultado, sem ir para lugar nenhum.
  */
 async function recordCollectionState(slug: string, summary: unknown, error: unknown, durationMs: number) {
-  const failed = Boolean(error) || summaryNumber(summary, "errors") > 0;
+  // errors > 0 no resumo nao significa coleta falha: a betnacional trouxe 128 eventos e
+  // 384 odds com um unico evento sem mercado 1X2. Tratar isso como erro encheria o
+  // painel de alarme falso e mataria a confianca no sinal.
+  // error   = a coleta lancou, ou terminou sem trazer nada
+  // partial = trouxe dados, mas com evento problematico no meio
+  const collected = summaryNumber(summary, "eventsCollected") > 0 || summaryNumber(summary, "oddsUpserted") > 0;
+  const status = error || !collected ? "error" : summaryNumber(summary, "errors") > 0 ? "partial" : "idle";
   const payload = {
     bookmaker_slug: slug,
-    status: failed ? "error" : "idle",
+    status,
     last_finished_at: new Date().toISOString(),
     last_error: error ? errorMessage(error) : null,
     summary: {
