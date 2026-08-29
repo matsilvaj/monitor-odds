@@ -31,6 +31,7 @@ export type BravobetRawEvent = {
   UrlLeagueName?: string;
   UrlRegionName?: string;
   UrlSportName?: string;
+  Settings?: { EarlyPayout?: number | string | boolean | null };
   Participants?: BravobetParticipant[];
 };
 
@@ -65,6 +66,7 @@ export type BravobetEvent = {
   leagueName: string | null;
   regionName: string | null;
   path: string | null;
+  earlyPayout: number | string | boolean | null;
   odds: BravobetOdd[];
 };
 
@@ -227,6 +229,7 @@ export class BravobetClient {
         leagueName: event.LeagueName?.trim() || null,
         regionName: event.RegionName?.trim() || null,
         path: eventPath(event),
+        earlyPayout: event.Settings?.EarlyPayout ?? null,
         odds: oddsByEventId.get(event._id as string) ?? []
       }))
       .filter((event) => event.odds.length > 0);

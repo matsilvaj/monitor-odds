@@ -26,6 +26,7 @@ type LottuRawEvent = {
   country?: string;
   category?: string;
   external_id?: string | null;
+  market_config?: { has_early_payout?: boolean; has_super_odds?: boolean };
   odds?: { full_time?: Record<string, LottuRawOdd | undefined> };
 };
 
@@ -42,6 +43,7 @@ export type LottuEvent = {
   awayTeam: string | null;
   championship: string | null;
   country: string | null;
+  hasEarlyPayout: boolean;
   odds: LottuOdd[];
 };
 
@@ -107,6 +109,7 @@ export class LottuClient {
         awayTeam: raw.away_team?.trim() || null,
         championship: raw.championship?.trim() || null,
         country: raw.country?.trim() || null,
+        hasEarlyPayout: raw.market_config?.has_early_payout === true,
         odds
       });
     }

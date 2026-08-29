@@ -4,6 +4,7 @@ import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-r
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import type { PaCategory } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { LottuClient, type LottuEvent } from "../providers/lottu.js";
 import { errorMessage } from "../utils/errors.js";
@@ -87,6 +88,17 @@ function isNearCanonicalFixtureWindow(event: LottuEvent, fixtures: CanonicalFixt
   return fixtures.some((fixture) => Math.abs(new Date(fixture.starts_at).getTime() - eventStart) <= 20 * 60 * 1000);
 }
 
+// A Lottu marca o pagamento antecipado por evento em market_config.has_early_payout,
+// e o flag ja vem na listagem do catalogo. Quando ligado, o proprio Resultado Final e
+// o mercado com PA — nao existe um mercado separado.
+function paForEvent(event: LottuEvent): { category: PaCategory; confidence: number; reason: string } {
+  if (event.hasEarlyPayout) {
+    return { category: "COM_PA", confidence: 0.98, reason: "lottu-market-config-early-payout" };
+  }
+
+  return { category: "SEM_PA", confidence: 1, reason: "lottu-standard-1x2" };
+}
+
 const SIDE_INDEX: Record<string, number> = { HOME: 1, DRAW: 2, AWAY: 3 };
 
 // O id da Lottu e um ObjectId hex e as colunas do banco sao bigint. Os ultimos 12
@@ -106,7 +118,8 @@ function compactEventRaw(event: LottuEvent) {
     homeTeam: event.homeTeam,
     awayTeam: event.awayTeam,
     championship: event.championship,
-    country: event.country
+    country: event.country,
+    hasEarlyPayout: event.hasEarlyPayout
   };
 }
 
@@ -130,6 +143,7 @@ function buildBookmakerLink(bookmaker: LottuBookmakerConfig, fixtureId: string, 
 
 function buildMoneylineOdds(bookmaker: LottuBookmakerConfig, fixtureId: string, event: LottuEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
   const eventRaw = compactEventRaw(event);
+  const pa = paForEvent(event);
 
   return event.odds.map((odd) => ({
     fixture_id: fixtureId,
@@ -138,13 +152,13 @@ function buildMoneylineOdds(bookmaker: LottuBookmakerConfig, fixtureId: string, 
     market_name: "MoneyLine",
     selection: selectionForCanonicalOrientation(odd.selection, orientation),
     price: odd.price,
-    pa_category: "SEM_PA",
-    confidence_score: 1,
-    raw_market_name: "Resultado Final",
+    pa_category: pa.category,
+    confidence_score: pa.confidence,
+    raw_market_name: pa.category === "COM_PA" ? "Resultado Final - Pagamento Antecipado" : "Resultado Final",
     raw_label: odd.selection,
     raw_odd_type: "full_time",
     source_odd_id: sourceOddId(event, odd),
-    raw: { event: eventRaw, odd, classificationReason: "lottu-standard-1x2" },
+    raw: { event: eventRaw, odd, classificationReason: pa.reason },
     updated_at: new Date().toISOString()
   }));
 }

@@ -4,6 +4,8 @@ import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-r
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { normalizeForMatching } from "../domain/matching/text-similarity.js";
+import type { PaCategory } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BravobetClient, type BravobetEvent } from "../providers/bravobet.js";
 import { errorMessage } from "../utils/errors.js";
@@ -83,6 +85,31 @@ function isNearCanonicalFixtureWindow(event: BravobetEvent, fixtures: CanonicalF
   return fixtures.some((fixture) => Math.abs(new Date(fixture.starts_at).getTime() - eventStart) <= 20 * 60 * 1000);
 }
 
+// Na FSB o pagamento antecipado e um ajuste do proprio Resultado Final, ligado por
+// evento em Settings.EarlyPayout (a Bravo usa 2, de "2 gols de vantagem"). Mesma
+// leitura que a bet7k faz, que roda a mesma plataforma.
+function hasEventEarlyPayout(event: BravobetEvent) {
+  const value = event.earlyPayout;
+  if (value === true) return true;
+  if (typeof value === "number") return Number.isFinite(value) && value > 0;
+  if (typeof value === "string") return !["", "0", "false", "null", "undefined"].includes(normalizeForMatching(value));
+  return false;
+}
+
+function paForEvent(event: BravobetEvent): { category: PaCategory; confidence: number; reason: string } {
+  const text = normalizeForMatching(event.odds.map((odd) => odd.marketName ?? "").join(" "));
+
+  if (text.includes("pagamento antecipado") || text.includes("early payout") || text.includes("2up") || text.includes("2 up")) {
+    return { category: "COM_PA", confidence: 1, reason: "bravobet-explicit-early-payout-market" };
+  }
+
+  if (hasEventEarlyPayout(event)) {
+    return { category: "COM_PA", confidence: 0.98, reason: "bravobet-event-early-payout-setting" };
+  }
+
+  return { category: "SEM_PA", confidence: 1, reason: "bravobet-standard-1x2" };
+}
+
 const SIDE_INDEX: Record<string, number> = { HOME: 1, DRAW: 2, AWAY: 3 };
 
 // Os ids da FSB tem 18 digitos e o PostgREST devolve bigint como number JSON, que o JS
@@ -106,7 +133,8 @@ function compactEventRaw(event: BravobetEvent) {
     awayTeam: event.awayTeam,
     eventName: event.eventName,
     leagueName: event.leagueName,
-    regionName: event.regionName
+    regionName: event.regionName,
+    earlyPayout: event.earlyPayout
   };
 }
 
@@ -130,6 +158,7 @@ function buildBookmakerLink(bookmaker: BravobetBookmakerConfig, fixtureId: strin
 
 function buildMoneylineOdds(bookmaker: BravobetBookmakerConfig, fixtureId: string, event: BravobetEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
   const eventRaw = compactEventRaw(event);
+  const pa = paForEvent(event);
 
   return event.odds.map((odd) => ({
     fixture_id: fixtureId,
@@ -138,13 +167,13 @@ function buildMoneylineOdds(bookmaker: BravobetBookmakerConfig, fixtureId: strin
     market_name: "MoneyLine",
     selection: selectionForCanonicalOrientation(odd.selection, orientation),
     price: odd.price,
-    pa_category: "SEM_PA",
-    confidence_score: 1,
-    raw_market_name: odd.marketName,
+    pa_category: pa.category,
+    confidence_score: pa.confidence,
+    raw_market_name: pa.category === "COM_PA" ? `${odd.marketName ?? "Resultado Final"} - Pagamento Antecipado` : odd.marketName,
     raw_label: odd.label,
     raw_odd_type: bookmaker.moneylineMarketType,
     source_odd_id: sourceOddId(odd),
-    raw: { event: eventRaw, odd, classificationReason: "bravobet-standard-1x2" },
+    raw: { event: eventRaw, odd, classificationReason: pa.reason },
     updated_at: new Date().toISOString()
   }));
 }
