@@ -119,6 +119,37 @@ async function runFixtureSync(label: string, options: SyncApiFootballFixturesOpt
   }
 }
 
+/**
+ * Reinicio programado das raias. Diferente do watchdog, nao consome a cota de
+ * reinicios nem aplica cooldown progressivo: nao e reacao a falha, e higiene.
+ *
+ * restartInProgress fica ligado durante a parada para o checkWorkers nao subir
+ * a raia no meio do caminho — ele roda a cada 15s e religa qualquer worker sem
+ * processo. Raia pausada por excesso de falhas nao e tocada aqui.
+ */
+async function restartAllLanes(reason: string) {
+  const lanes = workerStates.filter((state) => state.config.enabled && !state.pausedUntil && !state.restartInProgress);
+  if (!lanes.length) return;
+
+  console.log(`[sync] ${reason}: reiniciando ${lanes.length} raia(s).`);
+  for (const state of lanes) state.restartInProgress = true;
+
+  try {
+    await Promise.all(
+      lanes.map(async (state) => {
+        await stopWorker(state, reason);
+        await resetLaneCollectionState(state.config.lane);
+      })
+    );
+  } finally {
+    for (const state of lanes) state.restartInProgress = false;
+  }
+
+  if (shutdownRequested) return;
+  for (const state of lanes) startWorker(state);
+  console.log(`[sync] Raias reiniciadas após ${reason}.`);
+}
+
 function scheduleMidnightFixtureSync() {
   if (shutdownRequested) return;
 
@@ -135,6 +166,10 @@ function scheduleMidnightFixtureSync() {
       cleanupStarted: false,
       force: true
     })
+      // Reinicia so depois que os fixtures novos entraram, para as raias subirem ja
+      // com o alvo do dia. O processo roda dias seguidos sem parar; a virada e o
+      // ponto natural para zerar estado acumulado (abas, sessoes, conexoes).
+      .then(() => restartAllLanes("atualização de fixtures da virada"))
       .catch((error) => {
         console.error("[sync] Falha na atualização de amanhã pela API-Football.", error);
       })
