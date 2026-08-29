@@ -199,6 +199,14 @@ const laneConfigs: LaneConfig[] = [
     label: "bet365",
     enabled: SMOKE_MODE || hasEnabledBookmaker("bet365"),
     cycleTimeoutMs: numberEnv("WATCHDOG_BET365_CYCLE_TIMEOUT_MS", 45 * 60_000, 60_000)
+  },
+  {
+    lane: "sportingbet",
+    label: "sportingbet",
+    enabled: SMOKE_MODE || hasEnabledBookmaker("sportingbet"),
+    // Rodando sozinha ela termina em 11-18s; o teto generoso e so para o watchdog
+    // nao reiniciar por falso positivo caso a API dela demore um dia atipico.
+    cycleTimeoutMs: numberEnv("WATCHDOG_SPORTINGBET_CYCLE_TIMEOUT_MS", 10 * 60_000, 60_000)
   }
 ];
 

@@ -251,6 +251,14 @@ export type CollectAllBookmakersOptions = {
 
 const BROWSER_COLLECTOR_SLUGS = new Set<string>(["meridianbet", "bet365"]);
 
+// Casas com raia propria no watch por confirmadamente travarem sob contencao das
+// demais no mesmo processo. Sportingbet coleta perfeita isolada (11-18s, 0 erros em
+// testes repetidos) mas ficou horas congelada rodando junto com as ~22 outras casas
+// rapidas — sinal de contencao de CPU/event-loop ou throttling anti-scraping sob uso
+// sustentado, nao um defeito no coletor em si. Isolar em processo proprio da a ela o
+// mesmo tratamento que bet365/meridianbet ja recebem.
+const DEDICATED_LANE_SLUGS = new Set<string>([...BROWSER_COLLECTOR_SLUGS, "sportingbet"]);
+
 // Odds nao vistas neste intervalo saem quando o ciclo coletou normalmente.
 const STALE_ODDS_MS = 2 * 60 * 60 * 1000;
 // Limite duro: roda mesmo em ciclo falho. Uma casa que quebra em silencio mantinha
@@ -450,7 +458,7 @@ const FAST_PROVIDER_CONCURRENCY: Partial<Record<string, number>> = {
 
 export async function collectFastBookmakers(options: CollectAllBookmakersOptions = {}) {
   const logProgress = options.logProgress ?? true;
-  const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => !BROWSER_COLLECTOR_SLUGS.has(bookmaker.slug));
+  const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => !DEDICATED_LANE_SLUGS.has(bookmaker.slug));
 
   // Cleanup e fixture report uma única vez para todos os grupos
   if (options.cleanupStarted ?? true) {

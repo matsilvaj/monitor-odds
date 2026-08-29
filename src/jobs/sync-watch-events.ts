@@ -1,6 +1,9 @@
 export const SYNC_WATCH_EVENT_PREFIX = "__SYNC_WATCH_EVENT__ ";
 
-export const WATCH_LANES = ["fast", "meridianbet", "bet365"] as const;
+// "sportingbet" tem raia propria, igual bet365/meridianbet: e a unica casa rapida ate
+// agora confirmada travando sob contencao das ~22 outras no mesmo processo — ficava
+// congelada por horas mesmo com a API dela respondendo bem quando testada isolada.
+export const WATCH_LANES = ["fast", "meridianbet", "bet365", "sportingbet"] as const;
 
 export type WatchLane = (typeof WATCH_LANES)[number];
 
