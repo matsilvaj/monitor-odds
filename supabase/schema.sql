@@ -258,12 +258,6 @@ create table if not exists estado_coletas (
   updated_at timestamptz not null default now()
 );
 
--- Falha transitoria precisa sobreviver a recuperacao: se a casa quebra hoje e volta
--- amanha, o status sozinho apaga o rastro e ninguem fica sabendo. Contador e data da
--- ultima falha ficam na propria linha da casa, entao a tabela nao cresce.
-alter table estado_coletas add column if not exists last_error_at timestamptz;
-alter table estado_coletas add column if not exists error_count integer not null default 0;
-
 create or replace function try_acquire_bookmaker_collection_lock(
   p_bookmaker_slug text,
   p_lease_until timestamptz

@@ -286,10 +286,6 @@ let dashApiTomorrow = 0;
 let dashUpdatedAt: Date | null = null;
 let dashSweepAt: Date | null = null;
 let dashSweepInfo = "aguardando";
-let dashHealthInfo = `${ANSI_DIM}aguardando${ANSI_RESET}`;
-
-// Uma casa que nao fecha ciclo ha esse tempo esta parada, mesmo sem ter dado erro.
-const STALE_COLLECTION_MS = 30 * 60_000;
 
 async function refreshDashboard() {
   const buckets = defaultSyncDateBuckets();
@@ -306,43 +302,6 @@ async function refreshDashboard() {
   dashApiToday = fixtureList.filter((f) => f.date_key === todayKey).length;
   dashApiTomorrow = fixtureList.filter((f) => f.date_key === tomorrowKey).length;
   dashUpdatedAt = new Date();
-
-  await refreshHealth();
-}
-
-/**
- * Resumo de saude das casas direto no painel. O estado ja ficava em estado_coletas,
- * mas so serve se alguem consultar — e ninguem vai consultar o banco todo dia. Aqui
- * uma casa quebrada aparece sozinha na tela onde o monitor ja fica aberto.
- */
-async function refreshHealth() {
-  const { data, error } = await supabase
-    .from("estado_coletas")
-    .select("bookmaker_slug,status,last_finished_at");
-
-  if (error) {
-    dashHealthInfo = `${ANSI_RED}não consegui ler o estado das casas: ${error.message}${ANSI_RESET}`;
-    return;
-  }
-
-  const now = Date.now();
-  const rows = (data ?? []) as Array<{ bookmaker_slug: string; status: string; last_finished_at: string | null }>;
-  const problemas: string[] = [];
-
-  for (const row of rows) {
-    const finishedAt = row.last_finished_at ? new Date(row.last_finished_at).getTime() : 0;
-    const paradaHa = finishedAt ? now - finishedAt : Number.POSITIVE_INFINITY;
-
-    if (row.status === "error") problemas.push(`${row.bookmaker_slug} (erro)`);
-    else if (paradaHa > STALE_COLLECTION_MS) {
-      const texto = Number.isFinite(paradaHa) ? formatDuration(paradaHa) : "nunca coletou";
-      problemas.push(`${row.bookmaker_slug} (parada há ${texto})`);
-    }
-  }
-
-  dashHealthInfo = problemas.length
-    ? `${ANSI_RED}${problemas.length}: ${problemas.slice(0, 4).join(", ")}${problemas.length > 4 ? ", ..." : ""}${ANSI_RESET}`
-    : `${ANSI_DIM}${rows.length} casa(s) sem problema${ANSI_RESET}`;
 }
 
 async function runConsistencySweepTick() {
@@ -416,7 +375,6 @@ function renderDashboard() {
     ? dashSweepAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : "--:--:--";
   out.push(`${ANSI_DIM}consistência${ANSI_RESET} ${ANSI_DIM}${sweepTime}${ANSI_RESET}  ${dashSweepInfo}`);
-  out.push(`${ANSI_DIM}casas${ANSI_RESET}                  ${dashHealthInfo}`);
 
   enterAltScreen();
   process.stdout.write("\x1b[H\x1b[0J" + out.join("\n") + "\n");
