@@ -242,7 +242,7 @@ const BROWSER_COLLECTOR_SLUGS = new Set<string>(["meridianbet", "bet365"]);
 // as demais. bet365 e meridianbet rodam em raias proprias, onde travar so afeta a si
 // mesmas, e a primeira coleta delas e naturalmente longa — um teto ali cortaria coleta
 // legitima. Nessas quem cuida e o watchdog, pelo cycleTimeoutMs da raia.
-const COLLECT_TIMEOUT_MS = numberEnv("BOOKMAKER_COLLECT_TIMEOUT_MS", 10 * 60_000, 30_000);
+const COLLECT_TIMEOUT_MS = numberEnv("BOOKMAKER_COLLECT_TIMEOUT_MS", 25 * 60_000, 30_000);
 
 function numberEnv(name: string, fallback: number, min: number) {
   const raw = process.env[name];
@@ -294,11 +294,24 @@ async function recordCollectionState(slug: string, summary: unknown, error: unkn
   // partial = trouxe dados, mas com evento problematico no meio
   const collected = summaryNumber(summary, "eventsCollected") > 0 || summaryNumber(summary, "oddsUpserted") > 0;
   const status = error || !collected ? "error" : summaryNumber(summary, "errors") > 0 ? "partial" : "idle";
+  const now = new Date().toISOString();
+
+  // Le o acumulado antes de gravar: o contador e a data da ultima falha nao podem ser
+  // zerados quando a casa volta, senao uma quebra de ontem some do radar hoje.
+  const { data: anterior } = await supabase
+    .from("estado_coletas")
+    .select("error_count,last_error_at,last_error")
+    .eq("bookmaker_slug", slug)
+    .maybeSingle();
+
+  const falhou = status === "error";
   const payload = {
     bookmaker_slug: slug,
     status,
-    last_finished_at: new Date().toISOString(),
-    last_error: error ? errorMessage(error) : null,
+    last_finished_at: now,
+    last_error: falhou ? errorMessage(error) || "coleta terminou sem trazer dados" : (anterior?.last_error ?? null),
+    last_error_at: falhou ? now : (anterior?.last_error_at ?? null),
+    error_count: (anterior?.error_count ?? 0) + (falhou ? 1 : 0),
     summary: {
       ...(summary && typeof summary === "object" ? (summary as Record<string, unknown>) : {}),
       durationMs
