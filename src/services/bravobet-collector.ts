@@ -4,7 +4,6 @@ import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-r
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
-import { normalizeForMatching } from "../domain/matching/text-similarity.js";
 import type { PaCategory } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BravobetClient, type BravobetEvent } from "../providers/bravobet.js";
@@ -85,28 +84,14 @@ function isNearCanonicalFixtureWindow(event: BravobetEvent, fixtures: CanonicalF
   return fixtures.some((fixture) => Math.abs(new Date(fixture.starts_at).getTime() - eventStart) <= 20 * 60 * 1000);
 }
 
-// Na FSB o pagamento antecipado e um ajuste do proprio Resultado Final, ligado por
-// evento em Settings.EarlyPayout (a Bravo usa 2, de "2 gols de vantagem"). Mesma
-// leitura que a bet7k faz, que roda a mesma plataforma.
-function hasEventEarlyPayout(event: BravobetEvent) {
-  const value = event.earlyPayout;
-  if (value === true) return true;
-  if (typeof value === "number") return Number.isFinite(value) && value > 0;
-  if (typeof value === "string") return !["", "0", "false", "null", "undefined"].includes(normalizeForMatching(value));
-  return false;
-}
-
-function paForEvent(event: BravobetEvent): { category: PaCategory; confidence: number; reason: string } {
-  const text = normalizeForMatching(event.odds.map((odd) => odd.marketName ?? "").join(" "));
-
-  if (text.includes("pagamento antecipado") || text.includes("early payout") || text.includes("2up") || text.includes("2 up")) {
-    return { category: "COM_PA", confidence: 1, reason: "bravobet-explicit-early-payout-market" };
-  }
-
-  if (hasEventEarlyPayout(event)) {
-    return { category: "COM_PA", confidence: 0.98, reason: "bravobet-event-early-payout-setting" };
-  }
-
+// Settings.EarlyPayout marca so a elegibilidade da competicao a promocao, nao que a odd
+// publicada seja a do pagamento antecipado. Tres evidencias: o valor e uniforme dentro de
+// cada liga (17 ligas inteiras ligadas, 225 inteiras desligadas, nenhuma mista), a pagina
+// completa do evento flagado nao traz nenhum mercado chamado "pagamento antecipado", e so
+// existe um 1x2 disponivel. Um PA de verdade aparece como mercado proprio e mais barato:
+// o 900001 da BetBoom fica em -3,26% contra o 1x2 comum. Tudo entra como SEM_PA, e o valor
+// segue gravado no raw para rastreio.
+function paForEvent(_event: BravobetEvent): { category: PaCategory; confidence: number; reason: string } {
   return { category: "SEM_PA", confidence: 1, reason: "bravobet-standard-1x2" };
 }
 

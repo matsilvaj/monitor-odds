@@ -43,6 +43,14 @@ const MAX_RESTARTS_PER_WINDOW = numberEnv("WATCHDOG_MAX_RESTARTS_PER_WINDOW", 5,
 // odds de bet365/meridianbet sao gravadas em processos separados e ficariam ate um
 // ciclo inteiro visiveis se a deteccao dependesse do fim da raia rapida.
 const CONSISTENCY_SWEEP_MS = numberEnv("CONSISTENCY_SWEEP_MS", 60_000, 30_000);
+// Reinicio periodico de higiene: so para e sobe os processos de novo, sem apagar
+// nada do que ja foi coletado — nao mexe em odds, links ou jogos, so limpa estado
+// acumulado do processo (abas, sessoes, conexoes, cache) para o watch nao ficar
+// dias seguidos sem nunca soltar memoria.
+const HOURLY_RESTART_MS = numberEnv("HOURLY_RESTART_MS", 60 * 60_000, 5 * 60_000);
+// Evita reiniciar de novo logo depois de outro reinicio (a propria virada do dia,
+// por exemplo) caindo perto do proximo tick da hora.
+const MIN_GAP_BETWEEN_RESTARTS_MS = numberEnv("MIN_GAP_BETWEEN_RESTARTS_MS", 10 * 60_000, 60_000);
 
 type LaneConfig = {
   lane: WatchLane;
@@ -71,6 +79,8 @@ let resolveShutdown: (() => void) | null = null;
 let midnightFixtureSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 let consistencyTimer: ReturnType<typeof setInterval> | null = null;
+let hourlyRestartTimer: ReturnType<typeof setInterval> | null = null;
+let lastLaneRestartAt = 0;
 const shutdownPromise = new Promise<void>((resolve) => {
   resolveShutdown = resolve;
 });
@@ -82,6 +92,7 @@ function requestShutdown(source: string) {
   shutdownRequested = true;
   if (midnightFixtureSyncTimer) clearTimeout(midnightFixtureSyncTimer);
   if (watchdogTimer) clearInterval(watchdogTimer);
+  if (hourlyRestartTimer) clearInterval(hourlyRestartTimer);
   console.log(`[sync] Encerramento solicitado por ${source}. Finalizando com segurança...`);
   resolveShutdown?.();
 }
@@ -131,6 +142,8 @@ async function restartAllLanes(reason: string) {
   const lanes = workerStates.filter((state) => state.config.enabled && !state.pausedUntil && !state.restartInProgress);
   if (!lanes.length) return;
 
+  lastLaneRestartAt = Date.now();
+
   console.log(`[sync] ${reason}: reiniciando ${lanes.length} raia(s).`);
   for (const state of lanes) state.restartInProgress = true;
 
@@ -175,6 +188,28 @@ function scheduleMidnightFixtureSync() {
       })
       .finally(scheduleMidnightFixtureSync);
   }, delayMs);
+}
+
+/**
+ * Higiene periodica: reinicia as raias a cada hora, so para soltar estado
+ * acumulado do processo — nao apaga nenhum dado coletado. Se um reinicio (a
+ * virada do dia, por exemplo) aconteceu ha pouco tempo, pula este tick em vez
+ * de reiniciar de novo em seguida sem necessidade.
+ */
+function scheduleHourlyRestart() {
+  if (shutdownRequested) return;
+
+  hourlyRestartTimer = setInterval(() => {
+    if (shutdownRequested) return;
+    if (Date.now() - lastLaneRestartAt < MIN_GAP_BETWEEN_RESTARTS_MS) {
+      console.log("[sync] Reinicio de higiene pulado: outro reinicio aconteceu ha pouco.");
+      return;
+    }
+
+    void restartAllLanes("higiene periodica (1h)").catch((error) => {
+      console.error("[sync] Falha no reinicio de higiene.", error);
+    });
+  }, HOURLY_RESTART_MS);
 }
 
 function hasEnabledBookmaker(slug: string) {
@@ -771,6 +806,8 @@ if (SKIP_FIXTURE_SYNC) {
   });
   scheduleMidnightFixtureSync();
 }
+
+scheduleHourlyRestart();
 
 if (SMOKE_EXIT_AFTER_MS > 0) {
   setTimeout(() => requestShutdown("smoke test"), SMOKE_EXIT_AFTER_MS);

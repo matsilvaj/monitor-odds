@@ -88,14 +88,14 @@ function isNearCanonicalFixtureWindow(event: LottuEvent, fixtures: CanonicalFixt
   return fixtures.some((fixture) => Math.abs(new Date(fixture.starts_at).getTime() - eventStart) <= 20 * 60 * 1000);
 }
 
-// A Lottu marca o pagamento antecipado por evento em market_config.has_early_payout,
-// e o flag ja vem na listagem do catalogo. Quando ligado, o proprio Resultado Final e
-// o mercado com PA — nao existe um mercado separado.
-function paForEvent(event: LottuEvent): { category: PaCategory; confidence: number; reason: string } {
-  if (event.hasEarlyPayout) {
-    return { category: "COM_PA", confidence: 0.98, reason: "lottu-market-config-early-payout" };
-  }
-
+// market_config.has_early_payout marca so a elegibilidade do evento a promocao, nao que
+// a odd publicada seja a do pagamento antecipado. Tres evidencias: a Lottu expoe um unico
+// mercado 1x2 (full_time) com ou sem o flag; main_market.pre e "DEFAULT_MARKET" em todos
+// os 863 jogos de futebol, inclusive nos 290 flagados; e, comparando jogo a jogo com o
+// 1x2 comum da BetBoom, os flagados ficam em +0,09% — preco padrao. Um PA de verdade
+// precifica abaixo: o mercado 900001 da BetBoom fica em -3,26%. Por isso tudo entra como
+// SEM_PA, e o flag segue gravado no raw para rastreio.
+function paForEvent(_event: LottuEvent): { category: PaCategory; confidence: number; reason: string } {
   return { category: "SEM_PA", confidence: 1, reason: "lottu-standard-1x2" };
 }
 
