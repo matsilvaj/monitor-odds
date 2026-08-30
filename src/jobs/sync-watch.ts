@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BOOKMAKER_COLLECTORS } from "../bookmakers/registry.js";
+import { BOOKMAKER_COLLECTORS, isFastLaneGroup } from "../bookmakers/registry.js";
 import { supabase } from "../db/supabase.js";
 import { syncApiFootballFixtures, type SyncApiFootballFixturesOptions } from "../services/api-football-sync.js";
 import { defaultSyncDateBuckets } from "../services/sync-report.js";
@@ -183,8 +183,20 @@ function hasEnabledBookmaker(slug: string) {
 
 const laneConfigs: LaneConfig[] = [
   {
-    lane: "fast",
-    label: "rapidas",
+    lane: "fast-1",
+    label: "rapidas-1",
+    enabled: true,
+    cycleTimeoutMs: numberEnv("WATCHDOG_FAST_CYCLE_TIMEOUT_MS", 25 * 60_000, 60_000)
+  },
+  {
+    lane: "fast-2",
+    label: "rapidas-2",
+    enabled: true,
+    cycleTimeoutMs: numberEnv("WATCHDOG_FAST_CYCLE_TIMEOUT_MS", 25 * 60_000, 60_000)
+  },
+  {
+    lane: "fast-3",
+    label: "rapidas-3",
     enabled: true,
     cycleTimeoutMs: numberEnv("WATCHDOG_FAST_CYCLE_TIMEOUT_MS", 25 * 60_000, 60_000)
   },
@@ -620,7 +632,9 @@ async function killProcessTree(child: ChildProcess) {
 }
 
 async function resetLaneCollectionState(lane: WatchLane) {
-  if (lane === "fast" || SMOKE_MODE) return;
+  // Raias fast-N cobrem varias casas cada, entao nao ha um unico bookmaker_slug para
+  // resetar em estado_coletas — igual valia so para a antiga raia "fast" unica.
+  if (isFastLaneGroup(lane) || SMOKE_MODE) return;
 
   const { error } = await supabase
     .from("estado_coletas")
@@ -637,7 +651,7 @@ async function resetLaneCollectionState(lane: WatchLane) {
 }
 
 async function resetBrowserCollectionStates() {
-  await Promise.all(laneConfigs.filter((config) => config.lane !== "fast" && config.enabled).map((config) => resetLaneCollectionState(config.lane)));
+  await Promise.all(laneConfigs.filter((config) => !isFastLaneGroup(config.lane) && config.enabled).map((config) => resetLaneCollectionState(config.lane)));
 }
 
 async function stopWorker(state: WorkerState, source: string) {

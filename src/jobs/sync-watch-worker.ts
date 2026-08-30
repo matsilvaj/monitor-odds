@@ -1,4 +1,4 @@
-import { BOOKMAKER_COLLECTORS, collectBookmakerBySlug, collectFastBookmakers } from "../bookmakers/registry.js";
+import { BOOKMAKER_COLLECTORS, collectBookmakerBySlug, collectFastBookmakersGroup, isFastLaneGroup } from "../bookmakers/registry.js";
 import { errorMessage } from "../utils/errors.js";
 import { installProcessErrorHandlers } from "../utils/process-errors.js";
 import { isWatchLane, serializeSyncWatchEvent, type SyncWatchWorkerEvent, type WatchLane } from "./sync-watch-events.js";
@@ -84,8 +84,8 @@ async function collectLane(targetLane: WatchLane) {
     emitWorkerEvent({ type: "bookmaker-result", bookmakerSlug: slug, today, tomorrow });
   };
 
-  if (targetLane === "fast") {
-    return collectFastBookmakers({ concurrency: 3, logProgress: false, trigger: "watch", onBookmakerResult });
+  if (isFastLaneGroup(targetLane)) {
+    return collectFastBookmakersGroup(targetLane, { concurrency: 3, logProgress: false, trigger: "watch", onBookmakerResult });
   }
 
   return collectBookmakerBySlug(targetLane, { concurrency: 1, logProgress: false, trigger: "watch", onBookmakerResult });
@@ -100,7 +100,7 @@ process.once("SIGINT", () => requestShutdown("Ctrl+C"));
 process.once("SIGTERM", () => requestShutdown("sistema"));
 
 async function runWorker() {
-  if (lane !== "fast" && !hasEnabledBookmaker(lane)) {
+  if (!isFastLaneGroup(lane) && !hasEnabledBookmaker(lane)) {
     console.log(`[sync:${lane}] Casa desabilitada; worker encerrado.`);
     emitWorkerEvent({ type: "worker-disabled" });
     return;

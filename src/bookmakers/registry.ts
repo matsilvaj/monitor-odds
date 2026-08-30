@@ -456,21 +456,23 @@ const FAST_PROVIDER_CONCURRENCY: Partial<Record<string, number>> = {
   bet7k: 1,   // 2 casas (bet7k + betvip), mesmo backend fssb.io
 };
 
-export async function collectFastBookmakers(options: CollectAllBookmakersOptions = {}) {
+/**
+ * Nucleo comum de collectFastBookmakers e das raias fast-1/2/3. Agrupa por provider
+ * (mesmo provider = mesmo backend = mesmo rate limit) e roda todos os grupos em
+ * paralelo dentro do subconjunto de casas recebido.
+ */
+async function runFastBookmakerGroups(fastCollectors: BookmakerCollector[], options: CollectAllBookmakersOptions) {
   const logProgress = options.logProgress ?? true;
-  const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => !DEDICATED_LANE_SLUGS.has(bookmaker.slug));
 
-  // Cleanup e fixture report uma única vez para todos os grupos
   if (options.cleanupStarted ?? true) {
     const cleanup = await cleanupStartedFixtures();
     if (logProgress) console.log(formatStartedFixtureCleanupSummary(cleanup));
   }
-  const sharedFixtureReport = await getFixtureReport();
-  if (logProgress) {
+  const sharedFixtureReport = options.sharedFixtureReport ?? await getFixtureReport();
+  if (logProgress && !options.sharedFixtureReport) {
     for (const line of formatFixtureReportLines(sharedFixtureReport)) console.log(line);
   }
 
-  // Agrupa por provider — mesmo provider = mesmo backend = mesmo rate limit
   const groups = new Map<string, BookmakerCollector[]>();
   for (const collector of fastCollectors) {
     const providerKey = BOOKMAKERS.find((b) => b.slug === collector.slug)?.provider ?? collector.slug;
@@ -479,7 +481,6 @@ export async function collectFastBookmakers(options: CollectAllBookmakersOptions
     groups.set(providerKey, existing);
   }
 
-  // Todos os grupos rodam em paralelo (APIs distintas = sem conflito)
   const groupResults = await Promise.all(
     [...groups.entries()].map(([provider, group]) =>
       collectBookmakers(group, {
@@ -495,6 +496,43 @@ export async function collectFastBookmakers(options: CollectAllBookmakersOptions
   // amarrar ao fim da raia rapida deixava odds de bet365/meridianbet um ciclo inteiro
   // no ar, porque elas gravam em processos separados com timing independente.
   return groupResults.flat();
+}
+
+export async function collectFastBookmakers(options: CollectAllBookmakersOptions = {}) {
+  const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => !DEDICATED_LANE_SLUGS.has(bookmaker.slug));
+  return runFastBookmakerGroups(fastCollectors, options);
+}
+
+/**
+ * As 21 casas rapidas restantes (fora bet365/meridianbet/sportingbet, que ja tem raia
+ * propria) competiam todas por CPU num unico processo Node — o casamento de eventos e
+ * sincrono e pesado, e uma casa com volume alto (kto, betano) podia ficar horas sem
+ * completar um ciclo sequer enquanto disputava o event loop com as outras 20.
+ *
+ * Divididas em 3 grupos balanceados por tempo de coleta isolado medido (kto 456s,
+ * betano 413s, altenar ~370s, novibet 327s, bet7k+betvip ~314s, betfast 306s — as
+ * seis mais pesadas, uma em cada grupo, para nenhum grupo concentrar peso). Cada
+ * grupo vira uma raia/processo proprio, igual bet365/meridianbet/sportingbet ja
+ * fazem — nao um mecanismo novo, so mais raias do que ja existem.
+ */
+export const FAST_LANE_PROVIDER_GROUPS: Record<"fast-1" | "fast-2" | "fast-3", string[]> = {
+  "fast-1": ["kto", "betfast", "betesporte", "sportybet", "casadeapostas", "superbet", "tradeball"],
+  "fast-2": ["betano", "bet7k", "apostabet", "betfair", "vaidebet", "betmgm", "betboom", "lottu"],
+  "fast-3": ["altenar", "novibet", "betnacional", "versusbet", "segurobet", "bravobet"]
+};
+
+export function isFastLaneGroup(value: string): value is keyof typeof FAST_LANE_PROVIDER_GROUPS {
+  return value === "fast-1" || value === "fast-2" || value === "fast-3";
+}
+
+export async function collectFastBookmakersGroup(group: keyof typeof FAST_LANE_PROVIDER_GROUPS, options: CollectAllBookmakersOptions = {}) {
+  const providers = new Set(FAST_LANE_PROVIDER_GROUPS[group]);
+  const fastCollectors = BOOKMAKER_COLLECTORS.filter((bookmaker) => {
+    if (DEDICATED_LANE_SLUGS.has(bookmaker.slug)) return false;
+    const providerKey = BOOKMAKERS.find((b) => b.slug === bookmaker.slug)?.provider ?? bookmaker.slug;
+    return providers.has(providerKey);
+  });
+  return runFastBookmakerGroups(fastCollectors, options);
 }
 
 export async function collectBookmakerBySlug(slug: string, options: CollectAllBookmakersOptions = {}) {

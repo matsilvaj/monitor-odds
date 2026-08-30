@@ -1,9 +1,13 @@
 export const SYNC_WATCH_EVENT_PREFIX = "__SYNC_WATCH_EVENT__ ";
 
-// "sportingbet" tem raia propria, igual bet365/meridianbet: e a unica casa rapida ate
-// agora confirmada travando sob contencao das ~22 outras no mesmo processo — ficava
-// congelada por horas mesmo com a API dela respondendo bem quando testada isolada.
-export const WATCH_LANES = ["fast", "meridianbet", "bet365", "sportingbet"] as const;
+// "sportingbet" tem raia propria, igual bet365/meridianbet: foi a primeira casa rapida
+// confirmada travando sob contencao das ~22 outras no mesmo processo — ficava congelada
+// por horas mesmo com a API dela respondendo bem quando testada isolada.
+//
+// "fast-1"/"fast-2"/"fast-3" dividem as 21 casas rapidas restantes em 3 processos, para
+// reduzir essa mesma contencao de CPU sem isolar casa por casa — ver
+// FAST_LANE_PROVIDER_GROUPS em registry.ts para a composicao de cada grupo.
+export const WATCH_LANES = ["fast-1", "fast-2", "fast-3", "meridianbet", "bet365", "sportingbet"] as const;
 
 export type WatchLane = (typeof WATCH_LANES)[number];
 
