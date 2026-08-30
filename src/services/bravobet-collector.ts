@@ -4,6 +4,7 @@ import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-r
 import { applyFixtureRefreshPlan, cleanupFixtureIdsForRun, filterFixturesDueForOddsRefresh } from "./collector-resilience.js";
 import { supabase } from "../db/supabase.js";
 import { findBestCanonicalEventMatch, selectionForCanonicalOrientation, type EventMatchResult } from "../domain/matching/event-matcher.js";
+import { normalizeForMatching } from "../domain/matching/text-similarity.js";
 import type { PaCategory } from "../domain/normalize.js";
 import { normalizeName } from "../domain/text.js";
 import { BravobetClient, type BravobetEvent } from "../providers/bravobet.js";
@@ -84,14 +85,35 @@ function isNearCanonicalFixtureWindow(event: BravobetEvent, fixtures: CanonicalF
   return fixtures.some((fixture) => Math.abs(new Date(fixture.starts_at).getTime() - eventStart) <= 20 * 60 * 1000);
 }
 
-// Settings.EarlyPayout marca so a elegibilidade da competicao a promocao, nao que a odd
-// publicada seja a do pagamento antecipado. Tres evidencias: o valor e uniforme dentro de
-// cada liga (17 ligas inteiras ligadas, 225 inteiras desligadas, nenhuma mista), a pagina
-// completa do evento flagado nao traz nenhum mercado chamado "pagamento antecipado", e so
-// existe um 1x2 disponivel. Um PA de verdade aparece como mercado proprio e mais barato:
-// o 900001 da BetBoom fica em -3,26% contra o 1x2 comum. Tudo entra como SEM_PA, e o valor
-// segue gravado no raw para rastreio.
-function paForEvent(_event: BravobetEvent): { category: PaCategory; confidence: number; reason: string } {
+// Na FSB o pagamento antecipado nao e um mercado a parte: o proprio Resultado Final
+// (ML0) recebe o selo quando Settings.EarlyPayout esta ligado no evento, e o site
+// exibe ao lado o Resultado Final SuperOdds (ML5000), que e o preco turbinado sem PA.
+// Mesma leitura que a bet7k faz, que roda a mesma plataforma.
+function hasEventEarlyPayout(event: BravobetEvent) {
+  const value = event.earlyPayout;
+  if (value === true) return true;
+  if (typeof value === "number") return Number.isFinite(value) && value > 0;
+  if (typeof value === "string") return !["", "0", "false", "null", "undefined"].includes(normalizeForMatching(value));
+  return false;
+}
+
+function paForOdd(
+  bookmaker: BravobetBookmakerConfig,
+  event: BravobetEvent,
+  odd: BravobetEvent["odds"][number]
+): { category: PaCategory; confidence: number; reason: string } {
+  if (odd.marketType === bookmaker.superOddsMarketType) {
+    return { category: "SEM_PA", confidence: 1, reason: "bravobet-super-odds" };
+  }
+
+  if (normalizeForMatching(odd.marketName).includes("pagamento antecipado")) {
+    return { category: "COM_PA", confidence: 1, reason: "bravobet-explicit-early-payout-market" };
+  }
+
+  if (hasEventEarlyPayout(event)) {
+    return { category: "COM_PA", confidence: 0.98, reason: "bravobet-event-early-payout-setting" };
+  }
+
   return { category: "SEM_PA", confidence: 1, reason: "bravobet-standard-1x2" };
 }
 
@@ -143,24 +165,27 @@ function buildBookmakerLink(bookmaker: BravobetBookmakerConfig, fixtureId: strin
 
 function buildMoneylineOdds(bookmaker: BravobetBookmakerConfig, fixtureId: string, event: BravobetEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
   const eventRaw = compactEventRaw(event);
-  const pa = paForEvent(event);
 
-  return event.odds.map((odd) => ({
-    fixture_id: fixtureId,
-    bookmaker_slug: bookmaker.slug,
-    market_code: "1X2",
-    market_name: "MoneyLine",
-    selection: selectionForCanonicalOrientation(odd.selection, orientation),
-    price: odd.price,
-    pa_category: pa.category,
-    confidence_score: pa.confidence,
-    raw_market_name: pa.category === "COM_PA" ? `${odd.marketName ?? "Resultado Final"} - Pagamento Antecipado` : odd.marketName,
-    raw_label: odd.label,
-    raw_odd_type: bookmaker.moneylineMarketType,
-    source_odd_id: sourceOddId(odd),
-    raw: { event: eventRaw, odd, classificationReason: pa.reason },
-    updated_at: new Date().toISOString()
-  }));
+  return event.odds.map((odd) => {
+    const pa = paForOdd(bookmaker, event, odd);
+
+    return {
+      fixture_id: fixtureId,
+      bookmaker_slug: bookmaker.slug,
+      market_code: "1X2",
+      market_name: "MoneyLine",
+      selection: selectionForCanonicalOrientation(odd.selection, orientation),
+      price: odd.price,
+      pa_category: pa.category,
+      confidence_score: pa.confidence,
+      raw_market_name: pa.category === "COM_PA" ? `${odd.marketName ?? "Resultado Final"} - Pagamento Antecipado` : odd.marketName,
+      raw_label: odd.label,
+      raw_odd_type: odd.marketType,
+      source_odd_id: sourceOddId(odd),
+      raw: { event: eventRaw, odd, classificationReason: pa.reason },
+      updated_at: new Date().toISOString()
+    };
+  });
 }
 
 export function createBravobetCollector(bookmaker: BravobetBookmakerConfig) {

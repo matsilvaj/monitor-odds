@@ -286,6 +286,7 @@ export type BravobetBookmakerConfig = {
   sportsbookPath: string;
   sportId: string;
   moneylineMarketType: string;
+  superOddsMarketType: string;
   pageSize: number;
   maxPages: number;
   marketBatchSize: number;
@@ -682,6 +683,7 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     sportsbookPath: "br-pt/spbkv4",
     sportId: "1",
     moneylineMarketType: "ML0",
+    superOddsMarketType: "ML5000",
     pageSize: 500,
     maxPages: 6,
     marketBatchSize: 40,

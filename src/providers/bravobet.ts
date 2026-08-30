@@ -51,6 +51,7 @@ type BravobetRawMarket = {
 
 export type BravobetOdd = {
   id: string;
+  marketType: string;
   selection: BravobetSelection;
   price: number;
   label: string | null;
@@ -173,7 +174,8 @@ export class BravobetClient {
     const markets: BravobetRawMarket[] = [];
 
     for (const ids of chunk(eventIds, this.config.marketBatchSize)) {
-      const params = new URLSearchParams({ markets: `${ids.join("|")}:${this.config.moneylineMarketType}` });
+      const types = [this.config.moneylineMarketType, this.config.superOddsMarketType].join("|");
+      const params = new URLSearchParams({ markets: `${ids.join("|")}:${types}` });
       const payload = await httpClient<BravobetRawMarket[]>({
         url: new URL(`api/eventlist/eu/markets/all?${params}`, this.config.baseUrl),
         headers,
@@ -199,7 +201,8 @@ export class BravobetClient {
 
     for (const market of markets) {
       if (!market.EventId || market.IsSuspended) continue;
-      if (market.MarketType?._id !== this.config.moneylineMarketType) continue;
+      const marketType = market.MarketType?._id;
+      if (marketType !== this.config.moneylineMarketType && marketType !== this.config.superOddsMarketType) continue;
 
       for (const selection of market.Selections ?? []) {
         const suffix = selection._id?.slice(-1) ?? "";
@@ -210,6 +213,7 @@ export class BravobetClient {
         const list = oddsByEventId.get(market.EventId) ?? [];
         list.push({
           id: selection._id,
+          marketType: marketType as string,
           selection: side,
           price,
           label: selection.Name?.trim() || null,
