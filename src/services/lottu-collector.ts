@@ -1,3 +1,4 @@
+import pMap from "p-map";
 import type { BookmakerCollectOptions } from "../bookmakers/types.js";
 import type { LottuBookmakerConfig } from "../config/bookmakers.js";
 import { OddsRepository, type BookmakerLinkRow, type OddRow } from "../db/odds-repository.js";
@@ -88,18 +89,20 @@ function isNearCanonicalFixtureWindow(event: LottuEvent, fixtures: CanonicalFixt
   return fixtures.some((fixture) => Math.abs(new Date(fixture.starts_at).getTime() - eventStart) <= 20 * 60 * 1000);
 }
 
-// market_config.has_early_payout marca so a elegibilidade do evento a promocao, nao que
-// a odd publicada seja a do pagamento antecipado. Tres evidencias: a Lottu expoe um unico
-// mercado 1x2 (full_time) com ou sem o flag; main_market.pre e "DEFAULT_MARKET" em todos
-// os 863 jogos de futebol, inclusive nos 290 flagados; e, comparando jogo a jogo com o
-// 1x2 comum da BetBoom, os flagados ficam em +0,09% — preco padrao. Um PA de verdade
-// precifica abaixo: o mercado 900001 da BetBoom fica em -3,26%. Por isso tudo entra como
-// SEM_PA, e o flag segue gravado no raw para rastreio.
-function paForEvent(_event: LottuEvent): { category: PaCategory; confidence: number; reason: string } {
+// A Lottu publica o 1x2 com pagamento antecipado no mesmo grupo full_time, nas chaves
+// home_ep/draw_ep/away_ep, com preco proprio e mais barato — o original_value de cada uma
+// guarda o preco normal. Elas nao vem na listagem do catalogo, so no detalhe do evento.
+// market_config.has_early_payout marca apenas a elegibilidade e nao serve para classificar.
+function paForOdd(odd: LottuEvent["odds"][number]): { category: PaCategory; confidence: number; reason: string } {
+  if (odd.earlyPayout) {
+    return { category: "COM_PA", confidence: 1, reason: "lottu-early-payout-odds" };
+  }
+
   return { category: "SEM_PA", confidence: 1, reason: "lottu-standard-1x2" };
 }
 
 const SIDE_INDEX: Record<string, number> = { HOME: 1, DRAW: 2, AWAY: 3 };
+const EARLY_PAYOUT_OFFSET = 3;
 
 // O id da Lottu e um ObjectId hex e as colunas do banco sao bigint. Os ultimos 12
 // digitos hex (contador + aleatorio do ObjectId) cabem em 48 bits e seguem unicos.
@@ -108,7 +111,7 @@ function numericEventId(event: LottuEvent) {
 }
 
 function sourceOddId(event: LottuEvent, odd: LottuEvent["odds"][number]) {
-  return numericEventId(event) * 10 + SIDE_INDEX[odd.selection];
+  return numericEventId(event) * 10 + SIDE_INDEX[odd.selection] + (odd.earlyPayout ? EARLY_PAYOUT_OFFSET : 0);
 }
 
 function compactEventRaw(event: LottuEvent) {
@@ -143,24 +146,27 @@ function buildBookmakerLink(bookmaker: LottuBookmakerConfig, fixtureId: string, 
 
 function buildMoneylineOdds(bookmaker: LottuBookmakerConfig, fixtureId: string, event: LottuEvent, orientation: EventMatchResult["orientation"]): OddRow[] {
   const eventRaw = compactEventRaw(event);
-  const pa = paForEvent(event);
 
-  return event.odds.map((odd) => ({
-    fixture_id: fixtureId,
-    bookmaker_slug: bookmaker.slug,
-    market_code: "1X2",
-    market_name: "MoneyLine",
-    selection: selectionForCanonicalOrientation(odd.selection, orientation),
-    price: odd.price,
-    pa_category: pa.category,
-    confidence_score: pa.confidence,
-    raw_market_name: pa.category === "COM_PA" ? "Resultado Final - Pagamento Antecipado" : "Resultado Final",
-    raw_label: odd.selection,
-    raw_odd_type: "full_time",
-    source_odd_id: sourceOddId(event, odd),
-    raw: { event: eventRaw, odd, classificationReason: pa.reason },
-    updated_at: new Date().toISOString()
-  }));
+  return event.odds.map((odd) => {
+    const pa = paForOdd(odd);
+
+    return {
+      fixture_id: fixtureId,
+      bookmaker_slug: bookmaker.slug,
+      market_code: "1X2",
+      market_name: "MoneyLine",
+      selection: selectionForCanonicalOrientation(odd.selection, orientation),
+      price: odd.price,
+      pa_category: pa.category,
+      confidence_score: pa.confidence,
+      raw_market_name: pa.category === "COM_PA" ? "Resultado Final - Pagamento Antecipado" : "Resultado Final",
+      raw_label: odd.selection,
+      raw_odd_type: odd.earlyPayout ? "full_time_ep" : "full_time",
+      source_odd_id: sourceOddId(event, odd),
+      raw: { event: eventRaw, odd, classificationReason: pa.reason },
+      updated_at: new Date().toISOString()
+    };
+  });
 }
 
 export function createLottuCollector(bookmaker: LottuBookmakerConfig) {
@@ -217,10 +223,22 @@ export function createLottuCollector(bookmaker: LottuBookmakerConfig) {
         }
       }
 
+      // As odds com pagamento antecipado so existem no detalhe do evento; buscamos apenas
+      // os jogos que casaram, nao o catalogo inteiro.
+      const matches = [...bestMatchByFixtureId.values()];
+      await pMap(
+        matches,
+        async (entry) => {
+          const odds = await client.getEventMoneylineOdds(entry.event.id).catch(() => null);
+          if (odds?.length) entry.event = { ...entry.event, odds };
+        },
+        { concurrency: bookmaker.eventDetailConcurrency }
+      );
+
       const linksToSave: BookmakerLinkRow[] = [];
       const oddsToSave: OddRow[] = [];
 
-      for (const { event, matched } of bestMatchByFixtureId.values()) {
+      for (const { event, matched } of matches) {
         linksToSave.push(buildBookmakerLink(bookmaker, matched.fixture.id, event, matched.score));
         oddsToSave.push(...buildMoneylineOdds(bookmaker, matched.fixture.id, event, matched.orientation));
         summary.eventsCollected += 1;

@@ -271,6 +271,7 @@ export type LottuBookmakerConfig = {
   enabled: boolean;
   provider: "lottu";
   baseUrl: string;
+  eventDetailConcurrency: number;
   referer: string;
   engine: BookmakerHttpEngine;
 };
@@ -667,6 +668,7 @@ export const BOOKMAKERS: BookmakerConfig[] = [
     enabled: true,
     provider: "lottu",
     baseUrl: "https://alpha-sb.ngbras.com/",
+    eventDetailConcurrency: 6,
     referer: "https://www.lottu.bet.br/",
     engine: "fetch"
   },

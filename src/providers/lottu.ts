@@ -5,6 +5,10 @@ import { httpClient } from "../utils/http-client.js";
 // catalogo inteiro de um status; o filtro por esporte fica do nosso lado porque a API
 // ignora o parametro type e responde com todos os esportes.
 const FOOTBALL_TYPE = "Soccer";
+// O 1x2 com pagamento antecipado vive no mesmo grupo full_time, com o sufixo _ep e o
+// preco normal preservado em original_value. A listagem do catalogo nao traz essas
+// chaves: elas so aparecem no detalhe do evento.
+const EARLY_PAYOUT_SUFFIX = "_ep";
 
 export type LottuSelection = "HOME" | "DRAW" | "AWAY";
 
@@ -34,6 +38,7 @@ export type LottuOdd = {
   id: string;
   selection: LottuSelection;
   price: number;
+  earlyPayout: boolean;
 };
 
 export type LottuEvent = {
@@ -54,13 +59,14 @@ const SELECTION_BY_KEY: Record<string, LottuSelection> = {
 };
 
 function parseOdd(eventId: string, key: string, raw: LottuRawOdd | undefined): LottuOdd | null {
-  const selection = SELECTION_BY_KEY[key];
+  const earlyPayout = key.endsWith(EARLY_PAYOUT_SUFFIX);
+  const selection = SELECTION_BY_KEY[earlyPayout ? key.slice(0, -EARLY_PAYOUT_SUFFIX.length) : key];
   if (!selection || !raw || raw.enable === false || raw.status !== "ACTIVE") return null;
 
   const price = Number(raw.value);
   if (!Number.isFinite(price) || price <= 1) return null;
 
-  return { id: `${eventId}:full_time:${key}`, selection, price };
+  return { id: `${eventId}:full_time:${key}`, selection, price, earlyPayout };
 }
 
 export class LottuClient {
@@ -115,5 +121,23 @@ export class LottuClient {
     }
 
     return events;
+  }
+
+  async getEventMoneylineOdds(eventId: string): Promise<LottuOdd[]> {
+    const params = new URLSearchParams({ odd_group: "MAIN" });
+    const payload = await httpClient<{ odds?: { full_time?: Record<string, LottuRawOdd | undefined> } }>({
+      url: new URL(`event/${eventId}?${params}`, this.config.baseUrl),
+      headers: this.headers,
+      referer: this.config.referer,
+      engine: this.config.engine,
+      timeoutMs: 30_000,
+      maxRetries: 2
+    });
+
+    const fullTime = payload.odds?.full_time ?? {};
+    const keys = Object.keys(SELECTION_BY_KEY).flatMap((key) => [key, `${key}${EARLY_PAYOUT_SUFFIX}`]);
+    return keys
+      .map((key) => parseOdd(eventId, key, fullTime[key]))
+      .filter((odd): odd is LottuOdd => Boolean(odd));
   }
 }
