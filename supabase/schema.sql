@@ -328,18 +328,21 @@ with upcoming_fixtures as (
         and o.market_code = '1X2'
     )
 ),
+-- A versao so muda quando uma odd muda de verdade. Com last_seen_at ela mudava a
+-- cada ciclo de coleta e invalidava o cache do site sem necessidade.
 upcoming_odds as (
   select
     o.fixture_id,
-    greatest(o.updated_at, o.last_seen_at) as odds_version
+    o.updated_at,
+    o.last_seen_at
   from cotacoes o
   join upcoming_fixtures uf on uf.id = o.fixture_id
 )
 select
   (select max(fixture_version) from upcoming_fixtures) as fixtures_version,
-  (select max(odds_version) from upcoming_odds) as odds_version,
-  (select max(odds_version) from upcoming_odds) as latest_odd_updated_at,
-  (select max(odds_version) from upcoming_odds) as latest_odd_seen_at,
+  (select max(updated_at) from upcoming_odds) as odds_version,
+  (select max(updated_at) from upcoming_odds) as latest_odd_updated_at,
+  (select max(last_seen_at) from upcoming_odds) as latest_odd_seen_at,
   (select count(*) from upcoming_fixtures) as upcoming_fixture_count,
   (select count(*) from upcoming_odds) as odd_count
 ;

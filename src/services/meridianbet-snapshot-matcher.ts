@@ -360,7 +360,8 @@ export async function matchMeridianbetSnapshots(options: { date?: BookmakerColle
         "meridianbet",
         safeProcessed.map((item) => item.link),
         safeProcessed.flatMap((item) => item.odds),
-        { replaceExistingOdds: true, replaceExistingLinks: true }
+        // O raw do link guarda a orientacao do matching, entao ele e gravado sempre.
+        { replaceExistingLinks: true, persistLinkRawEverySave: true }
       )
     : 0;
 

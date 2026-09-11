@@ -464,7 +464,9 @@ export async function matchBet365Snapshots(options: { date?: BookmakerCollectOpt
         "bet365",
         safeProcessed.map((item) => item.link),
         safeProcessed.flatMap((item) => item.odds),
-        { replaceExistingOdds: false, replaceExistingLinks: true }
+        // A limpeza da bet365 apaga o que nao foi visto desde o inicio do ciclo, e o raw
+        // do link guarda o contador de falhas: os dois precisam ser gravados sempre.
+        { replaceExistingOdds: false, replaceExistingLinks: true, touchSeenEverySave: true, persistLinkRawEverySave: true }
       )
     : 0;
 

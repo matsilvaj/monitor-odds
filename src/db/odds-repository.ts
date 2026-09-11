@@ -10,6 +10,15 @@ const DB_RETRY_ATTEMPTS = 3;
 const DB_RETRY_BASE_DELAY_MS = 500;
 const MIN_1X2_IMPLIED_PROBABILITY = 0.9;
 const MAX_1X2_IMPLIED_PROBABILITY = 1.35;
+// Odd sem mudanca de preco so renova last_seen_at depois deste intervalo. A limpeza
+// de odds nao vistas usa 2h (registry.ts), entao 10 min deixa folga de sobra.
+const SEEN_TOUCH_INTERVAL_MS = 10 * 60 * 1000;
+// raw de link que so difere em dado volatil (precos de outros mercados) e regravado
+// no maximo neste intervalo: os coletores so leem identidade do evento dele.
+const LINK_RAW_REFRESH_MS = 10 * 60 * 1000;
+// Ninguem le cotacoes.raw. O evento inteiro repetido em cada odd era a maior parte
+// da tabela e era reenviado a cada ciclo, entao valores grandes ficam de fora.
+const ODD_RAW_MAX_VALUE_CHARS = 1000;
 
 export type BookmakerLinkRow = {
   bookmaker_slug: string;
@@ -104,6 +113,39 @@ function timestampValue(value: unknown) {
   return Number.isFinite(time) ? String(time) : String(value);
 }
 
+function ageMs(value: unknown) {
+  const time = new Date(String(value ?? "")).getTime();
+  return Number.isFinite(time) ? Date.now() - time : Number.POSITIVE_INFINITY;
+}
+
+// jsonb devolve as chaves em outra ordem, entao comparar com JSON.stringify direto
+// nunca batia e todo link era regravado a cada ciclo.
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+function compactOddRaw(raw: unknown) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw ?? {};
+
+  const compact: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key === "event" || value === undefined) continue;
+    const serialized = JSON.stringify(value);
+    if (serialized !== undefined && serialized.length <= ODD_RAW_MAX_VALUE_CHARS) compact[key] = value;
+  }
+
+  return compact;
+}
+
 function oddKey(row: Pick<OddRow, "fixture_id" | "bookmaker_slug" | "market_code" | "selection" | "pa_category"> & { source_odd_id?: string | number | null }) {
   return [
     row.fixture_id,
@@ -155,7 +197,7 @@ function sameOdd(existing: ExistingOddRow, next: OddRow) {
   );
 }
 
-function sameLink(existing: ExistingBookmakerLinkRow, next: BookmakerLinkRow) {
+function sameLinkFields(existing: ExistingBookmakerLinkRow, next: BookmakerLinkRow) {
   return (
     existing.fixture_id === next.fixture_id &&
     existing.bookmaker_event_name === next.bookmaker_event_name &&
@@ -165,9 +207,12 @@ function sameLink(existing: ExistingBookmakerLinkRow, next: BookmakerLinkRow) {
     existing.normalized_bookmaker_away_team === next.normalized_bookmaker_away_team &&
     timestampValue(existing.starts_at) === timestampValue(next.starts_at) &&
     numericValue(existing.match_confidence_score, 3) === numericValue(next.match_confidence_score, 3) &&
-    existing.source_url === next.source_url &&
-    JSON.stringify(existing.raw ?? null) === JSON.stringify(next.raw ?? null)
+    existing.source_url === next.source_url
   );
+}
+
+function sameLinkRaw(existing: ExistingBookmakerLinkRow, next: BookmakerLinkRow) {
+  return stableStringify(existing.raw ?? null) === stableStringify(next.raw ?? null);
 }
 
 function impliedProbability(rows: OddRow[]) {
@@ -451,6 +496,10 @@ export class OddsRepository {
       replaceExistingOdds?: boolean;
       cleanupPaCategories?: string[];
       replaceExistingLinks?: boolean;
+      // Casa que limpa odds pelo inicio do ciclo (bet365) precisa renovar last_seen_at sempre.
+      touchSeenEverySave?: boolean;
+      // Casa que guarda estado no raw do link (falhas, orientacao) nao pode atrasar a gravacao dele.
+      persistLinkRawEverySave?: boolean;
     } = {}
   ) {
     const saveStartedAt = new Date().toISOString();
@@ -472,7 +521,7 @@ export class OddsRepository {
       : uniqueLinksToSave;
     const oddsToSave = odds
       .filter((odd) => !conflictingFixtureIds.has(odd.fixture_id))
-      .map((odd) => ({ ...odd, updated_at: saveStartedAt, last_seen_at: saveStartedAt }));
+      .map((odd) => ({ ...odd, raw: compactOddRaw(odd.raw), updated_at: saveStartedAt, last_seen_at: saveStartedAt }));
     const existingLinksByEventId = linksToSave.length ? await fetchExistingLinksByEventIds(bookmakerSlug, linksToSave.map((link) => link.external_event_id)) : [];
     const linksToSaveByKey = new Map(linksToSave.map((link) => [linkKey(link), link]));
     const movedFixtureIds = existingLinksByEventId
@@ -493,9 +542,12 @@ export class OddsRepository {
     const existingLinks = fixtureIds.length ? await fetchExistingLinks(bookmakerSlug, fixtureIds) : [];
     const existingLinksByKey = new Map(existingLinks.map((row) => [linkKey(row), row]));
     const currentLinkKeys = new Set(linksToSave.map(linkKey));
+    const persistLinkRawEverySave = options.persistLinkRawEverySave ?? false;
     const changedLinks = linksToSave.filter((link) => {
       const existing = existingLinksByKey.get(linkKey(link));
-      return !existing || !sameLink(existing, link);
+      if (!existing || !sameLinkFields(existing, link)) return true;
+      if (sameLinkRaw(existing, link)) return false;
+      return persistLinkRawEverySave || ageMs(existing.updated_at) >= LINK_RAW_REFRESH_MS;
     });
     const replaceExistingLinks = options.replaceExistingLinks ?? true;
     const staleLinkIds = replaceExistingLinks
@@ -516,7 +568,9 @@ export class OddsRepository {
       ).values()
     ]);
 
-    const replaceExistingOdds = options.replaceExistingOdds ?? true;
+    // Apagar e reinserir tudo a cada ciclo reescrevia a tabela inteira a cada poucos
+    // minutos e esgotava a memoria do banco; o padrao agora grava so o que mudou.
+    const replaceExistingOdds = options.replaceExistingOdds ?? false;
 
     if (replaceExistingOdds && fixtureIds.length) {
       await deleteExistingOdds(bookmakerSlug, fixtureIds, marketCodes, options.cleanupPaCategories);
@@ -535,20 +589,38 @@ export class OddsRepository {
     }
 
     const existingOdds = fixtureIds.length ? await fetchExistingOdds(bookmakerSlug, fixtureIds, marketCodes) : [];
-    const existingOddsByKey = new Map(existingOdds.map((row) => [oddKey(row), row]));
-    const currentOddKeys = new Set(uniqueOdds.map(oddKey));
-    const changedOdds = uniqueOdds.filter((odd) => {
-      const existing = existingOddsByKey.get(oddKey(odd));
-      return !existing || !sameOdd(existing, odd);
-    });
-    const changedOddKeys = new Set(changedOdds.map(oddKey));
-    const seenUnchangedOddIds = uniqueOdds
-      .filter((odd) => !changedOddKeys.has(oddKey(odd)))
-      .map((odd) => existingOddsByKey.get(oddKey(odd))?.id)
-      .filter((id): id is string => Boolean(id));
-    const staleOddIds = existingOdds.filter((odd) => !currentOddKeys.has(oddKey(odd))).map((odd) => odd.id);
+    const existingOddsByKey = new Map<string, ExistingOddRow>();
+    const duplicateOddIds: string[] = [];
+    for (const row of existingOdds) {
+      const key = oddKey(row);
+      if (existingOddsByKey.has(key)) duplicateOddIds.push(row.id);
+      else existingOddsByKey.set(key, row);
+    }
 
-    for (const oddBatch of chunks(changedOdds, DEFAULT_BATCH_SIZE)) {
+    const currentOddKeys = new Set(uniqueOdds.map(oddKey));
+    const touchSeenEverySave = options.touchSeenEverySave ?? false;
+    const oddsToUpdate: Array<OddRow & { id: string }> = [];
+    const oddsToInsert: OddRow[] = [];
+    const seenUnchangedOddIds: string[] = [];
+    for (const odd of uniqueOdds) {
+      const existing = existingOddsByKey.get(oddKey(odd));
+      if (!existing) oddsToInsert.push(odd);
+      else if (!sameOdd(existing, odd)) oddsToUpdate.push({ ...odd, id: existing.id });
+      else if (touchSeenEverySave || ageMs(existing.last_seen_at) >= SEEN_TOUCH_INTERVAL_MS) seenUnchangedOddIds.push(existing.id);
+    }
+    const staleOddIds = [
+      ...new Set([...existingOdds.filter((odd) => !currentOddKeys.has(oddKey(odd))).map((odd) => odd.id), ...duplicateOddIds])
+    ];
+
+    // Odd que ja existe e atualizada pelo id: a chave unica inclui source_odd_id, que
+    // pode ser nulo, e com nulo o upsert pela chave inseria uma duplicata.
+    for (const oddBatch of chunks(oddsToUpdate, DEFAULT_BATCH_SIZE)) {
+      await withStatementTimeoutRetry("atualizacao de odds alteradas", async () =>
+        await supabase.from("cotacoes").upsert(oddBatch, { onConflict: "id" })
+      );
+    }
+
+    for (const oddBatch of chunks(oddsToInsert, DEFAULT_BATCH_SIZE)) {
       await withStatementTimeoutRetry("upsert de odds", async () =>
         await supabase.from("cotacoes").upsert(oddBatch, {
           onConflict: "fixture_id,bookmaker_slug,market_code,selection,pa_category,source_odd_id"
@@ -563,6 +635,8 @@ export class OddsRepository {
       await deleteRowsById("links_eventos", "limpeza de links antigos", staleLinkIds);
     }
 
-    return changedOdds.length;
+    // Conta as odds confirmadas no ciclo, como no modo de substituicao: sync-report e a
+    // guarda de limpeza (registry.ts) leem isto como "a casa coletou", nao como "mudou".
+    return uniqueOdds.length;
   }
 }
