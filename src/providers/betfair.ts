@@ -83,17 +83,20 @@ type CardsResponse = {
   };
 };
 
-const SEARCH_DOCUMENT_ID = "SearchView#a2f3fa92545de5b1c4dd432e666608ab";
-const CARD_DOCUMENT_ID = "Card#40a8e68b27ffbca0e7be3ce942064101";
+// Hashes das queries persistidas do GraphQL. Quando a Betfair publica uma versao nova o
+// hash antigo passa a responder HTTP 400 "UAG-007"; os valores vem do HAR do site.
+const SEARCH_DOCUMENT_ID = "SearchView#185684815f1216bfd5f46eda8d2dbb4c";
+const CARD_DOCUMENT_ID = "Card#6541d0a836ba921c556e09142a93966c";
 const EXPERIMENTS = [
-  { id: "uki_safety_rti_10k_stakes", variant: "display" },
-  { id: "cms-int-bf-br-player-widget-experiment", variant: "control" }
+  { id: "bf-upsell-suggestions-receipt", variant: "control" },
+  { id: "bfint-cms-br-pcb-experimentation", variant: "control" }
 ];
-const MARKET_TEMPLATE_URNS = [
-  "Z-KJShEAACIAkTdu",
-  "ZxDkyRIAACAAf2za",
-  "aZxLFhAAACMAuJnT",
-  "ZxDh2BIAACEAf2ee"
+// Grupos de cards da pagina do evento que trazem o "Resultado da partida" (MATCH_ODDS)
+// e o "Resultado final - 2 Gols de Vantagem" (FULL_TIME_RESULT_-_2_UP).
+const MARKET_CARD_GROUPS = [
+  "swimlane:ZxDh2BIAACEAf2ee",
+  "pebble:marketTemplateEvent:Z-KJShEAACIAkTdu",
+  "pebble:marketTemplateEvent:ZxDkyRIAACAAf2za"
 ];
 
 function preferences() {
@@ -151,7 +154,7 @@ export class BetfairClient {
       accept: "application/json",
       "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
       "content-type": "application/json",
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
     };
   }
 
@@ -185,11 +188,7 @@ export class BetfairClient {
   }
 
   async getMatchOdds(eventId: number, eventUrl: string) {
-    const urn = MARKET_TEMPLATE_URNS.map((template) => (
-      template === "aZxLFhAAACMAuJnT"
-        ? `ppb:tbd:cardgroup:swimlane:${template}/e/${eventId}`
-        : `ppb:tbd:cardgroup:pebble:marketTemplateEvent:${template}/e/${eventId}`
-    ));
+    const urn = MARKET_CARD_GROUPS.map((group) => `ppb:tbd:cardgroup:${group}/e/${eventId}`);
     const data = await httpClient<CardsResponse>({
       url: this.apiUrl(`currentViewUrn=ppb%3Atbd%3Aview%3Aevent%3A${eventId}`),
       method: "POST",
