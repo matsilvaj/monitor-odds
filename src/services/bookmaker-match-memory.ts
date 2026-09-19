@@ -2,6 +2,8 @@ import { supabase } from "../db/supabase.js";
 import { fetchAllPages } from "../db/paginate.js";
 import { normalizeName } from "../domain/text.js";
 
+const TEAM_ID_BATCH_SIZE = 200;
+
 export type MatchMemoryLogger = (
   level: "info" | "warn" | "error",
   message: string,
@@ -40,14 +42,22 @@ export async function loadBookmakerAliasIndex(fixtures: FixtureTeamIdentity[]): 
 
   // Paginado: o PostgREST corta em 1000 linhas sem avisar, e apelidos_times cresce
   // sem teto. Truncar aqui faria apelidos ja aprendidos sumirem em silencio.
-  const data = await fetchAllPages<AliasRow>((from, to) =>
-    supabase
-      .from("apelidos_times")
-      .select("team_id,alias,normalized_alias")
-      .in("team_id", teamIds)
-      .order("id", { ascending: true })
-      .range(from, to)
-  );
+  // Em lotes: dia cheio passa de 500 times, e a lista inteira no .in() estourava o
+  // limite de ~16KB da URL (HeadersOverflowError) e derrubava o matching.
+  const data: AliasRow[] = [];
+  for (let offset = 0; offset < teamIds.length; offset += TEAM_ID_BATCH_SIZE) {
+    const teamIdBatch = teamIds.slice(offset, offset + TEAM_ID_BATCH_SIZE);
+    data.push(
+      ...(await fetchAllPages<AliasRow>((from, to) =>
+        supabase
+          .from("apelidos_times")
+          .select("team_id,alias,normalized_alias")
+          .in("team_id", teamIdBatch)
+          .order("id", { ascending: true })
+          .range(from, to)
+      ))
+    );
+  }
 
   const candidates = new Map<string, Set<string>>();
   for (const row of data) {

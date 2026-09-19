@@ -71,7 +71,8 @@ if (!slug) {
         console.log(line);
       }
     } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
+      // Erro do Supabase (PostgrestError) nao e instancia de Error: String() virava "[object Object]".
+      console.error(error instanceof Error ? error.message : JSON.stringify(error, null, 2));
       process.exitCode = 1;
     }
   }
