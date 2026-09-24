@@ -130,6 +130,13 @@ type Bet365DirectRefreshResult = {
 const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   1: [{ label: "Copa do Mundo", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E131901075/G40/I%5E88/" }],
   3: [{ label: "Europa League - Classificatórias", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E135566042/G40/" }],
+  5: [
+    { label: "UEFA Nations League A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E138628513/G40/H%5E1/" },
+    { label: "UEFA Nations League B", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E138628516/G40/H%5E1/" },
+    { label: "UEFA Nations League C", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E138628672/G40/H%5E1/" },
+    { label: "UEFA Nations League D", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E138628511/G40/" }
+  ],
+  36: [{ label: "Africa Cup of Nations Qualification", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E138999453/G40/" }],
   39: [{ label: "Premier League", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E91422157/G40/" }],
   61: [{ label: "Ligue 1", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E135119473/G40/" }],
   71: [{ label: "Brasileirao Serie A", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E88369731/G40/" }],
@@ -138,6 +145,7 @@ const BET365_SEEDED_LEAGUE_URLS: Record<number, Bet365LeagueUrlSeed[]> = {
   137: [{ label: "Coppa Italia", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E137112511/G40/" }],
   182: [{ label: "Scottish Challenge Cup", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E137205045/G40/" }],
   185: [{ label: "Scottish League Cup", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E135851259/G40/" }],
+  536: [{ label: "CONCACAF Nations League", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E138993456/G40/" }],
   531: [{ label: "UEFA Super Cup", sourceUrl: "https://www.bet365.bet.br/#/AC/B1/C1/D1002/E135643376/G40/" }]
 };
 
